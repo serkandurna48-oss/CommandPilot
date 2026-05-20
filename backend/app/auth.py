@@ -95,9 +95,16 @@ def ensure_user_workspace(user: CurrentUser) -> dict:
             .execute()
         )
         if not insert_result.data:
+            logger.error(
+                "ensure_user_workspace | profile insert returned no data | user_id=%s",
+                user.id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create user profile",
+                detail={
+                    "code": "USER_SETUP_FAILED",
+                    "message": "Account setup could not be completed. Please try again.",
+                },
             )
         profile = insert_result.data[0]
         logger.info("ensure_user_workspace | profile created | user_id=%s", user.id)
@@ -112,27 +119,54 @@ def ensure_user_workspace(user: CurrentUser) -> dict:
 
     if not workspace_id:
         workspace_slug = f"personal-{user.id.replace('-', '')}"
-        workspace_insert = (
+
+        # Mirror the SQL trigger's logic: look up an existing workspace by slug
+        # before inserting.  The trigger (handle_new_user) may have already
+        # created it with ON CONFLICT DO NOTHING, leaving profiles.workspace_id
+        # NULL if the subsequent UPDATE failed.  A plain INSERT here would hit
+        # the unique slug constraint and return no data.
+        existing_ws = (
             db.table("workspaces")
-            .insert(
-                {
-                    "name": "Personal Workspace",
-                    "slug": workspace_slug,
-                    "owner_id": user.id,
-                }
-            )
+            .select("id")
+            .eq("slug", workspace_slug)
+            .maybe_single()
             .execute()
         )
-        if not workspace_insert.data:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to create workspace",
+        if existing_ws and existing_ws.data:
+            workspace_id = existing_ws.data["id"]
+            logger.info(
+                "ensure_user_workspace | workspace found by slug | user_id=%s",
+                user.id,
             )
-        workspace_id = workspace_insert.data[0]["id"]
-        logger.info(
-            "ensure_user_workspace | workspace created | user_id=%s",
-            user.id,
-        )
+        else:
+            workspace_insert = (
+                db.table("workspaces")
+                .insert(
+                    {
+                        "name": "Personal Workspace",
+                        "slug": workspace_slug,
+                        "owner_id": user.id,
+                    }
+                )
+                .execute()
+            )
+            if not workspace_insert.data:
+                logger.error(
+                    "ensure_user_workspace | workspace insert returned no data | user_id=%s",
+                    user.id,
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail={
+                        "code": "USER_SETUP_FAILED",
+                        "message": "Account setup could not be completed. Please try again.",
+                    },
+                )
+            workspace_id = workspace_insert.data[0]["id"]
+            logger.info(
+                "ensure_user_workspace | workspace created | user_id=%s",
+                user.id,
+            )
 
         profile_update = (
             db.table("profiles")
@@ -141,9 +175,16 @@ def ensure_user_workspace(user: CurrentUser) -> dict:
             .execute()
         )
         if not profile_update.data:
+            logger.error(
+                "ensure_user_workspace | profile workspace link returned no data | user_id=%s",
+                user.id,
+            )
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to link workspace to profile",
+                detail={
+                    "code": "USER_SETUP_FAILED",
+                    "message": "Account setup could not be completed. Please try again.",
+                },
             )
         profile = profile_update.data[0]
 
@@ -164,28 +205,40 @@ def ensure_user_workspace(user: CurrentUser) -> dict:
     )
 
     if not member_exists:
-        member_insert = (
+        db.table("workspace_members").insert(
+            {
+                "workspace_id": workspace_id,
+                "user_id": user.id,
+                "role": "owner",
+            }
+        ).execute()
+
+        # Re-select to verify the row was actually persisted.
+        verify_member = (
             db.table("workspace_members")
-            .insert(
-                {
-                    "workspace_id": workspace_id,
-                    "user_id": user.id,
-                    "role": "owner",
-                }
-            )
+            .select("id")
+            .eq("workspace_id", workspace_id)
+            .eq("user_id", user.id)
+            .maybe_single()
             .execute()
         )
-        if not member_insert.data:
-            # Log but do not raise — membership is not required for plan generation
-            # (service role key bypasses RLS). Bootstrap can still be considered complete.
-            logger.warning(
-                "ensure_user_workspace | workspace_members insert returned no data | user_id=%s",
+        member_exists = bool(verify_member and verify_member.data)
+        logger.info(
+            "ensure_user_workspace | workspace_members created | verified=%s | user_id=%s",
+            member_exists,
+            user.id,
+        )
+        if not member_exists:
+            logger.error(
+                "ensure_user_workspace | workspace_members could not be persisted | user_id=%s",
                 user.id,
             )
-        else:
-            logger.info(
-                "ensure_user_workspace | workspace_members created | user_id=%s",
-                user.id,
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "code": "USER_SETUP_FAILED",
+                    "message": "Account setup could not be completed. Please try again.",
+                },
             )
 
     return {

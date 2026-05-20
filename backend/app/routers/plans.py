@@ -34,40 +34,42 @@ async def generate_plan(
     req: PlanGenerateRequest,
     user: CurrentUser = Depends(get_current_user),
 ):
-    # ── Step 0: Workspace integrity guard (fresh-user path) ─────────────────
-    # user.workspace_id is resolved once at request start by get_current_user().
-    # For a brand-new user whose profile was just created, it may be None even
-    # after bootstrap if the DB write hasn't been reflected yet, or if bootstrap
-    # was never called.  Re-run ensure_user_workspace to recover and use the
-    # returned workspace_id for save_plan.
-    effective_workspace_id = user.workspace_id
+    # ── Step 0: Verify user workspace setup ─────────────────────────────────
+    # Always call ensure_user_workspace — it guarantees profile, workspace, and
+    # workspace_members exist and returns a verified workspace_id.
+    # user.workspace_id (from CurrentUser) is resolved once at request start and
+    # may be stale or None; we use the value returned here for save_plan instead.
+    try:
+        setup = ensure_user_workspace(user)
+        effective_workspace_id = setup.get("workspace_id")
+    except HTTPException:
+        raise  # Already a structured error from ensure_user_workspace
+    except Exception as exc:
+        logger.error(
+            "ensure_user_workspace failed unexpectedly | %s: %s",
+            type(exc).__name__,
+            str(exc)[:200],
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "USER_SETUP_FAILED",
+                "message": "Account setup is incomplete. Please refresh the page and try again.",
+            },
+        )
+
     if not effective_workspace_id:
-        logger.info(
-            "Fresh-user path: workspace_id absent on CurrentUser — running ensure_user_workspace | user_id=%s",
+        logger.error(
+            "workspace_id still None after ensure_user_workspace | user_id=%s",
             user.id,
         )
-        try:
-            setup = ensure_user_workspace(user)
-            effective_workspace_id = setup.get("workspace_id")
-            logger.info(
-                "Fresh-user setup complete | workspace_id_present=%s",
-                bool(effective_workspace_id),
-            )
-        except HTTPException:
-            raise  # Already a structured error from ensure_user_workspace
-        except Exception as exc:
-            logger.error(
-                "ensure_user_workspace failed unexpectedly | %s: %s",
-                type(exc).__name__,
-                str(exc)[:200],
-            )
-            raise HTTPException(
-                status_code=500,
-                detail={
-                    "code": "USER_SETUP_FAILED",
-                    "message": "Account setup is incomplete. Please refresh the page and try again.",
-                },
-            )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "USER_SETUP_FAILED",
+                "message": "Account setup is incomplete. Please refresh the page and try again.",
+            },
+        )
 
     # ── Step 1: Verify checkin ownership ────────────────────────────────────
     logger.info("Plan generation requested | checkin_id=%s", req.checkin_id)

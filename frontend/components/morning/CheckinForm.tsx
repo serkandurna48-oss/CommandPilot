@@ -221,7 +221,7 @@ export function CheckinForm() {
         </CardContent>
       </Card>
 
-      <Button type="submit" size="lg" className="w-full" disabled={step === "generating"}>
+      <Button type="submit" size="lg" className="w-full">
         {pendingCheckinId && error ? "Retry Plan Generation" : "Generate Today's Plan"}
       </Button>
     </form>
