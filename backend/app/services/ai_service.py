@@ -1,6 +1,7 @@
 import json
 import logging
 
+import httpx
 from openai import (
     AsyncOpenAI,
     AuthenticationError,
@@ -16,7 +17,15 @@ from app.models.plan import DailyPlanAI
 
 logger = logging.getLogger(__name__)
 
-client = AsyncOpenAI(api_key=settings.OPENAI_API_KEY, timeout=60.0)
+# Separate connect timeout (fail fast on network issues) from read timeout
+# (OpenAI may take up to ~60s to stream a structured output response).
+# max_retries=2 is the SDK default but we set it explicitly for clarity.
+_OPENAI_TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=10.0, pool=5.0)
+client = AsyncOpenAI(
+    api_key=settings.OPENAI_API_KEY,
+    timeout=_OPENAI_TIMEOUT,
+    max_retries=2,
+)
 
 
 class AIGenerationError(Exception):
@@ -78,42 +87,56 @@ async def generate_daily_plan(
         )
     except AuthenticationError as exc:
         logger.error(
-            "OpenAI authentication failed | %s: %s",
+            "OpenAI authentication failed | exc=%s | status=%s | model=%s | internal_code=OPENAI_AUTH_FAILED",
             type(exc).__name__,
-            str(exc)[:200],
+            getattr(exc, "status_code", "unknown"),
+            settings.OPENAI_MODEL,
         )
         raise AIGenerationError(
             "OPENAI_AUTH_FAILED",
             "OpenAI authentication failed. Check the API key.",
         ) from exc
     except RateLimitError as exc:
-        exc_str = str(exc).lower()
-        if "quota" in exc_str or "insufficient_quota" in exc_str:
-            logger.error("OpenAI quota exceeded | %s: %s", type(exc).__name__, str(exc)[:200])
+        # Use exc.code (extracted from structured API body) — never str(exc)
+        provider_code: str = getattr(exc, "code", None) or ""
+        if "quota" in provider_code:
+            logger.error(
+                "OpenAI quota exceeded | exc=%s | status=%s | provider_code=%s | model=%s | internal_code=OPENAI_QUOTA_EXCEEDED",
+                type(exc).__name__,
+                getattr(exc, "status_code", "unknown"),
+                provider_code,
+                settings.OPENAI_MODEL,
+            )
             raise AIGenerationError(
                 "OPENAI_QUOTA_EXCEEDED",
                 "OpenAI API quota exceeded.",
             ) from exc
-        logger.warning("OpenAI rate limited | %s: %s", type(exc).__name__, str(exc)[:200])
+        logger.warning(
+            "OpenAI rate limited | exc=%s | status=%s | provider_code=%s | model=%s | internal_code=OPENAI_RATE_LIMITED",
+            type(exc).__name__,
+            getattr(exc, "status_code", "unknown"),
+            provider_code,
+            settings.OPENAI_MODEL,
+        )
         raise AIGenerationError(
             "OPENAI_RATE_LIMITED",
             "OpenAI request rate limited. Please try again shortly.",
         ) from exc
     except (APIConnectionError, APITimeoutError) as exc:
         logger.error(
-            "OpenAI connection/timeout error | %s: %s",
+            "OpenAI connection/timeout error | exc=%s | model=%s | internal_code=OPENAI_CONNECTION_ERROR",
             type(exc).__name__,
-            str(exc)[:200],
+            settings.OPENAI_MODEL,
         )
         raise AIGenerationError(
-            "UNKNOWN_AI_ERROR",
+            "OPENAI_CONNECTION_ERROR",
             "Could not reach OpenAI. Please try again.",
         ) from exc
     except Exception as exc:
         logger.error(
-            "Unexpected OpenAI error | %s: %s",
+            "Unexpected OpenAI error | exc=%s | model=%s | internal_code=UNKNOWN_AI_ERROR",
             type(exc).__name__,
-            str(exc)[:200],
+            settings.OPENAI_MODEL,
         )
         raise AIGenerationError(
             "UNKNOWN_AI_ERROR",
@@ -132,7 +155,7 @@ async def generate_daily_plan(
     try:
         data = json.loads(raw_json)
     except json.JSONDecodeError as exc:
-        logger.error("AI JSON parse failed | %s: %s", type(exc).__name__, str(exc)[:200])
+        logger.error("AI JSON parse failed | exc=%s | internal_code=AI_JSON_INVALID", type(exc).__name__)
         raise AIGenerationError("AI_JSON_INVALID", "OpenAI returned invalid JSON.") from exc
 
     # ── Step 4: Validate Pydantic schema ─────────────────────────────────────

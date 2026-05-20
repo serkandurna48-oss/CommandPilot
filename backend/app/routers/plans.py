@@ -21,6 +21,7 @@ router = APIRouter()
 # User-facing messages for each AI error code
 _AI_ERROR_MESSAGES: dict[str, str] = {
     "OPENAI_AUTH_FAILED": "Plan generation is unavailable: API key issue.",
+    "OPENAI_CONNECTION_ERROR": "Plan generation failed: could not reach the AI service. Please try again in a moment.",
     "OPENAI_RATE_LIMITED": "Plan generation is temporarily unavailable due to high demand. Please try again in a moment.",
     "OPENAI_QUOTA_EXCEEDED": "Plan generation is unavailable: API quota exceeded.",
     "AI_JSON_INVALID": "Plan generation failed: unexpected AI response format. Please try again.",
