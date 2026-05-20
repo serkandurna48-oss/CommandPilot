@@ -3,18 +3,20 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
 import { LayoutDashboard, Sunrise, Moon, Sliders, Settings } from "lucide-react";
-
-const navItems = [
-  { href: "/dashboard", label: "Home",     icon: LayoutDashboard },
-  { href: "/morning",   label: "Morning",  icon: Sunrise },
-  { href: "/review",    label: "Review",   icon: Moon },
-  { href: "/rules",     label: "Rules",    icon: Sliders },
-  { href: "/settings",  label: "Settings", icon: Settings },
-];
 
 export function MobileNav() {
   const pathname = usePathname();
+  const t = useT();
+
+  const navItems = [
+    { href: "/dashboard", label: t("nav.dashboard"), icon: LayoutDashboard },
+    { href: "/morning",   label: t("nav.morning"),   icon: Sunrise },
+    { href: "/review",    label: t("nav.review"),    icon: Moon },
+    { href: "/rules",     label: t("nav.rules"),     icon: Sliders },
+    { href: "/settings",  label: t("nav.settings"),  icon: Settings },
+  ];
 
   return (
     <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-slate-900 border-t border-slate-800">

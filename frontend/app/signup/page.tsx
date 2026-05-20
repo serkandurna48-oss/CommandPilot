@@ -8,9 +8,12 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { supabase } from "@/lib/supabase";
+import { t } from "@/lib/i18n";
+import { getUserLanguage } from "@/lib/utils";
 
 export default function SignupPage() {
   const router = useRouter();
+  const lang = getUserLanguage();
   const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -45,7 +48,7 @@ export default function SignupPage() {
       return;
     }
 
-    setMessage("Check your email to confirm your account, then log in.");
+    setMessage(t("signup.check_email", lang));
   }
 
   return (
@@ -55,7 +58,7 @@ export default function SignupPage() {
           <div className="mb-3 h-10 w-10 rounded-md bg-brand-600 flex items-center justify-center">
             <UserPlus className="h-5 w-5 text-white" />
           </div>
-          <CardTitle>Create your CommandPilot account</CardTitle>
+          <CardTitle>{t("signup.title", lang)}</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
@@ -70,14 +73,14 @@ export default function SignupPage() {
               </div>
             )}
             <Input
-              label="Name"
+              label={t("signup.name", lang)}
               autoComplete="name"
               required
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
             />
             <Input
-              label="Email"
+              label={t("signup.email", lang)}
               type="email"
               autoComplete="email"
               required
@@ -85,7 +88,7 @@ export default function SignupPage() {
               onChange={(e) => setEmail(e.target.value)}
             />
             <Input
-              label="Password"
+              label={t("signup.password", lang)}
               type="password"
               autoComplete="new-password"
               minLength={8}
@@ -94,13 +97,13 @@ export default function SignupPage() {
               onChange={(e) => setPassword(e.target.value)}
             />
             <Button type="submit" loading={submitting} className="w-full">
-              Sign up
+              {t("signup.submit", lang)}
             </Button>
           </form>
           <p className="mt-4 text-sm text-slate-500">
-            Already have an account?{" "}
+            {t("signup.have_account", lang)}{" "}
             <Link href="/login" className="text-brand-400 hover:text-brand-300">
-              Log in
+              {t("signup.login_link", lang)}
             </Link>
           </p>
         </CardContent>

@@ -6,12 +6,14 @@ import { Input, Textarea, Select } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import type { UserRule } from "@/types";
 import { Trash2, ToggleLeft, ToggleRight, Plus } from "lucide-react";
 
 const CATEGORIES = ["scheduling", "energy", "focus", "sport", "study", "business", "social", "general"];
 
 export function RulesManager() {
+  const t = useT();
   const [rules, setRules] = useState<UserRule[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
@@ -56,7 +58,7 @@ export function RulesManager() {
   }
 
   async function deleteRule(id: string) {
-    if (!confirm("Delete this rule?")) return;
+    if (!confirm(t("rules.confirm_delete"))) return;
     await api.rules.delete(id);
     setRules((prev) => prev.filter((r) => r.id !== id));
   }
@@ -65,11 +67,11 @@ export function RulesManager() {
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="text-slate-400 text-sm">
-          {rules.length} rule{rules.length !== 1 ? "s" : ""} — active rules are injected into every AI plan.
+          {rules.length} {rules.length !== 1 ? t("rules.rules") : t("rules.rule")} {t("rules.active_suffix")}
         </p>
         <Button size="sm" onClick={() => setShowForm((v) => !v)}>
           <Plus className="h-4 w-4" />
-          {showForm ? "Cancel" : "Add Rule"}
+          {showForm ? t("common.cancel") : t("rules.add")}
         </Button>
       </div>
 
@@ -78,13 +80,13 @@ export function RulesManager() {
           <CardContent className="pt-4">
             <form onSubmit={handleCreate} className="space-y-3">
               <Input
-                label="Title"
+                label={t("rules.form_title")}
                 placeholder="e.g. No heavy tasks after sport"
                 value={form.title}
                 onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
               />
               <Textarea
-                label="Rule"
+                label={t("rules.form_rule")}
                 placeholder="Do not schedule deep work within 2 hours after an intense workout."
                 rows={3}
                 value={form.rule_text}
@@ -92,7 +94,7 @@ export function RulesManager() {
               />
               <div className="grid grid-cols-2 gap-3">
                 <Select
-                  label="Category"
+                  label={t("rules.form_category")}
                   value={form.category}
                   onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
                 >
@@ -102,7 +104,7 @@ export function RulesManager() {
                 </Select>
                 <div className="flex flex-col gap-1.5">
                   <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-                    Priority — {form.priority}
+                    {t("rules.form_priority")} — {form.priority}
                   </label>
                   <input
                     type="range" min={1} max={10}
@@ -112,7 +114,7 @@ export function RulesManager() {
                   />
                 </div>
               </div>
-              <Button type="submit" loading={saving} size="sm">Save Rule</Button>
+              <Button type="submit" loading={saving} size="sm">{t("rules.save")}</Button>
             </form>
           </CardContent>
         </Card>
@@ -124,8 +126,8 @@ export function RulesManager() {
         </div>
       ) : rules.length === 0 ? (
         <EmptyState
-          title="No rules yet"
-          description="Rules are used as context by the AI to personalize every plan. Add your operating principles."
+          title={t("rules.empty_title")}
+          description={t("rules.empty_desc")}
         />
       ) : (
         <div className="space-y-2">
@@ -151,7 +153,7 @@ export function RulesManager() {
                   <button
                     onClick={() => toggleRule(rule)}
                     className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
-                    title={rule.is_active ? "Disable" : "Enable"}
+                    title={rule.is_active ? t("rules.disable") : t("rules.enable")}
                   >
                     {rule.is_active
                       ? <ToggleRight className="h-4 w-4 text-brand-400" />

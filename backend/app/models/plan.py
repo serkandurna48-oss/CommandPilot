@@ -35,7 +35,8 @@ class DailyPlanAI(BaseModel):
 class PlanGenerateRequest(BaseModel):
     checkin_id: str
     user_id: Optional[str] = None
-    language: str = Field(default="en", pattern="^(de|en)$")
+    # language is intentionally omitted — the backend always uses profile.language.
+    # Extra fields sent by old clients are silently ignored by Pydantic.
 
 
 class PlanResponse(BaseModel):

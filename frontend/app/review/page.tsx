@@ -7,8 +7,10 @@ import { Header } from "@/components/layout/Header";
 import { ReviewForm } from "@/components/review/ReviewForm";
 import { PageLoader } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 
 function ReviewPageContent() {
+  const t = useT();
   const searchParams = useSearchParams();
   const planId = searchParams.get("plan_id") ?? undefined;
   const [reviewQuestions, setReviewQuestions] = useState<string[]>([]);
@@ -24,8 +26,8 @@ function ReviewPageContent() {
   return (
     <AppShell>
       <Header
-        title="Evening Review"
-        subtitle="Close the day. Capture what mattered."
+        title={t("review.title")}
+        subtitle={t("review.subtitle")}
       />
       <ReviewForm planId={planId} reviewQuestions={reviewQuestions} />
     </AppShell>

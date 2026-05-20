@@ -27,7 +27,7 @@ create table if not exists profiles (
   workspace_id  uuid references workspaces(id),
   display_name  text,
   timezone      text default 'Europe/Berlin',
-  language      text default 'en',
+  language      text default 'en' check (language in ('en', 'de')),
   avatar_url    text,
   created_at    timestamptz default now(),
   updated_at    timestamptz default now()

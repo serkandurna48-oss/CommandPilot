@@ -9,12 +9,16 @@ import { Input } from "@/components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { useAuth } from "@/lib/auth";
 import { supabase } from "@/lib/supabase";
+import { t } from "@/lib/i18n";
+import { getUserLanguage } from "@/lib/utils";
 
 function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const next = searchParams.get("next") ?? "/dashboard";
+  const reason = searchParams.get("reason");
   const { user, loading } = useAuth();
+  const lang = getUserLanguage();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
@@ -50,17 +54,22 @@ function LoginForm() {
           <div className="mb-3 h-10 w-10 rounded-md bg-brand-600 flex items-center justify-center">
             <Lock className="h-5 w-5 text-white" />
           </div>
-          <CardTitle>Log in to CommandPilot</CardTitle>
+          <CardTitle>{t("login.title", lang)}</CardTitle>
         </CardHeader>
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
+            {reason === "session_expired" && !error && (
+              <div className="rounded-lg bg-amber-950 border border-amber-800 px-4 py-3 text-amber-300 text-sm">
+                {t("login.session_expired", lang)}
+              </div>
+            )}
             {error && (
               <div className="rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm">
                 {error}
               </div>
             )}
             <Input
-              label="Email"
+              label={t("login.email", lang)}
               type="email"
               autoComplete="email"
               required
@@ -68,7 +77,7 @@ function LoginForm() {
               onChange={(e) => setEmail(e.target.value)}
             />
             <Input
-              label="Password"
+              label={t("login.password", lang)}
               type="password"
               autoComplete="current-password"
               required
@@ -76,13 +85,13 @@ function LoginForm() {
               onChange={(e) => setPassword(e.target.value)}
             />
             <Button type="submit" loading={submitting} className="w-full">
-              Log in
+              {t("login.submit", lang)}
             </Button>
           </form>
           <p className="mt-4 text-sm text-slate-500">
-            New here?{" "}
+            {t("login.new_here", lang)}{" "}
             <Link href="/signup" className="text-brand-400 hover:text-brand-300">
-              Create an account
+              {t("login.create_account", lang)}
             </Link>
           </p>
         </CardContent>

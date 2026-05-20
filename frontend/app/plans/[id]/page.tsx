@@ -7,6 +7,7 @@ import { PlanView } from "@/components/plans/PlanView";
 import { PageLoader } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
 import { api } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import type { DailyPlan } from "@/types";
 import { ArrowLeft, Moon } from "lucide-react";
 
@@ -16,6 +17,7 @@ interface Props {
 
 export default function PlanPage({ params }: Props) {
   const { id } = params;
+  const t = useT();
   const [plan, setPlan] = useState<DailyPlan | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -32,14 +34,14 @@ export default function PlanPage({ params }: Props) {
       <div className="flex items-center justify-between mb-8">
         <Link href="/dashboard">
           <Button variant="ghost" size="sm">
-            <ArrowLeft className="h-4 w-4" /> Back
+            <ArrowLeft className="h-4 w-4" /> {t("plan.back")}
           </Button>
         </Link>
         {plan && (
           <Link href={`/review?plan_id=${plan.id}`}>
             <Button variant="secondary" size="sm">
               <Moon className="h-4 w-4" />
-              Evening Review
+              {t("plan.start_review")}
             </Button>
           </Link>
         )}
@@ -49,7 +51,7 @@ export default function PlanPage({ params }: Props) {
 
       {error && (
         <div className="rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm">
-          {error}
+          {t("plan.load_error")} {error}
         </div>
       )}
 

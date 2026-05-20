@@ -49,8 +49,17 @@ async function request<T>(
 export const api = {
   auth: {
     bootstrap: () =>
-      request<{ user_id: string; workspace_id: string }>("/api/auth/bootstrap", {
-        method: "POST",
+      request<{ user_id: string; workspace_id: string; profile: { language: string } | null }>(
+        "/api/auth/bootstrap",
+        { method: "POST" }
+      ),
+  },
+
+  profile: {
+    update: (data: { language: "en" | "de" }) =>
+      request<{ language: string }>("/api/auth/profile", {
+        method: "PATCH",
+        body: JSON.stringify(data),
       }),
   },
 

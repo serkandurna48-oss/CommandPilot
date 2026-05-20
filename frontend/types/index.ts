@@ -155,5 +155,4 @@ export interface ApiError {
 export type GeneratePlanRequest = {
   checkin_id: string;
   user_id?: string;
-  language?: "de" | "en";
 };

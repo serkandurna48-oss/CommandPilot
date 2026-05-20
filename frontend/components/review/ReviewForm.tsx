@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { api } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { today } from "@/lib/utils";
 
 interface ReviewFormProps {
@@ -15,6 +16,7 @@ interface ReviewFormProps {
 
 export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
   const router = useRouter();
+  const t = useT();
   const [submitting, setSubmitting] = useState(false);
   const [done, setDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -54,7 +56,7 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
       });
       setDone(true);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(err instanceof Error ? err.message : t("common.error"));
     } finally {
       setSubmitting(false);
     }
@@ -66,10 +68,10 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
         <div className="h-12 w-12 rounded-full bg-brand-600/20 border border-brand-500/30 flex items-center justify-center text-2xl">
           ✓
         </div>
-        <p className="text-slate-200 font-medium">Review saved.</p>
-        <p className="text-slate-500 text-sm">Rest well. Tomorrow is a clean slate.</p>
+        <p className="text-slate-200 font-medium">{t("review.saved")}</p>
+        <p className="text-slate-500 text-sm">{t("review.saved_sub")}</p>
         <Button variant="ghost" onClick={() => router.push("/dashboard")}>
-          Back to Dashboard
+          {t("review.back")}
         </Button>
       </div>
     );
@@ -87,7 +89,7 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
       {reviewQuestions.length > 0 && (
         <Card variant="bordered">
           <CardHeader>
-            <CardTitle>Today's Questions</CardTitle>
+            <CardTitle>{t("review.today_questions")}</CardTitle>
           </CardHeader>
           <CardContent>
             <ol className="space-y-2">
@@ -104,11 +106,11 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
 
       {/* Ratings */}
       <Card>
-        <CardHeader><CardTitle>End-of-Day Vitals</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t("review.eod_vitals")}</CardTitle></CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Energy at end — {form.energy_end}/10
+              {t("review.energy_end")} — {form.energy_end}/10
             </label>
             <input
               type="range" min={1} max={10}
@@ -119,7 +121,7 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
           </div>
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Overall day — {form.overall_day_rating}/10
+              {t("review.overall_day")} — {form.overall_day_rating}/10
             </label>
             <input
               type="range" min={1} max={10}
@@ -133,25 +135,25 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
 
       {/* Execution */}
       <Card>
-        <CardHeader><CardTitle>Execution</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t("review.execution")}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <Textarea
-            label="Completed (one per line)"
-            placeholder={"Finished Q3 report draft\nResponded to client emails"}
+            label={t("review.completed")}
+            placeholder={t("review.completed_ph")}
             rows={3}
             value={form.completed_raw}
             onChange={(e) => update("completed_raw", e.target.value)}
           />
           <Textarea
-            label="Missed / didn't happen (one per line)"
-            placeholder="Project proposal review — pushed to tomorrow"
+            label={t("review.missed")}
+            placeholder={t("review.missed_ph")}
             rows={2}
             value={form.missed_raw}
             onChange={(e) => update("missed_raw", e.target.value)}
           />
           <Textarea
-            label="Carry over to tomorrow (one per line)"
-            placeholder="Review project proposal\nFollow up with client"
+            label={t("review.carry_over")}
+            placeholder={t("review.carry_over_ph")}
             rows={2}
             value={form.carry_over_raw}
             onChange={(e) => update("carry_over_raw", e.target.value)}
@@ -161,25 +163,25 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
 
       {/* Reflection */}
       <Card>
-        <CardHeader><CardTitle>Reflection</CardTitle></CardHeader>
+        <CardHeader><CardTitle>{t("review.reflection")}</CardTitle></CardHeader>
         <CardContent className="space-y-4">
           <Textarea
-            label="Biggest win today"
-            placeholder="What actually mattered?"
+            label={t("review.biggest_win")}
+            placeholder={t("review.biggest_win_ph")}
             rows={2}
             value={form.biggest_win}
             onChange={(e) => update("biggest_win", e.target.value)}
           />
           <Textarea
-            label="Key lesson"
-            placeholder="What would you do differently?"
+            label={t("review.lesson")}
+            placeholder={t("review.lesson_ph")}
             rows={2}
             value={form.lessons}
             onChange={(e) => update("lessons", e.target.value)}
           />
           <Textarea
-            label="Raw reflection (optional brain dump)"
-            placeholder="Anything else on your mind..."
+            label={t("review.raw")}
+            placeholder={t("review.raw_ph")}
             rows={3}
             value={form.raw_reflection}
             onChange={(e) => update("raw_reflection", e.target.value)}
@@ -188,7 +190,7 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
       </Card>
 
       <Button type="submit" size="lg" loading={submitting} className="w-full">
-        Save Review
+        {t("review.save")}
       </Button>
     </form>
   );

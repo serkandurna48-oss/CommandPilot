@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
 import {
   LayoutDashboard,
   Sunrise,
@@ -12,16 +13,17 @@ import {
   Settings,
 } from "lucide-react";
 
-const navItems = [
-  { href: "/dashboard", label: "Dashboard",   icon: LayoutDashboard },
-  { href: "/morning",   label: "Morning",      icon: Sunrise },
-  { href: "/review",    label: "Review",       icon: Moon },
-  { href: "/rules",     label: "Rules",        icon: Sliders },
-  { href: "/settings",  label: "Settings",     icon: Settings },
-];
-
 export function Sidebar() {
   const pathname = usePathname();
+  const t = useT();
+
+  const navItems = [
+    { href: "/dashboard", label: t("nav.dashboard"), icon: LayoutDashboard },
+    { href: "/morning",   label: t("nav.morning"),   icon: Sunrise },
+    { href: "/review",    label: t("nav.review"),    icon: Moon },
+    { href: "/rules",     label: t("nav.rules"),     icon: Sliders },
+    { href: "/settings",  label: t("nav.settings"),  icon: Settings },
+  ];
 
   return (
     <aside className="hidden md:flex flex-col w-56 bg-slate-900 border-r border-slate-800 min-h-screen">

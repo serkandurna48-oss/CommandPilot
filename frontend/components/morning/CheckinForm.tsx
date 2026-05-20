@@ -6,11 +6,14 @@ import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { api } from "@/lib/api";
-import { getUserLanguage, today } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
+import { today } from "@/lib/utils";
 import type { FixedEvent } from "@/types";
 
 export function CheckinForm() {
   const router = useRouter();
+  const t = useT();
+
   const [step, setStep] = useState<"checkin" | "generating">("checkin");
   const [error, setError] = useState<string | null>(null);
   // Preserved across retries so we don't create a second checkin if plan generation fails.
@@ -53,8 +56,8 @@ export function CheckinForm() {
     setStep("generating");
 
     try {
-      // If a previous attempt already created the checkin but plan generation failed,
-      // reuse that checkin instead of creating a duplicate.
+      // If a previous attempt already created the checkin but plan generation
+      // failed, reuse that checkin instead of creating a duplicate.
       let checkinId = pendingCheckinId;
 
       if (!checkinId) {
@@ -80,12 +83,11 @@ export function CheckinForm() {
 
       const plan = await api.plans.generate({
         checkin_id: checkinId,
-        language: getUserLanguage(),
       });
 
       router.push(`/plans/${plan.id}`);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Something went wrong");
+      setError(err instanceof Error ? err.message : t("common.error"));
       setStep("checkin");
     }
   }
@@ -94,8 +96,8 @@ export function CheckinForm() {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-4">
         <div className="h-10 w-10 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
-        <p className="text-slate-300 text-sm">Generating your daily plan...</p>
-        <p className="text-slate-500 text-xs">This takes about 5-10 seconds.</p>
+        <p className="text-slate-300 text-sm">{t("morning.generating")}</p>
+        <p className="text-slate-500 text-xs">{t("morning.generating_sub")}</p>
       </div>
     );
   }
@@ -106,9 +108,7 @@ export function CheckinForm() {
         <div className="rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm">
           <p>{error}</p>
           {pendingCheckinId && (
-            <p className="text-red-400 text-xs mt-1">
-              Your check-in was saved. Clicking &ldquo;Generate&rdquo; will retry plan generation without creating a duplicate.
-            </p>
+            <p className="text-red-400 text-xs mt-1">{t("morning.checkin_hint")}</p>
           )}
         </div>
       )}
@@ -116,12 +116,12 @@ export function CheckinForm() {
       {/* Quick raw input */}
       <Card variant="elevated">
         <CardHeader>
-          <CardTitle>Quick Input</CardTitle>
+          <CardTitle>{t("morning.quick_input")}</CardTitle>
         </CardHeader>
         <CardContent>
           <Textarea
-            label="Dump everything here — the AI will structure it"
-            placeholder="Woke up at 7:00, energy 6/10, slightly tired. Morning run at 08:00, team call at 14:00. Need to finish the Q3 report, review project proposal, respond to client emails..."
+            label={t("morning.quick_label")}
+            placeholder={t("morning.quick_ph")}
             rows={5}
             value={form.raw_input}
             onChange={(e) => updateField("raw_input", e.target.value)}
@@ -132,11 +132,11 @@ export function CheckinForm() {
       {/* Vitals */}
       <Card>
         <CardHeader>
-          <CardTitle>Morning Vitals</CardTitle>
+          <CardTitle>{t("morning.vitals")}</CardTitle>
         </CardHeader>
         <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Input
-            label="Wake Time"
+            label={t("morning.wake_time")}
             type="time"
             value={form.wake_time}
             onChange={(e) => updateField("wake_time", e.target.value)}
@@ -144,7 +144,7 @@ export function CheckinForm() {
 
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Sleep Quality — {form.sleep_quality}/10
+              {t("morning.sleep_quality")} — {form.sleep_quality}/10
             </label>
             <input
               type="range" min={1} max={10}
@@ -156,7 +156,7 @@ export function CheckinForm() {
 
           <div className="flex flex-col gap-1.5">
             <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              Energy Level — {form.energy_level}/10
+              {t("morning.energy_level")} — {form.energy_level}/10
             </label>
             <input
               type="range" min={1} max={10}
@@ -167,7 +167,7 @@ export function CheckinForm() {
           </div>
 
           <Input
-            label="Available Hours"
+            label={t("morning.avail_hours")}
             type="number"
             min={1} max={16} step={0.5}
             placeholder="e.g. 8"
@@ -176,15 +176,15 @@ export function CheckinForm() {
           />
 
           <Input
-            label="Body / Physical Status"
-            placeholder="Sore legs, light headache, feeling fresh..."
+            label={t("morning.body_status")}
+            placeholder={t("morning.body_ph")}
             value={form.body_status}
             onChange={(e) => updateField("body_status", e.target.value)}
           />
 
           <Input
-            label="Mood"
-            placeholder="Focused, anxious, motivated, neutral..."
+            label={t("morning.mood")}
+            placeholder={t("morning.mood_ph")}
             value={form.mood}
             onChange={(e) => updateField("mood", e.target.value)}
           />
@@ -194,26 +194,26 @@ export function CheckinForm() {
       {/* Tasks & Events */}
       <Card>
         <CardHeader>
-          <CardTitle>Today&apos;s Agenda</CardTitle>
+          <CardTitle>{t("morning.agenda")}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <Textarea
-            label="Fixed Events (one per line — include time)"
-            placeholder={"Gym at 10:00\nTennis at 18:00\nTeam call at 14:00"}
+            label={t("morning.fixed_events")}
+            placeholder={t("morning.fixed_ph")}
             rows={3}
             value={form.fixed_events_raw}
             onChange={(e) => updateField("fixed_events_raw", e.target.value)}
           />
           <Textarea
-            label="Important Tasks (one per line)"
-            placeholder={"Finish Q3 report draft\nReview project proposal\nRespond to client emails"}
+            label={t("morning.tasks")}
+            placeholder={t("morning.tasks_ph")}
             rows={4}
             value={form.important_tasks_raw}
             onChange={(e) => updateField("important_tasks_raw", e.target.value)}
           />
           <Textarea
-            label="Constraints / Hard Limits"
-            placeholder="No work after 21:00. Don't schedule deep work right after intense exercise."
+            label={t("morning.constraints")}
+            placeholder={t("morning.constraints_ph")}
             rows={2}
             value={form.day_constraints}
             onChange={(e) => updateField("day_constraints", e.target.value)}
@@ -222,7 +222,7 @@ export function CheckinForm() {
       </Card>
 
       <Button type="submit" size="lg" className="w-full">
-        {pendingCheckinId && error ? "Retry Plan Generation" : "Generate Today's Plan"}
+        {pendingCheckinId && error ? t("morning.retry") : t("morning.generate")}
       </Button>
     </form>
   );

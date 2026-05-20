@@ -58,6 +58,12 @@ async def generate_plan(
             },
         )
 
+    # Language is always taken from the user's profile — the request body cannot
+    # override it. profile.language is the single source of truth.
+    _profile_lang = (setup.get("profile") or {}).get("language") or "en"
+    effective_language = _profile_lang if _profile_lang in ("en", "de") else "en"
+    logger.info("Effective language | language=%s | source=profile", effective_language)
+
     if not effective_workspace_id:
         logger.error(
             "workspace_id still None after ensure_user_workspace | user_id=%s",
@@ -98,10 +104,10 @@ async def generate_plan(
         )
 
     # ── Step 4: Generate plan via AI ─────────────────────────────────────────
-    logger.info("Calling AI service | language=%s", req.language)
+    logger.info("Calling AI service | language=%s", effective_language)
     try:
         plan, raw_json, review_context_used = await generate_daily_plan(
-            checkin, rules, req.language, recent_review
+            checkin, rules, effective_language, recent_review
         )
     except AIGenerationError as exc:
         logger.error("AI generation failed | code=%s | %s", exc.code, str(exc))

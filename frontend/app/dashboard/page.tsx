@@ -6,13 +6,15 @@ import { AppShell } from "@/components/layout/AppShell";
 import { Header } from "@/components/layout/Header";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
-import { PageLoader, EmptyState } from "@/components/ui/Spinner";
+import { PageLoader } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
+import { useT } from "@/lib/i18n";
 import { formatDateShort } from "@/lib/utils";
 import type { DailyPlan } from "@/types";
 import { Sunrise, ArrowRight, Trophy, Zap } from "lucide-react";
 
 export default function DashboardPage() {
+  const t = useT();
   const [latestPlan, setLatestPlan] = useState<DailyPlan | null>(null);
   const [recentPlans, setRecentPlans] = useState<DailyPlan[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,8 +38,8 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <Header
-        title="Dashboard"
-        subtitle="Your personal command center."
+        title={t("dashboard.title")}
+        subtitle={t("dashboard.subtitle")}
       />
 
       {loading ? (
@@ -48,13 +50,11 @@ export default function DashboardPage() {
           {!latestPlan && (
             <div className="rounded-xl bg-gradient-to-br from-brand-600/20 to-slate-800/40 border border-brand-500/20 p-8 text-center">
               <Sunrise className="h-10 w-10 text-brand-400 mx-auto mb-3" />
-              <h2 className="text-slate-100 font-semibold text-lg mb-1">No plan for today yet.</h2>
-              <p className="text-slate-400 text-sm mb-5">
-                Start your morning check-in and get your AI-generated daily strategy in under 30 seconds.
-              </p>
+              <h2 className="text-slate-100 font-semibold text-lg mb-1">{t("dashboard.no_plan")}</h2>
+              <p className="text-slate-400 text-sm mb-5">{t("dashboard.no_plan_sub")}</p>
               <Link href="/morning">
                 <Button size="lg">
-                  Start Morning Check-in
+                  {t("dashboard.start_checkin")}
                   <ArrowRight className="h-4 w-4" />
                 </Button>
               </Link>
@@ -66,23 +66,21 @@ export default function DashboardPage() {
             <Card variant="elevated">
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle>Today's Plan</CardTitle>
+                  <CardTitle>{t("dashboard.today_plan")}</CardTitle>
                   <Link href={`/plans/${latestPlan.id}`}>
                     <Button variant="ghost" size="sm">
-                      View full plan <ArrowRight className="h-3 w-3" />
+                      {t("dashboard.view_plan")} <ArrowRight className="h-3 w-3" />
                     </Button>
                   </Link>
                 </div>
               </CardHeader>
               <CardContent className="space-y-4">
-                {/* Day mode */}
                 {latestPlan.day_mode && (
                   <p className="text-brand-400 text-sm font-semibold uppercase tracking-wide">
                     {latestPlan.day_mode}
                   </p>
                 )}
 
-                {/* Main win */}
                 {latestPlan.main_win && (
                   <div className="flex gap-2">
                     <Trophy className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
@@ -90,7 +88,6 @@ export default function DashboardPage() {
                   </div>
                 )}
 
-                {/* Top priorities */}
                 {latestPlan.top_priorities.length > 0 && (
                   <div className="space-y-2">
                     {latestPlan.top_priorities.map((p, i) => (
@@ -104,10 +101,10 @@ export default function DashboardPage() {
 
                 <div className="pt-2 border-t border-slate-700 flex gap-2">
                   <Link href="/morning">
-                    <Button variant="secondary" size="sm">New Check-in</Button>
+                    <Button variant="secondary" size="sm">{t("dashboard.new_checkin")}</Button>
                   </Link>
                   <Link href="/review">
-                    <Button variant="ghost" size="sm">Evening Review</Button>
+                    <Button variant="ghost" size="sm">{t("dashboard.eve_review")}</Button>
                   </Link>
                 </div>
               </CardContent>
@@ -120,7 +117,7 @@ export default function DashboardPage() {
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
                   <Zap className="h-4 w-4 text-brand-400" />
-                  Recent Plans
+                  {t("dashboard.recent_plans")}
                 </CardTitle>
               </CardHeader>
               <CardContent className="divide-y divide-slate-700/50">

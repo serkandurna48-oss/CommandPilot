@@ -3,7 +3,8 @@
 import { DailyPlan } from "@/types";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { cn, BLOCK_TYPE_COLORS, BLOCK_TYPE_LABELS, formatDate } from "@/lib/utils";
+import { cn, BLOCK_TYPE_COLORS, formatDate } from "@/lib/utils";
+import { useT } from "@/lib/i18n";
 import { Target, Zap, Ban, HelpCircle, Trophy, Clock } from "lucide-react";
 
 interface PlanViewProps {
@@ -11,6 +12,7 @@ interface PlanViewProps {
 }
 
 export function PlanView({ plan }: PlanViewProps) {
+  const t = useT();
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -28,7 +30,7 @@ export function PlanView({ plan }: PlanViewProps) {
             {plan.review_context_used && (
               <span className="inline-flex items-center gap-1.5 text-xs text-brand-400 bg-brand-600/10 border border-brand-500/20 rounded px-2 py-0.5">
                 <span className="h-1.5 w-1.5 rounded-full bg-brand-400 shrink-0" />
-                Based on your recent evening review
+                {t("plan.based_on_review")}
               </span>
             )}
             {plan.model_used && (
@@ -45,7 +47,7 @@ export function PlanView({ plan }: PlanViewProps) {
           <div className="mt-4 flex items-start gap-2">
             <Trophy className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
             <div>
-              <p className="text-xs text-amber-400 font-medium uppercase tracking-wide mb-0.5">Main Win</p>
+              <p className="text-xs text-amber-400 font-medium uppercase tracking-wide mb-0.5">{t("plan.main_win")}</p>
               <p className="text-slate-100 font-medium">{plan.main_win}</p>
             </div>
           </div>
@@ -58,7 +60,7 @@ export function PlanView({ plan }: PlanViewProps) {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Target className="h-4 w-4 text-brand-400" />
-              Top 3 Priorities
+              {t("plan.top_priorities")}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -91,7 +93,7 @@ export function PlanView({ plan }: PlanViewProps) {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Clock className="h-4 w-4 text-brand-400" />
-              Time-Blocked Schedule
+              {t("plan.schedule")}
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-2">
@@ -118,7 +120,7 @@ export function PlanView({ plan }: PlanViewProps) {
                           BLOCK_TYPE_COLORS[block.block_type] ?? "bg-slate-700 text-slate-300"
                         )}
                       >
-                        {BLOCK_TYPE_LABELS[block.block_type] ?? block.block_type}
+                          {t(`block.${block.block_type}`)}
                       </span>
                     )}
                     {block.life_area && (
@@ -142,7 +144,7 @@ export function PlanView({ plan }: PlanViewProps) {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Zap className="h-4 w-4 text-amber-400" />
-                Energy Strategy
+                {t("plan.energy_strategy")}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -156,7 +158,7 @@ export function PlanView({ plan }: PlanViewProps) {
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Ban className="h-4 w-4 text-red-400" />
-                Not Today
+                {t("plan.not_today")}
               </CardTitle>
             </CardHeader>
             <CardContent>
@@ -179,7 +181,7 @@ export function PlanView({ plan }: PlanViewProps) {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <HelpCircle className="h-4 w-4 text-violet-400" />
-              Evening Review Questions
+              {t("plan.eve_questions")}
             </CardTitle>
           </CardHeader>
           <CardContent>
