@@ -30,7 +30,16 @@ async function request<T>(
 
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail ?? "Request failed");
+    const detail = err.detail;
+    let message: string;
+    if (typeof detail === "string") {
+      message = detail;
+    } else if (detail && typeof detail === "object" && "message" in detail) {
+      message = String(detail.message);
+    } else {
+      message = res.statusText || "Request failed";
+    }
+    throw new Error(message);
   }
 
   return res.json() as Promise<T>;

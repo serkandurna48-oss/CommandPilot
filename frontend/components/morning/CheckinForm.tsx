@@ -13,6 +13,8 @@ export function CheckinForm() {
   const router = useRouter();
   const [step, setStep] = useState<"checkin" | "generating">("checkin");
   const [error, setError] = useState<string | null>(null);
+  // Preserved across retries so we don't create a second checkin if plan generation fails.
+  const [pendingCheckinId, setPendingCheckinId] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     wake_time: "",
@@ -51,25 +53,33 @@ export function CheckinForm() {
     setStep("generating");
 
     try {
-      const checkin = await api.checkins.create({
-        checkin_date: today(),
-        wake_time: form.wake_time || undefined,
-        sleep_quality: form.sleep_quality,
-        energy_level: form.energy_level,
-        body_status: form.body_status || undefined,
-        mood: form.mood || undefined,
-        available_hours: form.available_hours ? parseFloat(form.available_hours) : undefined,
-        day_constraints: form.day_constraints || undefined,
-        raw_input: form.raw_input || undefined,
-        important_tasks: form.important_tasks_raw
-          .split("\n")
-          .map((t) => t.trim())
-          .filter(Boolean),
-        fixed_events: parseFixedEvents(form.fixed_events_raw),
-      });
+      // If a previous attempt already created the checkin but plan generation failed,
+      // reuse that checkin instead of creating a duplicate.
+      let checkinId = pendingCheckinId;
+
+      if (!checkinId) {
+        const checkin = await api.checkins.create({
+          checkin_date: today(),
+          wake_time: form.wake_time || undefined,
+          sleep_quality: form.sleep_quality,
+          energy_level: form.energy_level,
+          body_status: form.body_status || undefined,
+          mood: form.mood || undefined,
+          available_hours: form.available_hours ? parseFloat(form.available_hours) : undefined,
+          day_constraints: form.day_constraints || undefined,
+          raw_input: form.raw_input || undefined,
+          important_tasks: form.important_tasks_raw
+            .split("\n")
+            .map((t) => t.trim())
+            .filter(Boolean),
+          fixed_events: parseFixedEvents(form.fixed_events_raw),
+        });
+        checkinId = checkin.id;
+        setPendingCheckinId(checkinId);
+      }
 
       const plan = await api.plans.generate({
-        checkin_id: checkin.id,
+        checkin_id: checkinId,
         language: getUserLanguage(),
       });
 
@@ -94,7 +104,12 @@ export function CheckinForm() {
     <form onSubmit={handleSubmit} className="space-y-6">
       {error && (
         <div className="rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm">
-          {error}
+          <p>{error}</p>
+          {pendingCheckinId && (
+            <p className="text-red-400 text-xs mt-1">
+              Your check-in was saved. Clicking &ldquo;Generate&rdquo; will retry plan generation without creating a duplicate.
+            </p>
+          )}
         </div>
       )}
 
@@ -179,7 +194,7 @@ export function CheckinForm() {
       {/* Tasks & Events */}
       <Card>
         <CardHeader>
-          <CardTitle>Today's Agenda</CardTitle>
+          <CardTitle>Today&apos;s Agenda</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <Textarea
@@ -206,8 +221,8 @@ export function CheckinForm() {
         </CardContent>
       </Card>
 
-      <Button type="submit" size="lg" className="w-full">
-        Generate Today's Plan
+      <Button type="submit" size="lg" className="w-full" disabled={step === "generating"}>
+        {pendingCheckinId && error ? "Retry Plan Generation" : "Generate Today's Plan"}
       </Button>
     </form>
   );

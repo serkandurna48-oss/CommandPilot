@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass
 from uuid import uuid4
 
@@ -5,6 +6,8 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.db.client import get_db
+
+logger = logging.getLogger(__name__)
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -68,6 +71,7 @@ def get_current_user(
 def ensure_user_workspace(user: CurrentUser) -> dict:
     db = get_db()
 
+    # ── Profile ──────────────────────────────────────────────────────────────
     profile_result = (
         db.table("profiles")
         .select("*")
@@ -76,6 +80,13 @@ def ensure_user_workspace(user: CurrentUser) -> dict:
         .execute()
     )
     profile = profile_result.data if profile_result else None
+    profile_exists = profile is not None
+
+    logger.info(
+        "ensure_user_workspace | user_id=%s | profile_exists=%s",
+        user.id,
+        profile_exists,
+    )
 
     if not profile:
         insert_result = (
@@ -89,8 +100,16 @@ def ensure_user_workspace(user: CurrentUser) -> dict:
                 detail="Failed to create user profile",
             )
         profile = insert_result.data[0]
+        logger.info("ensure_user_workspace | profile created | user_id=%s", user.id)
 
+    # ── Workspace ─────────────────────────────────────────────────────────────
     workspace_id = profile.get("workspace_id")
+    logger.info(
+        "ensure_user_workspace | workspace_id_present=%s | user_id=%s",
+        bool(workspace_id),
+        user.id,
+    )
+
     if not workspace_id:
         workspace_slug = f"personal-{user.id.replace('-', '')}"
         workspace_insert = (
@@ -110,6 +129,10 @@ def ensure_user_workspace(user: CurrentUser) -> dict:
                 detail="Failed to create workspace",
             )
         workspace_id = workspace_insert.data[0]["id"]
+        logger.info(
+            "ensure_user_workspace | workspace created | user_id=%s",
+            user.id,
+        )
 
         profile_update = (
             db.table("profiles")
@@ -124,6 +147,7 @@ def ensure_user_workspace(user: CurrentUser) -> dict:
             )
         profile = profile_update.data[0]
 
+    # ── Workspace membership ──────────────────────────────────────────────────
     member_result = (
         db.table("workspace_members")
         .select("id")
@@ -132,14 +156,37 @@ def ensure_user_workspace(user: CurrentUser) -> dict:
         .maybe_single()
         .execute()
     )
-    if not member_result or not member_result.data:
-        db.table("workspace_members").insert(
-            {
-                "workspace_id": workspace_id,
-                "user_id": user.id,
-                "role": "owner",
-            }
-        ).execute()
+    member_exists = bool(member_result and member_result.data)
+    logger.info(
+        "ensure_user_workspace | workspace_members_exists=%s | user_id=%s",
+        member_exists,
+        user.id,
+    )
+
+    if not member_exists:
+        member_insert = (
+            db.table("workspace_members")
+            .insert(
+                {
+                    "workspace_id": workspace_id,
+                    "user_id": user.id,
+                    "role": "owner",
+                }
+            )
+            .execute()
+        )
+        if not member_insert.data:
+            # Log but do not raise — membership is not required for plan generation
+            # (service role key bypasses RLS). Bootstrap can still be considered complete.
+            logger.warning(
+                "ensure_user_workspace | workspace_members insert returned no data | user_id=%s",
+                user.id,
+            )
+        else:
+            logger.info(
+                "ensure_user_workspace | workspace_members created | user_id=%s",
+                user.id,
+            )
 
     return {
         "user_id": user.id,
