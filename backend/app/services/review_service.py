@@ -14,7 +14,7 @@ def get_recent_review_for_user(user_id: str, reference_date: date) -> dict | Non
 
     result = (
         db.table("evening_reviews")
-        .select("review_date,biggest_win,lessons,carry_over_to_tomorrow,energy_end,overall_day_rating")
+        .select("review_date,completed_items,missed_items,raw_reflection,biggest_win,lessons,carry_over_to_tomorrow,energy_end,overall_day_rating")
         .eq("user_id", user_id)
         .gte("review_date", str(cutoff))
         .lt("review_date", str(reference_date))  # exclude today's review

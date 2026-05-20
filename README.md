@@ -35,6 +35,17 @@ Turn a messy morning brain dump into a clear, AI-generated daily strategy.
 
 The anon key is safe for the frontend. The service role key must only be used by the FastAPI backend.
 
+### 1b. Running Migrations
+
+After running `supabase/schema.sql` for the first time, apply any incremental migrations in order:
+
+| File | What it does | Run when |
+| --- | --- | --- |
+| `supabase/migrations/001_profiles_language_check.sql` | Normalises `profiles.language` to `'en'` for null/invalid rows, then adds a CHECK constraint | Before deploying i18n / language-selection feature |
+| `supabase/migrations/002_daily_plans_review_context_used.sql` | Adds `daily_plans.review_context_used boolean default false` if the column is missing | Before deploying backend code that writes `review_context_used` |
+
+Run each file in the Supabase SQL Editor. Migrations are idempotent — safe to re-run.
+
 ### 2. Backend Setup
 
 ```bash
