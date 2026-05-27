@@ -42,7 +42,7 @@ def get_checkin(checkin_id: str) -> dict | None:
         .maybe_single()
         .execute()
     )
-    return result.data
+    return result.data if result else None
 
 
 def get_checkins_for_user(user_id: str, limit: int = 30) -> list[dict]:

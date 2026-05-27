@@ -8,8 +8,12 @@ from app.models.plan import PlanGenerateRequest, PlanResponse
 from app.services.ai_service import AIGenerationError, generate_daily_plan
 from app.services.checkin_service import get_active_rules_for_user
 from app.services.plan_service import (
+    PlanAlreadyExistsError,
+    PlanSaveError,
     get_latest_plan_for_user,
+    get_plan_for_date,
     get_plans_for_user,
+    normalize_plan_date,
     save_plan,
 )
 from app.services.review_service import get_recent_review_for_user
@@ -83,6 +87,45 @@ async def generate_plan(
     checkin = require_owned_record("daily_checkins", req.checkin_id, user)
     logger.info("Checkin verified | checkin_date=%s", checkin.get("checkin_date"))
 
+    # ── Step 1.5: Resolve plan_date + pre-flight duplicate check ────────────
+    _raw_date = checkin.get("checkin_date")
+    if not _raw_date:
+        logger.error("checkin has no checkin_date | checkin_id=%s", req.checkin_id)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "CHECKIN_MISSING_DATE",
+                "message": "Check-in has no date — cannot generate a plan.",
+            },
+        )
+    try:
+        plan_date = normalize_plan_date(_raw_date)
+    except (ValueError, TypeError) as exc:
+        logger.error("checkin_date is invalid | checkin_id=%s | value=%r | %s", req.checkin_id, _raw_date, exc)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "CHECKIN_INVALID_DATE",
+                "message": "Check-in has an invalid date — cannot generate a plan.",
+            },
+        )
+
+    _existing = get_plan_for_date(user.id, plan_date)
+    if _existing:
+        logger.info(
+            "Plan already exists — aborting before AI call | plan_id=%s | plan_date=%s",
+            _existing["id"],
+            plan_date,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PLAN_ALREADY_EXISTS",
+                "plan_id": _existing["id"],
+                "message": "A plan already exists for this date.",
+            },
+        )
+
     # ── Step 2: Load user rules ──────────────────────────────────────────────
     rules = get_active_rules_for_user(user.id)
     logger.info("Rules loaded | count=%d", len(rules) if rules else 0)
@@ -141,12 +184,33 @@ async def generate_plan(
             checkin_id=req.checkin_id,
             plan=plan,
             raw_ai_response=raw_json,
-            plan_date=checkin.get("checkin_date"),
+            plan_date=plan_date,
             workspace_id=effective_workspace_id,
             review_context_used=review_context_used,
         )
         logger.info("Plan saved successfully")
         return result
+    except PlanAlreadyExistsError as exc:
+        # Race condition: two requests slipped past the pre-flight check simultaneously.
+        logger.warning("Concurrent duplicate plan insert blocked by DB constraint | plan_id=%s", exc.plan_id)
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "PLAN_ALREADY_EXISTS",
+                "plan_id": exc.plan_id,
+                "message": "A plan already exists for this date.",
+            },
+        )
+    except PlanSaveError as exc:
+        # 23505 fired but re-read found nothing — degenerate state, already logged in service.
+        logger.error("Plan save failed with unrecoverable constraint state | %s", str(exc)[:200])
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "PLAN_SAVE_FAILED",
+                "message": "Plan was generated but could not be saved. Please try again.",
+            },
+        )
     except Exception as exc:
         logger.error("Plan save failed | %s: %s", type(exc).__name__, str(exc)[:200])
         raise HTTPException(
