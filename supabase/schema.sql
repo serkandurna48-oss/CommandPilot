@@ -177,6 +177,22 @@ create table if not exists evening_reviews (
 );
 
 -- ---------------------------------------------------------------------------
+-- AI usage log  (CP-203 — daily spending cap)
+-- ---------------------------------------------------------------------------
+create table if not exists ai_usage_log (
+  id            uuid          primary key default uuid_generate_v4(),
+  user_id       uuid          not null references profiles(id) on delete cascade,
+  workspace_id  uuid          references workspaces(id),
+  plan_id       uuid          references daily_plans(id) on delete set null,
+  request_date  date          not null,
+  model         text          not null,
+  input_tokens  int           not null,
+  output_tokens int           not null,
+  cost_usd      numeric(10,6) not null,
+  created_at    timestamptz   not null default now()
+);
+
+-- ---------------------------------------------------------------------------
 -- Referential integrity: workspaces.owner_id → profiles(id)
 -- Added after profiles table creation to avoid circular dependency
 -- ---------------------------------------------------------------------------
@@ -202,6 +218,9 @@ create index if not exists idx_user_rules_user_active
 create index if not exists idx_projects_user
   on projects(user_id, status);
 
+create index if not exists idx_ai_usage_log_user_date
+  on ai_usage_log(user_id, request_date desc);
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security
 -- ---------------------------------------------------------------------------
@@ -212,6 +231,7 @@ alter table life_areas      enable row level security;
 alter table projects        enable row level security;
 alter table user_rules      enable row level security;
 alter table daily_checkins  enable row level security;
+alter table ai_usage_log    enable row level security;
 alter table daily_plans     enable row level security;
 alter table evening_reviews enable row level security;
 
@@ -248,6 +268,10 @@ create policy "Users own plans"
 -- evening_reviews
 create policy "Users own reviews"
   on evening_reviews for all using (auth.uid() = user_id);
+
+-- ai_usage_log: read-only for users (writes via service role only)
+create policy "Users view own usage"
+  on ai_usage_log for select using (auth.uid() = user_id);
 
 -- user_rules
 create policy "Users own rules"

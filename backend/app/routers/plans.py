@@ -1,9 +1,10 @@
 import logging
-from datetime import date
+from datetime import date, datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth import CurrentUser, ensure_user_workspace, get_current_user, require_owned_record
+from app.core.config import settings
 from app.models.plan import PlanGenerateRequest, PlanResponse
 from app.services.ai_service import AIGenerationError, generate_daily_plan
 from app.services.checkin_service import get_active_rules_for_user
@@ -17,6 +18,12 @@ from app.services.plan_service import (
     save_plan,
 )
 from app.services.review_service import get_recent_review_for_user
+from app.services.usage_service import (
+    DailyCapExceededError,
+    calculate_cost_usd,
+    check_daily_cap,
+    log_ai_usage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -126,6 +133,31 @@ async def generate_plan(
             },
         )
 
+    # ── Step 1.7: Daily spending cap check (before AI call) ─────────────────
+    # Soft cap: blocks new generations once daily spend >= DAILY_CAP_USD.
+    # A single in-progress call can push the total slightly above the cap.
+    # request_date is computed once here and passed to both check_daily_cap
+    # and log_ai_usage to prevent a midnight-crossing race where the two
+    # calls land on different UTC dates.
+    request_date = datetime.now(timezone.utc).date()
+    try:
+        check_daily_cap(user.id, request_date)
+    except DailyCapExceededError as exc:
+        logger.warning(
+            "Daily cap reached — aborting before AI call | user_id=%s | spend=%s | cap=%s",
+            user.id, exc.current_spend, exc.cap,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail={
+                "code": "DAILY_SPEND_CAP_REACHED",
+                "current_spend": str(exc.current_spend),
+                "cap": str(exc.cap),
+                "resets_at": exc.resets_at,
+                "message": "Daily plan generation limit reached. Try again tomorrow.",
+            },
+        )
+
     # ── Step 2: Load user rules ──────────────────────────────────────────────
     rules = get_active_rules_for_user(user.id)
     logger.info("Rules loaded | count=%d", len(rules) if rules else 0)
@@ -150,11 +182,32 @@ async def generate_plan(
     # ── Step 4: Generate plan via AI ─────────────────────────────────────────
     logger.info("Calling AI service | language=%s", effective_language)
     try:
-        plan, raw_json, review_context_used = await generate_daily_plan(
-            checkin, rules, effective_language, recent_review
+        plan, raw_json, review_context_used, input_tokens, output_tokens = (
+            await generate_daily_plan(checkin, rules, effective_language, recent_review)
         )
     except AIGenerationError as exc:
         logger.error("AI generation failed | code=%s | %s", exc.code, str(exc))
+        # Log usage even on failure — tokens were spent the moment OpenAI responded.
+        # For network-level errors (auth, rate-limit, connection) exc.input_tokens
+        # and exc.output_tokens are 0, so this is a no-op cost-wise.
+        if exc.input_tokens or exc.output_tokens:
+            try:
+                _fail_cost = calculate_cost_usd(settings.OPENAI_MODEL, exc.input_tokens, exc.output_tokens)
+                log_ai_usage(
+                    user_id=user.id,
+                    model=settings.OPENAI_MODEL,
+                    input_tokens=exc.input_tokens,
+                    output_tokens=exc.output_tokens,
+                    cost_usd=_fail_cost,
+                    request_date=request_date,
+                    workspace_id=effective_workspace_id,
+                    plan_id=None,
+                )
+            except Exception as log_exc:
+                logger.error(
+                    "Failed to log AI usage on error path | %s: %s",
+                    type(log_exc).__name__, str(log_exc)[:200],
+                )
         raise HTTPException(
             status_code=502,
             detail={
@@ -175,6 +228,36 @@ async def generate_plan(
                 "message": "Plan generation failed. Please try again.",
             },
         )
+
+    # ── Step 4.5: Log AI usage (before save — captures spend even if save fails)
+    try:
+        cost_usd = calculate_cost_usd(settings.OPENAI_MODEL, input_tokens, output_tokens)
+    except ValueError as exc:
+        logger.error(
+            "Pricing not configured for model %r — cannot log usage or enforce cap | %s",
+            settings.OPENAI_MODEL, exc,
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "PRICING_NOT_CONFIGURED",
+                "message": "Plan generation failed due to a server configuration error.",
+            },
+        ) from exc
+    logger.info(
+        "AI usage | model=%s | input=%d | output=%d | cost_usd=%s",
+        settings.OPENAI_MODEL, input_tokens, output_tokens, cost_usd,
+    )
+    log_ai_usage(
+        user_id=user.id,
+        model=settings.OPENAI_MODEL,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost_usd,
+        request_date=request_date,
+        workspace_id=effective_workspace_id,
+        plan_id=None,  # plan not yet saved; updated via on delete set null if plan later deleted
+    )
 
     # ── Step 5: Save plan ────────────────────────────────────────────────────
     logger.info("Saving plan | review_context_used=%s", review_context_used)

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { api } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { today } from "@/lib/utils";
 import type { FixedEvent } from "@/types";
@@ -87,6 +87,14 @@ export function CheckinForm() {
 
       router.push(`/plans/${plan.id}`);
     } catch (err: unknown) {
+      if (
+        err instanceof ApiError &&
+        err.code === "PLAN_ALREADY_EXISTS" &&
+        err.planId
+      ) {
+        router.push(`/plans/${err.planId}`);
+        return;
+      }
       setError(err instanceof Error ? err.message : t("common.error"));
       setStep("checkin");
     }

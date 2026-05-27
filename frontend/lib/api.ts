@@ -12,6 +12,25 @@ import { supabase } from "@/lib/supabase";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
+export class ApiError extends Error {
+  status: number;
+  code?: string;
+  planId?: string;
+  detail: unknown;
+
+  constructor(message: string, status: number, detail: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.detail = detail;
+
+    if (detail && typeof detail === "object") {
+      if ("code" in detail) this.code = String(detail.code);
+      if ("plan_id" in detail) this.planId = String(detail.plan_id);
+    }
+  }
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {}
@@ -39,7 +58,7 @@ async function request<T>(
     } else {
       message = res.statusText || "Request failed";
     }
-    throw new Error(message);
+    throw new ApiError(message, res.status, detail);
   }
 
   return res.json() as Promise<T>;
