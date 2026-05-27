@@ -110,7 +110,7 @@ export function PlanView({ plan }: PlanViewProps) {
                 </div>
 
                 {/* Block */}
-                <div className="flex-1 rounded-lg bg-slate-800/50 border border-slate-700/50 px-4 py-3 group-hover:border-slate-600 transition-colors">
+                <div className="min-w-0 flex-1 rounded-lg bg-slate-800/50 border border-slate-700/50 px-4 py-3 group-hover:border-slate-600 transition-colors">
                   <div className="flex items-center gap-2 flex-wrap">
                     <p className="text-slate-200 text-sm font-medium">{block.title}</p>
                     {block.block_type && (

@@ -65,7 +65,7 @@ export default function DashboardPage() {
           {latestPlan && (
             <Card variant="elevated">
               <CardHeader>
-                <div className="flex items-center justify-between">
+                <div className="flex flex-wrap items-center justify-between gap-3">
                   <CardTitle>{t("dashboard.today_plan")}</CardTitle>
                   <Link href={`/plans/${latestPlan.id}`}>
                     <Button variant="ghost" size="sm">
@@ -99,7 +99,7 @@ export default function DashboardPage() {
                   </div>
                 )}
 
-                <div className="pt-2 border-t border-slate-700 flex gap-2">
+                <div className="pt-2 border-t border-slate-700 flex flex-wrap gap-2">
                   <Link href="/morning">
                     <Button variant="secondary" size="sm">{t("dashboard.new_checkin")}</Button>
                   </Link>
