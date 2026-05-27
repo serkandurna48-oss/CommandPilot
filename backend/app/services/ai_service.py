@@ -170,36 +170,54 @@ async def generate_daily_plan(
         input_tokens, output_tokens,
     )
 
-    raw_json = response.choices[0].message.content
-    if not raw_json:
-        logger.error("OpenAI returned empty response content")
-        raise AIGenerationError(
-            "UNKNOWN_AI_ERROR", "OpenAI returned an empty response.",
-            input_tokens=input_tokens, output_tokens=output_tokens,
+    try:
+        raw_json = response.choices[0].message.content
+        if not raw_json:
+            logger.error("OpenAI returned empty response content")
+            raise AIGenerationError(
+                "UNKNOWN_AI_ERROR", "OpenAI returned an empty response.",
+                input_tokens=input_tokens, output_tokens=output_tokens,
+            )
+
+        # ── Step 4: Parse JSON response ──────────────────────────────────────
+        try:
+            data = json.loads(raw_json)
+        except json.JSONDecodeError as exc:
+            logger.error("AI JSON parse failed | exc=%s | internal_code=AI_JSON_INVALID", type(exc).__name__)
+            raise AIGenerationError(
+                "AI_JSON_INVALID", "OpenAI returned invalid JSON.",
+                input_tokens=input_tokens, output_tokens=output_tokens,
+            ) from exc
+
+        # ── Step 5: Validate Pydantic schema ─────────────────────────────────
+        try:
+            plan = DailyPlanAI(**data)
+        except ValidationError as exc:
+            # Log field/type summary only — no user content
+            error_summary = [(e["loc"], e["type"]) for e in exc.errors()]
+            logger.error("AI schema validation failed | field_errors=%s", error_summary)
+            raise AIGenerationError(
+                "AI_SCHEMA_INVALID",
+                "AI response did not match the expected schema.",
+                input_tokens=input_tokens, output_tokens=output_tokens,
+            ) from exc
+
+        logger.info("AI plan generation succeeded")
+        return plan, raw_json, review_context_used, input_tokens, output_tokens
+
+    except AIGenerationError:
+        raise  # already structured — let it through with its tokens attached
+    except Exception as exc:
+        # Catches malformed choices (IndexError, AttributeError, etc.) that
+        # escape the specific handlers above. Tokens are known at this point,
+        # so we wrap rather than losing them.
+        logger.error(
+            "Unexpected error processing OpenAI response | exc=%s | internal_code=AI_RESPONSE_MALFORMED",
+            type(exc).__name__,
         )
-
-    # ── Step 4: Parse JSON response ──────────────────────────────────────────
-    try:
-        data = json.loads(raw_json)
-    except json.JSONDecodeError as exc:
-        logger.error("AI JSON parse failed | exc=%s | internal_code=AI_JSON_INVALID", type(exc).__name__)
         raise AIGenerationError(
-            "AI_JSON_INVALID", "OpenAI returned invalid JSON.",
-            input_tokens=input_tokens, output_tokens=output_tokens,
+            "AI_RESPONSE_MALFORMED",
+            f"Unexpected error processing OpenAI response: {type(exc).__name__}",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
         ) from exc
-
-    # ── Step 5: Validate Pydantic schema ─────────────────────────────────────
-    try:
-        plan = DailyPlanAI(**data)
-    except ValidationError as exc:
-        # Log field/type summary only — no user content
-        error_summary = [(e["loc"], e["type"]) for e in exc.errors()]
-        logger.error("AI schema validation failed | field_errors=%s", error_summary)
-        raise AIGenerationError(
-            "AI_SCHEMA_INVALID",
-            "AI response did not match the expected schema.",
-            input_tokens=input_tokens, output_tokens=output_tokens,
-        ) from exc
-
-    logger.info("AI plan generation succeeded")
-    return plan, raw_json, review_context_used, input_tokens, output_tokens
