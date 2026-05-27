@@ -29,11 +29,25 @@ client = AsyncOpenAI(
 
 
 class AIGenerationError(Exception):
-    """Raised when AI plan generation fails with a structured error code."""
+    """Raised when AI plan generation fails with a structured error code.
 
-    def __init__(self, code: str, message: str):
+    input_tokens / output_tokens carry the token counts from response.usage when
+    the OpenAI call succeeded but downstream parsing/validation failed. They are 0
+    for network-level failures (auth, rate-limit, connection) where no tokens were
+    consumed. The router uses these to log usage even on failure paths.
+    """
+
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        input_tokens: int = 0,
+        output_tokens: int = 0,
+    ):
         super().__init__(message)
         self.code = code
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
 
 
 async def generate_daily_plan(
@@ -41,11 +55,13 @@ async def generate_daily_plan(
     rules: list[dict],
     language: str = "en",
     review: dict | None = None,
-) -> tuple[DailyPlanAI, str, bool]:
+) -> tuple[DailyPlanAI, str, bool, int, int]:
     """
-    Call OpenAI and return (parsed plan, raw JSON string, review_context_used).
+    Call OpenAI and return (parsed plan, raw JSON string, review_context_used,
+    input_tokens, output_tokens).
     Uses structured outputs (strict JSON schema) to guarantee valid output.
     review_context_used reflects whether non-empty review context was injected.
+    input_tokens / output_tokens are 0 if response.usage is unavailable.
     Raises AIGenerationError with a specific code on any failure.
     """
     logger.info("AI plan generation started | model=%s", settings.OPENAI_MODEL)
@@ -143,22 +159,36 @@ async def generate_daily_plan(
             "Unexpected error during OpenAI request.",
         ) from exc
 
-    # ── Step 3: Parse JSON response ──────────────────────────────────────────
+    # ── Step 3: Extract token counts BEFORE any validation ───────────────────
+    # Tokens are extracted here so they can be attached to AIGenerationError if
+    # JSON parsing or Pydantic validation fails. The cost was already incurred
+    # the moment OpenAI responded — callers must log it regardless of outcome.
+    input_tokens = response.usage.prompt_tokens if response.usage else 0
+    output_tokens = response.usage.completion_tokens if response.usage else 0
+    logger.info(
+        "OpenAI response received | input_tokens=%s | output_tokens=%s",
+        input_tokens, output_tokens,
+    )
+
     raw_json = response.choices[0].message.content
     if not raw_json:
         logger.error("OpenAI returned empty response content")
-        raise AIGenerationError("UNKNOWN_AI_ERROR", "OpenAI returned an empty response.")
+        raise AIGenerationError(
+            "UNKNOWN_AI_ERROR", "OpenAI returned an empty response.",
+            input_tokens=input_tokens, output_tokens=output_tokens,
+        )
 
-    tokens_used = response.usage.total_tokens if response.usage else "unknown"
-    logger.info("OpenAI response received | tokens_used=%s", tokens_used)
-
+    # ── Step 4: Parse JSON response ──────────────────────────────────────────
     try:
         data = json.loads(raw_json)
     except json.JSONDecodeError as exc:
         logger.error("AI JSON parse failed | exc=%s | internal_code=AI_JSON_INVALID", type(exc).__name__)
-        raise AIGenerationError("AI_JSON_INVALID", "OpenAI returned invalid JSON.") from exc
+        raise AIGenerationError(
+            "AI_JSON_INVALID", "OpenAI returned invalid JSON.",
+            input_tokens=input_tokens, output_tokens=output_tokens,
+        ) from exc
 
-    # ── Step 4: Validate Pydantic schema ─────────────────────────────────────
+    # ── Step 5: Validate Pydantic schema ─────────────────────────────────────
     try:
         plan = DailyPlanAI(**data)
     except ValidationError as exc:
@@ -168,7 +198,8 @@ async def generate_daily_plan(
         raise AIGenerationError(
             "AI_SCHEMA_INVALID",
             "AI response did not match the expected schema.",
+            input_tokens=input_tokens, output_tokens=output_tokens,
         ) from exc
 
     logger.info("AI plan generation succeeded")
-    return plan, raw_json, review_context_used
+    return plan, raw_json, review_context_used, input_tokens, output_tokens
