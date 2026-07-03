@@ -40,6 +40,11 @@ Principles:
 - Respect the user's personal rules — they exist for a reason.
 - Build buffer between intense blocks. People are not robots.
 - The "not today" list is as important as the plan.
+- When PROJECT FOCUS FOR TODAY is provided: the Main Signal MUST be reflected in main_win and
+  receive at least one dedicated time block. Secondary Signals may appear in top_priorities but
+  must not crowd out the Main Signal. Every project listed under NOISE TO AVOID MUST appear in
+  not_today_list — do not schedule it, do not reference it as a priority.
+- Never schedule more than 2 distinct projects as dedicated deep-work time blocks in a single day.
 
 Output format: pure JSON only. No markdown. No explanation. Just the object.
 
@@ -211,11 +216,84 @@ def build_review_context(review: dict) -> str:
     return raw
 
 
+def _fmt_project_line(p: dict, cap_next: int = 150) -> str:
+    name = (p.get("name") or "").strip()[:80]
+    next_action = (p.get("next_action") or "").strip()[:cap_next]
+    risk = (p.get("risk") or "").strip()[:100]
+    parts = [f"→ {name}"]
+    if next_action:
+        parts.append(f"next: {next_action}")
+    if risk:
+        parts.append(f"risk: {risk}")
+    return " | ".join(parts)
+
+
+def build_projects_block(projects: list[dict]) -> str:
+    """
+    Derive Main Signal / Secondary Signals / Noise to Avoid from active+waiting projects
+    and produce an explicit focus block for the AI prompt.
+
+    Signal logic (deterministic — AI does not choose):
+      Main Signal   = first active project (already sorted high→low priority)
+      Secondary     = next 1–2 projects (remaining active, then waiting if slots free)
+      Noise         = everything else → AI must put these in not_today_list
+    """
+    if not projects:
+        return ""
+
+    active = [p for p in projects if p.get("status") == "active"]
+    waiting = [p for p in projects if p.get("status") == "waiting"]
+
+    main = active[0] if active else None
+    secondary_active = active[1:3]
+    # Fill secondary up to 2 with waiting projects if fewer than 2 active secondaries
+    secondary_waiting = waiting[: max(0, 2 - len(secondary_active))]
+    secondary = secondary_active + secondary_waiting
+
+    used_ids = {p.get("id") for p in ([main] if main else []) + secondary}
+    noise = [p for p in projects if p.get("id") not in used_ids]
+
+    sections: list[str] = ["\nPROJECT FOCUS FOR TODAY:"]
+
+    if main:
+        sections.append(
+            "  [MAIN SIGNAL — MUST be reflected in main_win;"
+            " schedule at least one dedicated deep-work time block]\n"
+            f"  {_fmt_project_line(main)}"
+        )
+    else:
+        sections.append("  [NO MAIN SIGNAL — no active projects today]")
+
+    if secondary:
+        sec_lines = []
+        for p in secondary:
+            line = f"  {_fmt_project_line(p)}"
+            if p.get("status") == "waiting":
+                line += " (waiting — context only, do not schedule)"
+            sec_lines.append(line)
+        sections.append(
+            "  [SECONDARY SIGNALS — may appear in top_priorities;"
+            " must not crowd out the Main Signal]\n"
+            + "\n".join(sec_lines)
+        )
+
+    if noise:
+        noise_lines = [f"  → {(p.get('name') or '')[:60]}" for p in noise]
+        sections.append(
+            "  [NOISE TO AVOID — every item here MUST appear in not_today_list;"
+            " do not schedule, do not reference as priority]\n"
+            + "\n".join(noise_lines)
+        )
+
+    return "\n".join(sections)
+
+
 def build_user_prompt(
     checkin: dict,
     rules: list[dict],
     language: str = "en",
     review: dict | None = None,
+    projects: list[dict] | None = None,
 ) -> tuple[str, bool]:
     """
     Build the user prompt for the AI.
@@ -259,6 +337,8 @@ def build_user_prompt(
     raw = checkin.get("raw_input", "")
     raw_block = f"\nRAW INPUT FROM USER:\n{raw}" if raw else ""
 
+    projects_block = build_projects_block(projects or [])
+
     review_block = ""
     review_context_used = False
     if review:
@@ -282,7 +362,7 @@ MORNING CHECK-IN:
 - Mood: {checkin.get('mood', 'not specified')}
 - Available hours: {checkin.get('available_hours', 'not specified')}
 - Day constraints: {checkin.get('day_constraints', 'none')}
-{fixed_events_text}{tasks_text}{rules_block}{raw_block}{review_block}
+{fixed_events_text}{tasks_text}{rules_block}{projects_block}{raw_block}{review_block}
 
 Generate the daily command center plan as a JSON object matching the schema exactly.
 """

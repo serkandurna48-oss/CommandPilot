@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(npm uninstall:*)",
-      "Bash(tree:*)"
+      "Bash(tree:*)",
+      "Bash(npm run:*)",
+      "Bash(python -c ':*)",
+      "Bash(npm run *)"
     ]
   }
 }

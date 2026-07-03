@@ -55,6 +55,7 @@ async def generate_daily_plan(
     rules: list[dict],
     language: str = "en",
     review: dict | None = None,
+    projects: list[dict] | None = None,
 ) -> tuple[DailyPlanAI, str, bool, int, int]:
     """
     Call OpenAI and return (parsed plan, raw JSON string, review_context_used,
@@ -67,7 +68,7 @@ async def generate_daily_plan(
     logger.info("AI plan generation started | model=%s", settings.OPENAI_MODEL)
 
     # ── Step 1: Build prompt ─────────────────────────────────────────────────
-    user_prompt, review_context_used = build_user_prompt(checkin, rules, language, review)
+    user_prompt, review_context_used = build_user_prompt(checkin, rules, language, review, projects)
 
     if settings.DEBUG_AI_PROMPT:
         review_date = review.get("review_date") if review else None

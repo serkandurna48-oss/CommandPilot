@@ -28,6 +28,7 @@ node_modules/
 out/
 frontend/node_modules/
 frontend/.next/
+*.tsbuildinfo
 
 # Logs
 *.log

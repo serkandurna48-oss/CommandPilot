@@ -17,6 +17,7 @@ from app.services.plan_service import (
     normalize_plan_date,
     save_plan,
 )
+from app.services.project_service import get_active_projects_for_morning
 from app.services.review_service import get_recent_review_for_user
 from app.services.usage_service import (
     DailyCapExceededError,
@@ -179,11 +180,23 @@ async def generate_plan(
             str(exc)[:100],
         )
 
+    # ── Step 3.5: Fetch active projects (non-fatal) ──────────────────────────
+    active_projects: list[dict] = []
+    try:
+        active_projects = get_active_projects_for_morning(user.id)
+        logger.info("Projects loaded | count=%d", len(active_projects))
+    except Exception as exc:
+        logger.warning(
+            "Project fetch failed | %s: %s — continuing without project context",
+            type(exc).__name__,
+            str(exc)[:100],
+        )
+
     # ── Step 4: Generate plan via AI ─────────────────────────────────────────
     logger.info("Calling AI service | language=%s", effective_language)
     try:
         plan, raw_json, review_context_used, input_tokens, output_tokens = (
-            await generate_daily_plan(checkin, rules, effective_language, recent_review)
+            await generate_daily_plan(checkin, rules, effective_language, recent_review, active_projects)
         )
     except AIGenerationError as exc:
         logger.error("AI generation failed | code=%s | %s", exc.code, str(exc))

@@ -147,6 +147,41 @@ export interface RuleUpdate {
   priority?: number;
 }
 
+// ─── Projects ──────────────────────────────────────────────────────────────────
+export type ProjectStatus = "active" | "waiting" | "paused" | "backlog" | "done" | "archived";
+export type ProjectPriority = "high" | "medium" | "low";
+
+export interface Project {
+  id: string;
+  user_id: string;
+  name: string;
+  description?: string;
+  status: ProjectStatus;
+  priority: ProjectPriority;
+  next_action?: string;
+  risk?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ProjectCreate {
+  name: string;
+  description?: string;
+  status: ProjectStatus;
+  priority: ProjectPriority;
+  next_action?: string;
+  risk?: string;
+}
+
+export interface ProjectUpdate {
+  name?: string;
+  description?: string;
+  status?: ProjectStatus;
+  priority?: ProjectPriority;
+  next_action?: string;
+  risk?: string;
+}
+
 // ─── API responses ─────────────────────────────────────────────────────────────
 export interface ApiError {
   detail: string;

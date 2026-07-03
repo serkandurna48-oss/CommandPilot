@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
@@ -19,6 +19,8 @@ export function CheckinForm() {
   // Preserved across retries so we don't create a second checkin if plan generation fails.
   const [pendingCheckinId, setPendingCheckinId] = useState<string | null>(null);
 
+  const DRAFT_KEY = `cp_checkin_draft_${today()}`;
+
   const [form, setForm] = useState({
     wake_time: "",
     sleep_quality: 7,
@@ -28,9 +30,25 @@ export function CheckinForm() {
     available_hours: "",
     day_constraints: "",
     raw_input: "",
-    important_tasks_raw: "",  // newline-separated
-    fixed_events_raw: "",     // newline-separated "title at HH:MM"
+    important_tasks_raw: "",
+    fixed_events_raw: "",
   });
+
+  // Load draft from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(DRAFT_KEY);
+      if (saved) setForm(JSON.parse(saved));
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Persist form to localStorage on every change
+  useEffect(() => {
+    try {
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(form));
+    } catch { /* ignore */ }
+  }, [form, DRAFT_KEY]);
 
   function updateField(field: string, value: string | number) {
     setForm((f) => ({ ...f, [field]: value }));
@@ -85,6 +103,7 @@ export function CheckinForm() {
         checkin_id: checkinId,
       });
 
+      localStorage.removeItem(DRAFT_KEY);
       router.push(`/plans/${plan.id}`);
     } catch (err: unknown) {
       if (

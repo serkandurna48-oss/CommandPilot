@@ -1,142 +1,158 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import Link from "next/link";
 import { AppShell } from "@/components/layout/AppShell";
-import { Header } from "@/components/layout/Header";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
 import { PageLoader } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
-import { useT } from "@/lib/i18n";
-import { formatDateShort } from "@/lib/utils";
-import type { DailyPlan } from "@/types";
-import { Sunrise, ArrowRight, Trophy, Zap } from "lucide-react";
+import { CommandHero } from "@/components/dashboard/CommandHero";
+import { SignalNoisePanel } from "@/components/dashboard/SignalNoisePanel";
+import { ProjectRadar } from "@/components/dashboard/ProjectRadar";
+import { DailyCommandTimeline } from "@/components/dashboard/DailyCommandTimeline";
+import { WeeklyMomentum } from "@/components/dashboard/WeeklyMomentum";
+import type { DailyPlan, Project, ProjectPriority, ProjectStatus } from "@/types";
 
+// ─── Project sorting helpers ─────────────────────────────────────────────────
+const STATUS_SCORE: Partial<Record<ProjectStatus, number>> = { active: 0, waiting: 1 };
+const PRIORITY_SCORE: Record<ProjectPriority, number> = { high: 0, medium: 1, low: 2 };
+
+function sortedRelevant(projects: Project[]): Project[] {
+  const relevant = projects.filter(
+    (p) => p.status === "active" || p.status === "waiting"
+  );
+  return [...relevant].sort((a, b) => {
+    const s = (STATUS_SCORE[a.status] ?? 2) - (STATUS_SCORE[b.status] ?? 2);
+    if (s !== 0) return s;
+    const p = PRIORITY_SCORE[a.priority] - PRIORITY_SCORE[b.priority];
+    if (p !== 0) return p;
+    return (a.next_action ? 0 : 1) - (b.next_action ? 0 : 1);
+  });
+}
+
+// ─── Page ────────────────────────────────────────────────────────────────────
 export default function DashboardPage() {
-  const t = useT();
   const [latestPlan, setLatestPlan] = useState<DailyPlan | null>(null);
   const [recentPlans, setRecentPlans] = useState<DailyPlan[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const CACHE_KEY = "cp_plans_cache";
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Show cached plans immediately if from today
+    try {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (raw) {
+        const { date, plans } = JSON.parse(raw) as { date: string; plans: DailyPlan[] };
+        if (date === today) {
+          setRecentPlans(plans.slice(0, 7));
+          if (plans.length > 0) setLatestPlan(plans[0]);
+          setLoading(false);
+        }
+      }
+    } catch { /* ignore malformed cache */ }
+
+    // Load plans + projects in parallel
     async function load() {
-      try {
-        const plans = await api.plans.listMine();
+      const [plansResult, projectsResult] = await Promise.allSettled([
+        api.plans.listMine(),
+        api.projects.listMine(),
+      ]);
+
+      if (plansResult.status === "fulfilled") {
+        const plans = plansResult.value;
+        localStorage.setItem(CACHE_KEY, JSON.stringify({ date: today, plans }));
         setRecentPlans(plans.slice(0, 7));
         if (plans.length > 0) setLatestPlan(plans[0]);
-      } catch {
-        // first-time user — no plans yet
-      } finally {
-        setLoading(false);
       }
+      if (projectsResult.status === "fulfilled") {
+        setProjects(projectsResult.value);
+      }
+      setLoading(false);
     }
 
     load();
   }, []);
 
-  return (
-    <AppShell>
-      <Header
-        title={t("dashboard.title")}
-        subtitle={t("dashboard.subtitle")}
-      />
+  // Derived project signals
+  const sorted = sortedRelevant(projects);
+  const focusProject = sorted[0] ?? null;
+  const secondaryProjects = sorted.slice(1, 3);
+  const noiseItems = latestPlan?.not_today_list ?? [];
 
+  // Cap radar at 4 — link to /projects for the rest
+  const radarProjects = sorted.slice(0, 4);
+  const totalRelevant = sorted.length;
+  const noiseCount = noiseItems.length;
+
+  const hasSignals = focusProject !== null || secondaryProjects.length > 0 || noiseItems.length > 0;
+  const hasProjects = sorted.length > 0;
+
+  return (
+    <AppShell wide>
       {loading ? (
         <PageLoader />
       ) : (
-        <div className="space-y-6">
-          {/* CTA: Start morning check-in */}
-          {!latestPlan && (
-            <div className="rounded-xl bg-gradient-to-br from-brand-600/20 to-slate-800/40 border border-brand-500/20 p-8 text-center">
-              <Sunrise className="h-10 w-10 text-brand-400 mx-auto mb-3" />
-              <h2 className="text-slate-100 font-semibold text-lg mb-1">{t("dashboard.no_plan")}</h2>
-              <p className="text-slate-400 text-sm mb-5">{t("dashboard.no_plan_sub")}</p>
-              <Link href="/morning">
-                <Button size="lg">
-                  {t("dashboard.start_checkin")}
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
-              </Link>
+        <div
+          className="grid grid-cols-1 md:grid-cols-3 gap-4"
+          style={{ backgroundImage: 'radial-gradient(ellipse at 10% 90%, rgba(15,23,42,0.7) 0%, transparent 50%)' }}
+        >
+
+          {/* Row 1: Hero Surface — full width, atmosphere rings inside */}
+          <div className="md:col-span-3">
+            <CommandHero
+              plan={latestPlan}
+              focusProject={focusProject}
+              online={latestPlan !== null}
+              activeCount={sorted.length}
+              noiseCount={noiseCount}
+            />
+          </div>
+
+          {/* Row 2: Signal/Noise + Project Radar — adaptive layout */}
+          {hasSignals && hasProjects && (
+            <>
+              <div className="md:col-span-1">
+                <SignalNoisePanel
+                  focusProject={focusProject}
+                  secondaryProjects={secondaryProjects}
+                  noiseItems={noiseItems}
+                />
+              </div>
+              <div className="md:col-span-2">
+                <ProjectRadar projects={radarProjects} totalCount={totalRelevant} />
+              </div>
+            </>
+          )}
+          {hasSignals && !hasProjects && (
+            <div className="md:col-span-3">
+              <SignalNoisePanel
+                focusProject={focusProject}
+                secondaryProjects={secondaryProjects}
+                noiseItems={noiseItems}
+              />
+            </div>
+          )}
+          {!hasSignals && hasProjects && (
+            <div className="md:col-span-3">
+              <ProjectRadar projects={radarProjects} totalCount={totalRelevant} />
             </div>
           )}
 
-          {/* Latest plan summary */}
-          {latestPlan && (
-            <Card variant="elevated">
-              <CardHeader>
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <CardTitle>{t("dashboard.today_plan")}</CardTitle>
-                  <Link href={`/plans/${latestPlan.id}`}>
-                    <Button variant="ghost" size="sm">
-                      {t("dashboard.view_plan")} <ArrowRight className="h-3 w-3" />
-                    </Button>
-                  </Link>
-                </div>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {latestPlan.day_mode && (
-                  <p className="text-brand-400 text-sm font-semibold uppercase tracking-wide">
-                    {latestPlan.day_mode}
-                  </p>
-                )}
-
-                {latestPlan.main_win && (
-                  <div className="flex gap-2">
-                    <Trophy className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
-                    <p className="text-slate-200 text-sm">{latestPlan.main_win}</p>
-                  </div>
-                )}
-
-                {latestPlan.top_priorities.length > 0 && (
-                  <div className="space-y-2">
-                    {latestPlan.top_priorities.map((p, i) => (
-                      <div key={i} className="flex items-center gap-2">
-                        <span className="text-brand-500 text-xs font-mono">{i + 1}.</span>
-                        <span className="text-slate-300 text-sm">{p.title}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-
-                <div className="pt-2 border-t border-slate-700 flex flex-wrap gap-2">
-                  <Link href="/morning">
-                    <Button variant="secondary" size="sm">{t("dashboard.new_checkin")}</Button>
-                  </Link>
-                  <Link href="/review">
-                    <Button variant="ghost" size="sm">{t("dashboard.eve_review")}</Button>
-                  </Link>
-                </div>
-              </CardContent>
-            </Card>
+          {/* Row 3: Command Timeline */}
+          {latestPlan && latestPlan.time_blocks.length > 0 && (
+            <div className="md:col-span-3">
+              <DailyCommandTimeline plan={latestPlan} />
+            </div>
           )}
 
-          {/* Recent plans */}
-          {recentPlans.length > 1 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Zap className="h-4 w-4 text-brand-400" />
-                  {t("dashboard.recent_plans")}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="divide-y divide-slate-700/50">
-                {recentPlans.map((plan) => (
-                  <Link
-                    key={plan.id}
-                    href={`/plans/${plan.id}`}
-                    className="flex items-center justify-between py-3 hover:bg-slate-800/30 -mx-5 px-5 transition-colors"
-                  >
-                    <div>
-                      <p className="text-slate-300 text-sm">{formatDateShort(plan.plan_date)}</p>
-                      <p className="text-slate-500 text-xs">{plan.day_mode ?? "—"}</p>
-                    </div>
-                    <ArrowRight className="h-3.5 w-3.5 text-slate-600" />
-                  </Link>
-                ))}
-              </CardContent>
-            </Card>
+          {/* Row 4: Weekly Momentum — slice(1) excludes latest plan shown in Hero; need 3+ total so slice(1) yields 2+ */}
+          {recentPlans.length > 2 && (
+            <div className="md:col-span-3">
+              <WeeklyMomentum recentPlans={recentPlans.slice(1)} />
+            </div>
           )}
+
         </div>
       )}
     </AppShell>

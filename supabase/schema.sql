@@ -86,7 +86,11 @@ create table if not exists projects (
   name          text not null,
   description   text,
   status        text default 'active'
-                  check (status in ('active', 'paused', 'completed', 'archived')),
+                  check (status in ('active', 'waiting', 'paused', 'backlog', 'done', 'archived')),
+  priority      text not null default 'medium'
+                  check (priority in ('high', 'medium', 'low')),
+  next_action   text,
+  risk          text,
   created_at    timestamptz default now(),
   updated_at    timestamptz default now()
 );

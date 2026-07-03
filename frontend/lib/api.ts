@@ -7,6 +7,9 @@ import type {
   EveningReview,
   RuleCreate,
   UserRule,
+  Project,
+  ProjectCreate,
+  ProjectUpdate,
 } from "@/types";
 import { supabase } from "@/lib/supabase";
 
@@ -133,5 +136,17 @@ export const api = {
 
     delete: (id: string) =>
       request<{ deleted: boolean }>(`/api/rules/${id}`, { method: "DELETE" }),
+  },
+
+  // ─── Projects ─────────────────────────────────────────────────────────────────
+  projects: {
+    listMine: () =>
+      request<Project[]>("/api/projects/me"),
+
+    create: (data: ProjectCreate) =>
+      request<Project>("/api/projects", { method: "POST", body: JSON.stringify(data) }),
+
+    update: (id: string, data: ProjectUpdate) =>
+      request<Project>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
   },
 };

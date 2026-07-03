@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.routers import auth, health, checkins, plans, reviews, rules
+from app.routers import auth, health, checkins, plans, projects, reviews, rules
 from app.core.config import settings
 
 
@@ -35,3 +35,4 @@ app.include_router(checkins.router, prefix="/api/checkins", tags=["checkins"])
 app.include_router(plans.router, prefix="/api/plans", tags=["plans"])
 app.include_router(reviews.router, prefix="/api/reviews", tags=["reviews"])
 app.include_router(rules.router, prefix="/api/rules", tags=["rules"])
+app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
