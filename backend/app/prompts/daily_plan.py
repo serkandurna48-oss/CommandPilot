@@ -153,6 +153,7 @@ JSON_SCHEMA = {
 
 
 _REVIEW_CONTEXT_CAP = 500  # characters — keeps token usage predictable
+_RULES_CONTEXT_CAP = 800  # characters — same reasoning; rules_block was previously unbounded (CP-Cost-001)
 
 
 def build_review_context(review: dict) -> str:
@@ -311,6 +312,8 @@ def build_user_prompt(
             for r in rules
             if r.get("is_active", True)
         )
+        if len(rules_text) > _RULES_CONTEXT_CAP:
+            rules_text = rules_text[:_RULES_CONTEXT_CAP] + "..."
         rules_block = f"\nPERSONAL RULES (always respected):\n{rules_text}"
 
     fixed_events_text = ""

@@ -58,7 +58,16 @@ def get_checkins_for_user(user_id: str, limit: int = 30) -> list[dict]:
     return result.data
 
 
-def get_active_rules_for_user(user_id: str) -> list[dict]:
+# Every active rule a user has ever created was previously included, in
+# full, on every single daily plan generation — unbounded, forever (see
+# docs/ai-usage-and-cost-audit.md §6 "Big-O / Kontext-Risiko"). A long-time
+# user accumulating 100+ rules paid growing token cost on every call,
+# silently. Ordered by priority desc, so capping keeps the most important
+# rules, not an arbitrary subset.
+_ACTIVE_RULES_LIMIT = 20
+
+
+def get_active_rules_for_user(user_id: str, limit: int = _ACTIVE_RULES_LIMIT) -> list[dict]:
     db = get_db()
     result = (
         db.table("user_rules")
@@ -66,6 +75,7 @@ def get_active_rules_for_user(user_id: str) -> list[dict]:
         .eq("user_id", user_id)
         .eq("is_active", True)
         .order("priority", desc=True)
+        .limit(limit)
         .execute()
     )
     return result.data
