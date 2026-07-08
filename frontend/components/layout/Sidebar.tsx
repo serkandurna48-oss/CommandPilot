@@ -11,6 +11,7 @@ import {
   FolderOpen,
   Sliders,
   Settings,
+  Bot,
 } from "lucide-react";
 
 export function Sidebar() {
@@ -22,6 +23,7 @@ export function Sidebar() {
     { href: "/morning",   label: t("nav.morning"),   icon: Sunrise },
     { href: "/review",    label: t("nav.review"),    icon: Moon },
     { href: "/projects",  label: t("nav.projects"),  icon: FolderOpen },
+    { href: "/operator",  label: t("nav.operator"),  icon: Bot },
     { href: "/rules",     label: t("nav.rules"),     icon: Sliders },
     { href: "/settings",  label: t("nav.settings"),  icon: Settings },
   ];

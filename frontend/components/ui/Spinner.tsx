@@ -21,7 +21,15 @@ export function PageLoader() {
   );
 }
 
-export function EmptyState({ title, description }: { title: string; description?: string }) {
+export function EmptyState({
+  title,
+  description,
+  action,
+}: {
+  title: string;
+  description?: string;
+  action?: React.ReactNode;
+}) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <div className="h-12 w-12 rounded-full bg-slate-800 flex items-center justify-center mb-4">
@@ -29,6 +37,7 @@ export function EmptyState({ title, description }: { title: string; description?
       </div>
       <p className="text-slate-300 font-medium">{title}</p>
       {description && <p className="text-slate-500 text-sm mt-1 max-w-xs">{description}</p>}
+      {action && <div className="mt-4">{action}</div>}
     </div>
   );
 }

@@ -12,6 +12,24 @@ import type {
   ProjectUpdate,
 } from "@/types";
 import { supabase } from "@/lib/supabase";
+import type {
+  ApiWorkOrder,
+  ApiWorkOrderDetail,
+  ApiWorkOrderStep,
+  ApiAgentRun,
+  ApiActivityLogEntry,
+  ApiArtifact,
+  ApiReviewPackage,
+  ApiWorkOrderUpdate,
+  ApiWorkOrderStepCreate,
+  ApiWorkOrderStepUpdate,
+  ApiActivityLogCreate,
+  ApiAgentRunCreate,
+  ApiAgentRunUpdate,
+  ApiArtifactCreate,
+  ApiReviewPackageCreate,
+} from "@/lib/workOrderMapper";
+import { mapWorkOrderCreateToApi, type WorkOrderCreateInput } from "@/lib/workOrderMapper";
 
 const BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -56,6 +74,14 @@ async function request<T>(
     let message: string;
     if (typeof detail === "string") {
       message = detail;
+    } else if (Array.isArray(detail)) {
+      // FastAPI/Pydantic validation errors (422) — e.g. the ApprovalScope
+      // blocked-action validator — come back as a list of {msg, loc, ...},
+      // not a string or {message}. Without this, a 422 rendered as an
+      // unhelpful "Unprocessable Entity" instead of the actual reason.
+      message = detail
+        .map((d) => (d && typeof d === "object" && "msg" in d ? String(d.msg) : JSON.stringify(d)))
+        .join("; ");
     } else if (detail && typeof detail === "object" && "message" in detail) {
       message = String(detail.message);
     } else {
@@ -148,5 +174,45 @@ export const api = {
 
     update: (id: string, data: ProjectUpdate) =>
       request<Project>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  },
+
+  // ─── Work Orders (Background Dev Team control plane) ───────────────────────────
+  // Returns raw snake_case API shapes — callers must run these through the
+  // mapXFromApi functions in lib/workOrderMapper.ts before use. Kept separate
+  // from the mapping layer so this file stays a pure transport client, like
+  // every other resource above.
+  workOrders: {
+    listMine: () =>
+      request<ApiWorkOrder[]>("/api/work-orders/me"),
+
+    get: (id: string) =>
+      request<ApiWorkOrderDetail>(`/api/work-orders/${id}`),
+
+    create: (data: WorkOrderCreateInput) =>
+      request<ApiWorkOrder>("/api/work-orders", { method: "POST", body: JSON.stringify(mapWorkOrderCreateToApi(data)) }),
+
+    update: (id: string, data: ApiWorkOrderUpdate) =>
+      request<ApiWorkOrder>(`/api/work-orders/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+    addStep: (id: string, data: ApiWorkOrderStepCreate) =>
+      request<ApiWorkOrderStep>(`/api/work-orders/${id}/steps`, { method: "POST", body: JSON.stringify(data) }),
+
+    updateStep: (id: string, stepId: string, data: ApiWorkOrderStepUpdate) =>
+      request<ApiWorkOrderStep>(`/api/work-orders/${id}/steps/${stepId}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+    addActivityLog: (id: string, data: ApiActivityLogCreate) =>
+      request<ApiActivityLogEntry>(`/api/work-orders/${id}/activity-log`, { method: "POST", body: JSON.stringify(data) }),
+
+    addAgentRun: (id: string, data: ApiAgentRunCreate) =>
+      request<ApiAgentRun>(`/api/work-orders/${id}/agent-runs`, { method: "POST", body: JSON.stringify(data) }),
+
+    updateAgentRun: (id: string, runId: string, data: ApiAgentRunUpdate) =>
+      request<ApiAgentRun>(`/api/work-orders/${id}/agent-runs/${runId}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+    addArtifact: (id: string, data: ApiArtifactCreate) =>
+      request<ApiArtifact>(`/api/work-orders/${id}/artifacts`, { method: "POST", body: JSON.stringify(data) }),
+
+    upsertReviewPackage: (id: string, data: ApiReviewPackageCreate) =>
+      request<ApiReviewPackage>(`/api/work-orders/${id}/review-package`, { method: "PUT", body: JSON.stringify(data) }),
   },
 };
