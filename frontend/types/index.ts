@@ -182,6 +182,152 @@ export interface ProjectUpdate {
   risk?: string;
 }
 
+// ─── Background Dev Team — Control Plane ────────────────────────────────────────
+// Field names are camelCase (unlike the snake_case API-mirroring types above).
+// A real backend now exists (backend/app/models/work_order.py, snake_case,
+// matching every other resource) — the two conventions meet in
+// frontend/lib/workOrderMapper.ts, never here. See
+// docs/background-dev-team-system-design.md §3 for why.
+
+export type WorkOrderStatus =
+  | "draft"             // defined, not yet approved to run
+  | "approved"           // approval scope signed off, not yet queued
+  | "queued"             // waiting for an executor to pick it up
+  | "running"            // an agent run is actively executing
+  | "needs_approval"     // paused — hit an action outside the autonomous-allowed list
+  | "blocked"            // paused — missing context or an external dependency
+  | "failed"             // an agent run failed; not reviewed as done
+  | "review_ready"       // review package produced, waiting on human review
+  | "accepted"           // human reviewed and accepted the outcome
+  | "rework_requested"   // human reviewed and asked for changes
+  | "cancelled";         // withdrawn before or during execution
+
+export interface MissingContextItem {
+  label: string;
+  description?: string;
+  required: boolean;
+}
+
+export interface ApprovalScope {
+  id: string;
+  workOrderId: string;
+  allowedActions: string[];
+  requiresApproval: string[];
+  blockedActions: string[];
+  allowedPaths?: string[];
+  blockedPaths?: string[];
+  maxRuntimeMinutes: number;
+  maxCostUsd?: number;
+}
+
+export type AgentRole = "product" | "architect" | "coder" | "qa" | "reviewer" | "reporter";
+export type AgentRunStatus = "queued" | "running" | "blocked" | "failed" | "completed";
+
+export interface AgentRun {
+  id: string;
+  workOrderId: string;
+  role: AgentRole;
+  status: AgentRunStatus;
+  inputSummary: string;
+  outputSummary?: string;
+  startedAt?: string;
+  completedAt?: string;
+  model?: string;
+}
+
+export type WorkOrderStepStatus = "pending" | "queued" | "running" | "blocked" | "completed" | "failed" | "skipped";
+
+// The visible execution/ticket plan — what Serkan actually looks at to
+// answer "what's my background team doing right now." Distinct from
+// AgentRun, which is the execution-level audit record for one role's run.
+export interface WorkOrderStep {
+  id: string;
+  workOrderId: string;
+  title: string;
+  description?: string;
+  status: WorkOrderStepStatus;
+  assignedRole: AgentRole;
+  orderIndex: number;
+  acceptanceCriteria: string[];
+  startedAt?: string;
+  completedAt?: string;
+  outputSummary?: string;
+  blockedReason?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ActivityLogLevel = "info" | "warning" | "error" | "approval_required";
+
+export interface ActivityLogEntry {
+  id: string;
+  workOrderId: string;
+  agentRunId?: string;
+  level: ActivityLogLevel;
+  eventType: string;
+  message: string;
+  metadata?: Record<string, string>;
+  createdAt: string;
+}
+
+export type ArtifactType = "plan" | "diff" | "test_output" | "review" | "summary" | "screenshot" | "prompt";
+
+export interface Artifact {
+  id: string;
+  workOrderId: string;
+  type: ArtifactType;
+  title: string;
+  content?: string;
+  filePath?: string;
+  createdAt: string;
+}
+
+export type ReviewVerdict = "ready_for_review" | "needs_fix" | "blocked" | "unsafe";
+
+export interface ReviewPackage {
+  id: string;
+  workOrderId: string;
+  summary: string;
+  filesChanged: string[];
+  testsRun: string[];
+  risks: string[];
+  openQuestions: string[];
+  needsHumanReview: boolean;
+  recommendedNextStep: string;
+  verdict: ReviewVerdict;
+}
+
+export interface WorkOrder {
+  id: string;
+  title: string;
+  goal: string;
+  repo: string;
+  status: WorkOrderStatus;
+  approvalScopeId: string;
+  createdBy: string;
+  // Deliberately a plain string, not a union — "development" is the first
+  // team type this system supports, not the only one it ever will.
+  teamType: string;
+  createdAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  timeLimitMinutes: number;
+  acceptanceCriteria: string[];
+  recommendedNextStep?: string;
+  missingContext?: MissingContextItem[];
+  // Optional Control-Plane/Target-Repo split (OP-Runner-RepoPath-001):
+  // `repo` above has always been a free-text label; these two let a work
+  // order additionally point at an external project CommandPilot doesn't
+  // live in (e.g. Sommercamps/CampsPilot) so the generated runner prompt
+  // can tell a runner "you're working in a different repo than CommandPilot
+  // itself." Both are pure display/prompt context — CommandPilot never
+  // reads from or executes anything at targetRepoPath. See
+  // frontend/lib/generateRunnerPrompt.ts and
+  // frontend/components/operator/LocalRunnerPanel.tsx.
+  targetRepoName?: string;
+  targetRepoPath?: string;
+}
+
 // ─── API responses ─────────────────────────────────────────────────────────────
 export interface ApiError {
   detail: string;

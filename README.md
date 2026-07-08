@@ -43,8 +43,12 @@ After running `supabase/schema.sql` for the first time, apply any incremental mi
 | --- | --- | --- |
 | `supabase/migrations/001_profiles_language_check.sql` | Normalises `profiles.language` to `'en'` for null/invalid rows, then adds a CHECK constraint | Before deploying i18n / language-selection feature |
 | `supabase/migrations/002_daily_plans_review_context_used.sql` | Adds `daily_plans.review_context_used boolean default false` if the column is missing | Before deploying backend code that writes `review_context_used` |
+| `supabase/migrations/006_work_orders.sql` | Adds `work_orders`, `approval_scopes`, `agent_runs`, `activity_logs`, `artifacts`, `review_packages` tables + RLS | Before deploying the Background Dev Team / `/api/work-orders` backend |
+| `supabase/migrations/007_work_order_steps.sql` | Adds `work_order_steps` table (the ticket plan) + RLS | Before deploying the Execution Plan UI / step endpoints |
+| `supabase/migrations/008_work_orders_team_type.sql` | Adds `work_orders.team_type text not null default 'development'` | Before deploying the Work Order creation UI (OP-Create-001) |
+| `supabase/migrations/009_work_orders_target_repo.sql` | Adds nullable `work_orders.target_repo_name`/`target_repo_path` | Before deploying cross-repo work order support (OP-Runner-RepoPath-001) |
 
-Run each file in the Supabase SQL Editor. Migrations are idempotent — safe to re-run.
+Run each file in the Supabase SQL Editor. Migrations are idempotent — safe to re-run, except `006_work_orders.sql` (its `CREATE POLICY` statements have no `IF NOT EXISTS` guard, matching the existing `004_ai_usage_log.sql` precedent) — run it once.
 
 ### 2. Backend Setup
 
@@ -130,6 +134,15 @@ All endpoints except health require a bearer token.
 | GET | `/api/rules/me` | List current user's rules |
 | PATCH | `/api/rules/{id}` | Update an owned rule |
 | DELETE | `/api/rules/{id}` | Delete an owned rule |
+| POST | `/api/work-orders` | Create a work order + its approval scope |
+| GET | `/api/work-orders/me` | List current user's work orders |
+| GET | `/api/work-orders/{id}` | Get an owned work order with approval scope, agent runs, activity log, artifacts, review package |
+| PATCH | `/api/work-orders/{id}` | Update status / recommended next step / missing context |
+| POST | `/api/work-orders/{id}/activity-log` | Append an activity log entry |
+| POST | `/api/work-orders/{id}/agent-runs` | Create an agent run |
+| PATCH | `/api/work-orders/{id}/agent-runs/{run_id}` | Update an agent run |
+| POST | `/api/work-orders/{id}/artifacts` | Add an artifact |
+| PUT | `/api/work-orders/{id}/review-package` | Upsert the review package |
 
 ## Manual Auth Test Checklist
 

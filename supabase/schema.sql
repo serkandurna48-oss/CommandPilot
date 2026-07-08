@@ -197,6 +197,146 @@ create table if not exists ai_usage_log (
 );
 
 -- ---------------------------------------------------------------------------
+-- Background Dev Team — work orders (OP-Backend-001)
+--
+-- work_orders is the ownership root (user_id/workspace_id). The 5 tables
+-- below it are children scoped by work_order_id and carry no user_id of
+-- their own — ownership is enforced via a join back to work_orders, both in
+-- RLS (see policies below) and in the FastAPI service layer. See
+-- docs/background-dev-team-system-design.md for the full design.
+--
+-- approval_scopes/review_packages are 1:1 with a work order (unique
+-- work_order_id); work_orders itself does not store an approval_scope_id
+-- column, to avoid a circular insert-ordering dependency — the API looks
+-- it up via the reverse FK instead.
+-- ---------------------------------------------------------------------------
+create table if not exists work_orders (
+  id                    uuid primary key default uuid_generate_v4(),
+  workspace_id          uuid references workspaces(id) on delete cascade,
+  user_id               uuid not null references profiles(id) on delete cascade,
+  title                 text not null,
+  goal                  text not null,
+  repo                  text not null default 'commandpilot',
+  status                text not null default 'draft'
+                          check (status in (
+                            'draft', 'approved', 'queued', 'running',
+                            'needs_approval', 'blocked', 'failed',
+                            'review_ready', 'accepted', 'rework_requested',
+                            'cancelled'
+                          )),
+  created_by            text not null,
+  team_type             text not null default 'development',
+  time_limit_minutes     integer not null default 90,
+  acceptance_criteria    jsonb not null default '[]',
+  missing_context        jsonb not null default '[]',
+  recommended_next_step  text,
+  started_at            timestamptz,
+  completed_at          timestamptz,
+  -- Optional Control-Plane/Target-Repo split (OP-Runner-RepoPath-001) — see
+  -- supabase/migrations/009_work_orders_target_repo.sql for the full
+  -- rationale. Both nullable: absent means "this work order targets
+  -- CommandPilot itself," same as every work order before this existed.
+  target_repo_name      text,
+  target_repo_path      text,
+  created_at            timestamptz not null default now()
+);
+
+create table if not exists approval_scopes (
+  id                    uuid primary key default uuid_generate_v4(),
+  work_order_id         uuid not null unique references work_orders(id) on delete cascade,
+  allowed_actions       jsonb not null default '[]',
+  requires_approval     jsonb not null default '[]',
+  blocked_actions       jsonb not null default '[]',
+  allowed_paths         jsonb,
+  blocked_paths         jsonb,
+  max_runtime_minutes   integer not null,
+  max_cost_usd          numeric(10,2),
+  created_at            timestamptz not null default now()
+);
+
+create table if not exists agent_runs (
+  id                uuid primary key default uuid_generate_v4(),
+  work_order_id     uuid not null references work_orders(id) on delete cascade,
+  role              text not null
+                      check (role in ('product', 'architect', 'coder', 'qa', 'reviewer', 'reporter')),
+  status            text not null default 'queued'
+                      check (status in ('queued', 'running', 'blocked', 'failed', 'completed')),
+  input_summary     text not null,
+  output_summary    text,
+  model             text,
+  started_at        timestamptz,
+  completed_at      timestamptz,
+  created_at        timestamptz not null default now()
+);
+
+create table if not exists activity_logs (
+  id              uuid primary key default uuid_generate_v4(),
+  work_order_id   uuid not null references work_orders(id) on delete cascade,
+  agent_run_id    uuid references agent_runs(id) on delete set null,
+  level           text not null
+                    check (level in ('info', 'warning', 'error', 'approval_required')),
+  event_type      text not null,
+  message         text not null,
+  metadata        jsonb,
+  created_at      timestamptz not null default now()
+);
+
+create table if not exists artifacts (
+  id              uuid primary key default uuid_generate_v4(),
+  work_order_id   uuid not null references work_orders(id) on delete cascade,
+  type            text not null
+                    check (type in ('plan', 'diff', 'test_output', 'review', 'summary', 'screenshot', 'prompt')),
+  title           text not null,
+  content         text,
+  file_path       text,
+  created_at      timestamptz not null default now()
+);
+
+create table if not exists review_packages (
+  id                    uuid primary key default uuid_generate_v4(),
+  work_order_id         uuid not null unique references work_orders(id) on delete cascade,
+  summary               text not null,
+  files_changed         jsonb not null default '[]',
+  tests_run             jsonb not null default '[]',
+  risks                 jsonb not null default '[]',
+  open_questions        jsonb not null default '[]',
+  needs_human_review    boolean not null default true,
+  recommended_next_step text,
+  verdict               text not null
+                          check (verdict in ('ready_for_review', 'needs_fix', 'blocked', 'unsafe')),
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+
+-- ---------------------------------------------------------------------------
+-- Work order steps (OP-Runner-001) — the visible execution/ticket plan.
+-- A step is the plan-level unit Serkan looks at ("what's my team doing right
+-- now"); an agent_run is the execution-level audit record. Same join-based
+-- ownership pattern as the other work_orders children above.
+-- ---------------------------------------------------------------------------
+create table if not exists work_order_steps (
+  id                    uuid primary key default uuid_generate_v4(),
+  work_order_id         uuid not null references work_orders(id) on delete cascade,
+  title                 text not null,
+  description           text,
+  status                text not null default 'pending'
+                          check (status in (
+                            'pending', 'queued', 'running', 'blocked',
+                            'completed', 'failed', 'skipped'
+                          )),
+  assigned_role         text not null
+                          check (assigned_role in ('product', 'architect', 'coder', 'qa', 'reviewer', 'reporter')),
+  order_index           integer not null default 0,
+  acceptance_criteria   jsonb not null default '[]',
+  started_at            timestamptz,
+  completed_at          timestamptz,
+  output_summary        text,
+  blocked_reason        text,
+  created_at            timestamptz not null default now(),
+  updated_at            timestamptz not null default now()
+);
+
+-- ---------------------------------------------------------------------------
 -- Referential integrity: workspaces.owner_id → profiles(id)
 -- Added after profiles table creation to avoid circular dependency
 -- ---------------------------------------------------------------------------
@@ -225,6 +365,21 @@ create index if not exists idx_projects_user
 create index if not exists idx_ai_usage_log_user_date
   on ai_usage_log(user_id, request_date desc);
 
+create index if not exists idx_work_orders_user
+  on work_orders(user_id, status);
+
+create index if not exists idx_agent_runs_work_order
+  on agent_runs(work_order_id, created_at);
+
+create index if not exists idx_activity_logs_work_order
+  on activity_logs(work_order_id, created_at);
+
+create index if not exists idx_artifacts_work_order
+  on artifacts(work_order_id, created_at);
+
+create index if not exists idx_work_order_steps_work_order
+  on work_order_steps(work_order_id, order_index);
+
 -- ---------------------------------------------------------------------------
 -- Row Level Security
 -- ---------------------------------------------------------------------------
@@ -238,6 +393,13 @@ alter table daily_checkins  enable row level security;
 alter table ai_usage_log    enable row level security;
 alter table daily_plans     enable row level security;
 alter table evening_reviews enable row level security;
+alter table work_orders      enable row level security;
+alter table approval_scopes  enable row level security;
+alter table agent_runs       enable row level security;
+alter table activity_logs    enable row level security;
+alter table artifacts        enable row level security;
+alter table review_packages  enable row level security;
+alter table work_order_steps enable row level security;
 
 -- profiles
 create policy "Users can view own profile"
@@ -294,6 +456,64 @@ create policy "Users delete own life areas"
 -- projects
 create policy "Users own projects"
   on projects for all using (auth.uid() = user_id);
+
+-- work_orders (Background Dev Team) — see docs/background-dev-team-system-design.md
+create policy "Users own work_orders"
+  on work_orders for all using (auth.uid() = user_id);
+
+create policy "Users own approval_scopes via work order"
+  on approval_scopes for all using (
+    exists (
+      select 1 from work_orders wo
+      where wo.id = approval_scopes.work_order_id
+        and wo.user_id = auth.uid()
+    )
+  );
+
+create policy "Users own agent_runs via work order"
+  on agent_runs for all using (
+    exists (
+      select 1 from work_orders wo
+      where wo.id = agent_runs.work_order_id
+        and wo.user_id = auth.uid()
+    )
+  );
+
+create policy "Users own activity_logs via work order"
+  on activity_logs for all using (
+    exists (
+      select 1 from work_orders wo
+      where wo.id = activity_logs.work_order_id
+        and wo.user_id = auth.uid()
+    )
+  );
+
+create policy "Users own artifacts via work order"
+  on artifacts for all using (
+    exists (
+      select 1 from work_orders wo
+      where wo.id = artifacts.work_order_id
+        and wo.user_id = auth.uid()
+    )
+  );
+
+create policy "Users own review_packages via work order"
+  on review_packages for all using (
+    exists (
+      select 1 from work_orders wo
+      where wo.id = review_packages.work_order_id
+        and wo.user_id = auth.uid()
+    )
+  );
+
+create policy "Users own work_order_steps via work order"
+  on work_order_steps for all using (
+    exists (
+      select 1 from work_orders wo
+      where wo.id = work_order_steps.work_order_id
+        and wo.user_id = auth.uid()
+    )
+  );
 
 -- ---------------------------------------------------------------------------
 -- Trigger: auto-create profile on new user signup
