@@ -414,7 +414,6 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.lifecycle.approve":          { en: "Approve",                de: "Genehmigen" },
   "operator.lifecycle.mark_queued":      { en: "Mark Queued",            de: "Als eingereiht markieren" },
   "operator.lifecycle.mark_running":     { en: "Mark Running",           de: "Als laufend markieren" },
-  "operator.lifecycle.mark_review_ready":{ en: "Mark Review Ready",      de: "Als review-bereit markieren" },
   "operator.lifecycle.request_rework":   { en: "Request Rework",         de: "Überarbeitung anfordern" },
   "operator.lifecycle.accept":           { en: "Accept",                 de: "Akzeptieren" },
   "operator.lifecycle.demo_note":        { en: "Showing seed data — connect the API to control a real work order.", de: "Zeigt Seed-Daten — für echte Steuerung API verbinden." },
@@ -452,6 +451,34 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.runner.budget_required_hint": {
     en: "Required: claude_code execute refuses to run without an explicit budget — either --max-budget-usd (shown above, edit the value) or a COMMANDPILOT_CLAUDE_MAX_BUDGET_USD environment variable. Never defaults silently. Prompt-file / manual paste above cost nothing from CommandPilot's side.",
     de: "Pflicht: claude_code execute startet nicht ohne explizites Budget — entweder --max-budget-usd (oben, Wert anpassen) oder die Umgebungsvariable COMMANDPILOT_CLAUDE_MAX_BUDGET_USD. Es gibt nie einen stillen Standardwert. Prompt-file / manuelles Einfügen oben kosten nichts von CommandPilot-Seite.",
+  },
+
+  // Runner phase indicator + current run folder (OP-Workflow-UI-001)
+  "operator.runner.run_folder_label": { en: "Current run folder", de: "Aktueller Run-Ordner" },
+  "operator.runner.phase.not_started": { en: "Not started yet", de: "Noch nicht gestartet" },
+  "operator.runner.phase.not_started_hint": {
+    en: "Run step 3 below to generate the prompt and start tracking this run.",
+    de: "Führe Schritt 3 unten aus, um den Prompt zu erzeugen und diesen Run zu verfolgen.",
+  },
+  "operator.runner.phase.prompt_generated": { en: "Prompt generated", de: "Prompt erzeugt" },
+  "operator.runner.phase.prompt_generated_hint": {
+    en: "The prompt was written and the work order was marked running, but no AgentRun record was confirmed — check run.log in the run folder above.",
+    de: "Der Prompt wurde geschrieben und die Work Order auf running gesetzt, aber kein AgentRun-Record bestätigt — prüfe run.log im Run-Ordner oben.",
+  },
+  "operator.runner.phase.awaiting_result": { en: "Awaiting result", de: "Wartet auf Ergebnis" },
+  "operator.runner.phase.awaiting_result_hint": {
+    en: "Runner started — paste the prompt into Claude Code/Codex (or let it auto-execute), then run step 5 to import the result.",
+    de: "Runner gestartet — Prompt in Claude Code/Codex einfügen (oder automatisch ausführen lassen), dann Schritt 5 zum Importieren ausführen.",
+  },
+  "operator.runner.phase.import_failed": { en: "Import failed", de: "Import fehlgeschlagen" },
+  "operator.runner.phase.import_failed_hint": {
+    en: "The last import did not complete successfully — check run.log and the AgentRun's output above for the cause, fix it, then re-run step 5.",
+    de: "Der letzte Import ist nicht sauber durchgelaufen — Ursache in run.log und im AgentRun-Output oben prüfen, beheben, dann Schritt 5 erneut ausführen.",
+  },
+  "operator.runner.phase.review_ready": { en: "Review ready", de: "Review bereit" },
+  "operator.runner.phase.review_ready_hint": {
+    en: "Import succeeded and a review package was written — see the Review Package section above.",
+    de: "Import erfolgreich, Review Package wurde geschrieben — siehe Abschnitt Review Package oben.",
   },
 
   // List page CTA + empty state (OP-Create-001)

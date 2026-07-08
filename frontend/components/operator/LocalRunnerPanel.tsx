@@ -4,9 +4,54 @@ import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useT } from "@/lib/i18n";
-import type { WorkOrder } from "@/types";
+import type { AgentRun, ReviewPackage, WorkOrder } from "@/types";
 import { isExternalRepoWorkOrder } from "@/lib/workOrderMapper";
-import { Copy, Check, AlertTriangle, Coins, ShieldCheck, FolderGit2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { Copy, Check, AlertTriangle, Coins, ShieldCheck, FolderGit2, FolderOpen } from "lucide-react";
+
+// Which of these five mutually-exclusive phases we're in — never more than
+// one at a time (OP-Workflow-UI-001: "keine widersprüchlichen Zustände").
+// order.status alone can't tell "awaiting result" apart from "import
+// failed": OP-Import-Integrity-001's atomic gate deliberately leaves
+// order.status at "running" when an import's writes fail rather than
+// writing a false review_ready, so a failed import looks identical to an
+// in-progress one if you only look at order.status. The AgentRun record
+// created in OP-Runner-Session-001 is what actually distinguishes them —
+// its status reflects what really happened, not what was merely requested.
+type RunnerPhase = "not_started" | "prompt_generated" | "awaiting_result" | "import_failed" | "review_ready";
+
+const RUNNER_PHASE_COLORS: Record<RunnerPhase, string> = {
+  not_started:      "bg-slate-800 border border-slate-700 text-slate-500",
+  prompt_generated: "bg-slate-800 border border-slate-600 text-slate-300",
+  awaiting_result:  "bg-slate-800 border border-brand-700/40 text-brand-400/80",
+  import_failed:    "bg-slate-800 border border-rose-800/40 text-rose-400/80",
+  review_ready:     "bg-slate-800 border border-sky-800/40 text-sky-400/80",
+};
+
+function deriveRunnerPhase(
+  order: WorkOrder,
+  agentRuns: AgentRun[],
+  reviewPackage: ReviewPackage | null | undefined,
+): RunnerPhase {
+  // "Review bereit" nur mit Review Package (AC) — order.status alone saying
+  // review_ready is not enough; a status/package mismatch is itself exactly
+  // the kind of contradictory state this work order exists to avoid, so it
+  // falls through to import_failed below rather than being trusted here.
+  if (order.status === "review_ready" && reviewPackage) return "review_ready";
+
+  // No createdAt on AgentRun, but startedAt is now always set at creation
+  // time (OP-Runner-Session-001's backend fix) — sort on it to find the
+  // actual latest run rather than trusting array order.
+  const latestRun = [...agentRuns].sort((a, b) => (b.startedAt ?? "").localeCompare(a.startedAt ?? ""))[0];
+
+  if (order.status === "review_ready" && !reviewPackage) return "import_failed";
+  if (latestRun && (latestRun.status === "failed" || latestRun.status === "blocked")) return "import_failed";
+  if (latestRun && latestRun.status === "running") return "awaiting_result";
+  if (order.status === "running" || order.status === "needs_approval" || order.status === "blocked" || order.status === "rework_requested") {
+    return "prompt_generated";
+  }
+  return "not_started";
+}
 
 function CreditBadge({ usesCredits }: { usesCredits: boolean }) {
   const t = useT();
@@ -90,10 +135,23 @@ function StepNote({ label, hint, usesCredits }: { label: string; hint: string; u
  * operator and errors out, which is exactly the footgun a prior real test
  * run hit. See docs/background-dev-team-runbook.md.
  */
-export function LocalRunnerPanel({ order }: { order: WorkOrder }) {
+export function LocalRunnerPanel({
+  order,
+  agentRuns = [],
+  reviewPackage,
+}: {
+  order: WorkOrder;
+  agentRuns?: AgentRun[];
+  reviewPackage?: ReviewPackage | null;
+}) {
   const t = useT();
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
   const isExternalRepo = isExternalRepoWorkOrder(order);
+  const phase = deriveRunnerPhase(order, agentRuns, reviewPackage);
+  // Deterministic — same formula as scripts/run_work_order.py's session_dir():
+  // REPO_ROOT / "tmp" / "work-order-runs" / work_order_id. Pure display text,
+  // never read from the filesystem here (this runs in the browser).
+  const runFolder = `tmp/work-order-runs/${order.id}/`;
 
   const setTokenCmd = `$env:COMMANDPILOT_API_TOKEN = "paste-your-token-here"`;
   const startCmd = `python scripts/run_work_order.py ${order.id} --mode prompt-file --api-url ${apiUrl} --token $env:COMMANDPILOT_API_TOKEN`;
@@ -111,6 +169,19 @@ export function LocalRunnerPanel({ order }: { order: WorkOrder }) {
         <CardTitle>{t("operator.runner.title")}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-mono", RUNNER_PHASE_COLORS[phase])}>
+            {t(`operator.runner.phase.${phase}`)}
+          </span>
+          <span className="text-slate-500 text-xs">{t(`operator.runner.phase.${phase}_hint`)}</span>
+        </div>
+
+        <div className="flex items-center gap-2 text-xs">
+          <FolderOpen className="h-3.5 w-3.5 text-slate-500 shrink-0" />
+          <span className="text-slate-500">{t("operator.runner.run_folder_label")}:</span>
+          <code className="font-mono text-slate-300 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5">{runFolder}</code>
+        </div>
+
         <p className="text-slate-500 text-xs">{t("operator.runner.note")}</p>
         <p className="text-[10px] font-mono uppercase tracking-wider text-slate-600">{t("operator.runner.powershell_note")}</p>
 

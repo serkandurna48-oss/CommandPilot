@@ -206,7 +206,16 @@ export function WorkOrderDetail({
                   {t(`operator.run_status.${run.status}`)}
                 </span>
                 <div className="min-w-0 flex-1">
-                  <p className="text-slate-200 text-xs font-medium">{t(`operator.role.${run.role}`)}</p>
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <p className="text-slate-200 text-xs font-medium">{t(`operator.role.${run.role}`)}</p>
+                    {/* run.model doubles as "which runner, which mode" (e.g. "claude_code
+                        (prompt-file)") — no dedicated column for either exists yet, see
+                        OP-Runner-Session-001's reviewPackage.risks. */}
+                    {run.model && <span className="text-[10px] font-mono text-slate-500">{run.model}</span>}
+                    {run.startedAt && (
+                      <span className="text-[10px] font-mono text-slate-600">{new Date(run.startedAt).toLocaleString()}</span>
+                    )}
+                  </div>
                   <p className="text-slate-400 text-xs">{run.inputSummary}</p>
                   {run.outputSummary && <p className="text-slate-500 text-xs mt-0.5">→ {run.outputSummary}</p>}
                 </div>
@@ -331,7 +340,7 @@ export function WorkOrderDetail({
       )}
 
       {/* ── Local Runner (recommended path) ──────────────────────────────── */}
-      <LocalRunnerPanel order={order} />
+      <LocalRunnerPanel order={order} agentRuns={runs} reviewPackage={reviewPackage} />
 
       {/* ── Generate Runner Prompt (manual fallback) ─────────────────────── */}
       {scope && <RunnerPromptPanel order={order} scope={scope} steps={steps} />}

@@ -13,14 +13,16 @@ interface Props {
 }
 
 // Only the transitions a human is expected to trigger from this UI.
-// running → review_ready is normally the import script's job (see
-// scripts/import_work_order_result.py), not a button — but the manual
-// override stays available here for testing before that script exists.
+// running → review_ready is exclusively the import script's job (see
+// scripts/import_work_order_result.py's atomic gate, OP-Import-Integrity-001)
+// — no manual button here for that transition. The backend now rejects a
+// direct PATCH to review_ready without a review package regardless
+// (OP-E2E-Loop-001), but removing the button avoids offering an action
+// that would just fail with a 400.
 const TRANSITIONS: Partial<Record<WorkOrderStatus, { action: WorkOrderStatus; labelKey: string; variant: "primary" | "secondary" }[]>> = {
   draft: [{ action: "approved", labelKey: "operator.lifecycle.approve", variant: "primary" }],
   approved: [{ action: "queued", labelKey: "operator.lifecycle.mark_queued", variant: "primary" }],
   queued: [{ action: "running", labelKey: "operator.lifecycle.mark_running", variant: "primary" }],
-  running: [{ action: "review_ready", labelKey: "operator.lifecycle.mark_review_ready", variant: "secondary" }],
   review_ready: [
     { action: "accepted", labelKey: "operator.lifecycle.accept", variant: "primary" },
     { action: "rework_requested", labelKey: "operator.lifecycle.request_rework", variant: "secondary" },
