@@ -56,6 +56,13 @@ export function WorkOrderDetail({
 
   return (
     <div className="space-y-4">
+      {/* ── Data source banner — mirrors OperatorManager's list-page banner
+          so /operator and /operator/[id] never let API failures look like
+          real data (OP-UX-001) ──────────────────────────────────────────── */}
+      <div className="text-[11px] font-mono text-amber-400/70 bg-amber-950/20 border border-amber-900/30 rounded-lg px-3 py-2">
+        {isLive ? t("operator.live_banner") : t("operator.mock_banner")}
+      </div>
+
       {/* ── Header: goal, status, timing ─────────────────────────────────── */}
       <Card variant="elevated">
         <CardContent className="space-y-3 pt-4">
