@@ -315,14 +315,32 @@ def build_result_example(order: dict) -> dict:
 # one clear message naming exactly what's wrong and where.
 REQUIRED_RESULT_KEYS = ["workOrderId", "finalStatus", "steps", "activityLogs", "artifacts", "reviewPackage"]
 VALID_FINAL_STATUSES = ("review_ready", "blocked", "failed")
+VALID_STEP_STATUSES = ("completed", "blocked", "failed", "skipped")
+VALID_REVIEW_VERDICTS = ("ready_for_review", "needs_fix", "blocked", "unsafe")
+_DONE_STEP_STATUSES = {"completed", "skipped"}
 
 
 def parse_and_validate_result(raw_text: str, source_desc: str) -> dict:
     """Parses `raw_text` as the work-order result JSON and validates its
-    top-level shape. `source_desc` is a human-readable label for where the
-    text came from (a file path, "stdin", "claude_code --output-format json
-    result field") — used only to make error messages point somewhere
-    useful, never parsed itself."""
+    shape — including everything that can be checked from `data` alone,
+    with no live work order required (OP-Import-Integrity-001). This is
+    deliberately the *only* validation layer that is guaranteed to run: it
+    executes before any network call, so it also runs when the caller has
+    no token yet (e.g. --dry-run) and independent of whether the live work
+    order can be fetched. `source_desc` is a human-readable label for where
+    the text came from (a file path, "stdin", "claude_code --output-format
+    json result field") — used only to make error messages point somewhere
+    useful, never parsed itself.
+
+    validate_result_against_order() below adds the remaining checks that
+    genuinely need the real work order (real step ids, step completeness)
+    and is best-effort — it can be skipped if the order can't be fetched.
+    Per-step and reviewPackage shape checks must NOT live there: they used
+    to, and a transient GET failure on the work order silently skipped
+    them entirely, letting a malformed result (e.g. an invalid step status,
+    or finalStatus='review_ready' with zero completed steps) sail through
+    to import_result() and fail confusingly partway through, or not at
+    all."""
     try:
         data = json.loads(raw_text)
     except json.JSONDecodeError as exc:
@@ -344,25 +362,57 @@ def parse_and_validate_result(raw_text: str, source_desc: str) -> dict:
     if not isinstance(data["steps"], list):
         raise ValueError(f"{source_desc}: 'steps' must be a list, got {type(data['steps']).__name__}")
 
+    has_progress = False
+    for i, step in enumerate(data["steps"]):
+        if not isinstance(step, dict):
+            raise ValueError(f"{source_desc}: steps[{i}] must be an object, got {type(step).__name__}")
+        status = step.get("status")
+        if status not in VALID_STEP_STATUSES:
+            raise ValueError(
+                f"{source_desc}: steps[{i}].status must be one of {'|'.join(VALID_STEP_STATUSES)}, got {status!r}"
+            )
+        if status == "blocked" and not step.get("blockedReason"):
+            raise ValueError(f"{source_desc}: steps[{i}] has status='blocked' but no blockedReason")
+        if status in _DONE_STEP_STATUSES:
+            has_progress = True
+
+    review_package = data.get("reviewPackage") or {}
+    if not review_package.get("summary"):
+        raise ValueError(f"{source_desc}: reviewPackage.summary is missing or empty")
+    if review_package.get("verdict") not in VALID_REVIEW_VERDICTS:
+        raise ValueError(
+            f"{source_desc}: reviewPackage.verdict must be one of {'|'.join(VALID_REVIEW_VERDICTS)}, "
+            f"got {review_package.get('verdict')!r}"
+        )
+
+    # A work order can only be truthfully "ready for human review" if the
+    # execution plan shows it actually got somewhere — a review_ready
+    # result whose every step is still pending/blocked/failed would render
+    # as a 0% progress bar in the operator UI while claiming to be done.
+    if data["finalStatus"] == "review_ready" and not has_progress:
+        raise ValueError(
+            f"{source_desc}: finalStatus is 'review_ready' but no step has status 'completed' or "
+            "'skipped' — progress would be 0%, which review_ready must never report"
+        )
+
     return data
-
-
-VALID_STEP_STATUSES = ("completed", "blocked", "failed", "skipped")
-VALID_REVIEW_VERDICTS = ("ready_for_review", "needs_fix", "blocked", "unsafe")
 
 
 def validate_result_against_order(result: dict, order: dict, source_desc: str) -> None:
     """Cross-checks an already shape-validated result (see
-    parse_and_validate_result()) against the real work order it claims to
-    belong to. Previously, a step id the runner invented (or a status/
-    review-package value that only pydantic would reject) wasn't caught
-    until individual API calls failed partway through import_result() —
-    see docs/background-dev-team-runbook.md's "404 on a step update" and
-    "missing required field(s)" troubleshooting entries. Raises ValueError
-    naming the exact offending field so a bad result aborts before any API
-    call is made, instead of surfacing as a partial import failure."""
+    parse_and_validate_result(), which must run first) against the real
+    work order it claims to belong to. Only the checks that genuinely need
+    `order` live here: whether step ids are real, and — as of
+    OP-Import-Integrity-001 — whether every real step got an update at
+    all. Best-effort by design (see import_result()'s caller): if the live
+    work order can't be fetched, this whole function is skipped and only
+    parse_and_validate_result()'s order-independent checks apply. Raises
+    ValueError naming the exact offending field so a bad result aborts
+    before any API call is made, instead of surfacing as a partial import
+    failure."""
     order_steps = order.get("steps") or []
     valid_step_ids = {s["id"] for s in order_steps}
+    result_step_ids: set[str] = set()
 
     for i, step in enumerate(result.get("steps", [])):
         step_id = step.get("id")
@@ -371,21 +421,15 @@ def validate_result_against_order(result: dict, order: dict, source_desc: str) -
                 f"{source_desc}: steps[{i}].id {step_id!r} does not match any real step id on "
                 f"work order {order.get('id')!r} — known step ids: {sorted(valid_step_ids)}"
             )
-        status = step.get("status")
-        if status not in VALID_STEP_STATUSES:
-            raise ValueError(
-                f"{source_desc}: steps[{i}].status must be one of {'|'.join(VALID_STEP_STATUSES)}, got {status!r}"
-            )
-        if status == "blocked" and not step.get("blockedReason"):
-            raise ValueError(f"{source_desc}: steps[{i}] has status='blocked' but no blockedReason")
+        if step_id:
+            result_step_ids.add(step_id)
 
-    review_package = result.get("reviewPackage") or {}
-    if not review_package.get("summary"):
-        raise ValueError(f"{source_desc}: reviewPackage.summary is missing or empty")
-    if review_package.get("verdict") not in VALID_REVIEW_VERDICTS:
+    missing_step_ids = valid_step_ids - result_step_ids
+    if missing_step_ids:
         raise ValueError(
-            f"{source_desc}: reviewPackage.verdict must be one of {'|'.join(VALID_REVIEW_VERDICTS)}, "
-            f"got {review_package.get('verdict')!r}"
+            f"{source_desc}: result is missing an update for step id(s) {sorted(missing_step_ids)} "
+            f"on work order {order.get('id')!r} — every ticketplan step must appear in 'steps' with "
+            "a status (completed/blocked/failed/skipped), even one that was only skipped or blocked"
         )
 
 

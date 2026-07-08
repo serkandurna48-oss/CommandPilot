@@ -147,6 +147,13 @@ def artifact_payload(artifact: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
+def agent_run_update_payload(status: str, output_summary: str | None) -> dict[str, Any]:
+    payload: dict[str, Any] = {"status": status}
+    if output_summary:
+        payload["output_summary"] = output_summary[:2000]  # matches AgentRunUpdate.output_summary's max_length
+    return payload
+
+
 def review_package_payload(rp: dict[str, Any]) -> dict[str, Any]:
     return {
         "summary": rp["summary"],
@@ -172,7 +179,15 @@ def fetch_work_order(api_url: str, token: str, work_order_id: str) -> dict[str, 
         return json.loads(resp.read().decode("utf-8"))
 
 
-def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: bool) -> int:
+def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: bool, agent_run_id: str | None = None) -> int:
+    """`agent_run_id`: the AgentRun this import session belongs to, if the
+    runner harness created one at `--mode prompt-file` time (OP-Runner-
+    Session-001) — see run_work_order.py's cmd_import_result(), which reads
+    it from the session's agent_run.json. None for a standalone/manual
+    import (e.g. this script run directly outside run_work_order.py, or an
+    older session predating this feature) — in that case AgentRun handling
+    is skipped entirely, matching this script's existing behavior."""
+    work_order_id = result.get("workOrderId")
     work_order_id = result.get("workOrderId")
     if not work_order_id:
         print("ERROR: result JSON is missing required field 'workOrderId'", file=sys.stderr)
@@ -190,19 +205,27 @@ def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: boo
             order = fetch_work_order(api_url, token, work_order_id)
             validate_result_against_order(result, order, f"result JSON for {work_order_id}")
         except (urllib.error.URLError, urllib.error.HTTPError) as exc:
-            print(f"WARNUNG: konnte Work Order für Cross-Validation nicht laden ({exc}) — überspringe Step-ID/Status-Check.", file=sys.stderr)
+            print(f"WARNUNG: konnte Work Order für Cross-Validation nicht laden ({exc}) — überspringe Step-ID/Vollständigkeits-Check.", file=sys.stderr)
         except ValueError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1
 
-    failures = 0
     successes = 0
+    # Split by category (rather than one shared `failures` counter) because
+    # only step/artifact/review-package failures may ever block the
+    # finalStatus='review_ready' write below (OP-Import-Integrity-001) —
+    # an activity-log write failure is unfortunate but not a reason to
+    # leave a genuinely-finished work order stuck without its final status.
+    step_failures = 0
+    log_failures = 0
+    artifact_failures = 0
+    review_package_write_failed = False
 
     for step in result.get("steps", []):
         step_id = step.get("id")
         if not step_id:
             print(f"SKIP step with no id: {step}", file=sys.stderr)
-            failures += 1
+            step_failures += 1
             continue
         try:
             call_api(api_url, token, "PATCH", f"/api/work-orders/{work_order_id}/steps/{step_id}", step_update_payload(step), dry_run)
@@ -210,16 +233,23 @@ def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: boo
             successes += 1
         except ImportError_ as exc:
             print(f"FAIL step {step_id}: {exc}", file=sys.stderr)
-            failures += 1
+            step_failures += 1
 
     for entry in result.get("activityLogs", []):
+        # Backfill agentRunId so every log from this run hangs off its
+        # AgentRun (OP-Runner-Session-001) — a copy, not a mutation, since
+        # `result` may still be inspected/re-serialized by the caller after
+        # this function returns. Only fills entries the runner left blank;
+        # an explicit agentRunId the runner set itself is never overwritten.
+        if agent_run_id and not entry.get("agentRunId"):
+            entry = {**entry, "agentRunId": agent_run_id}
         try:
             call_api(api_url, token, "POST", f"/api/work-orders/{work_order_id}/activity-log", activity_log_payload(entry), dry_run)
             print(f"OK   activity log: {entry.get('eventType', entry.get('event_type'))}")
             successes += 1
         except ImportError_ as exc:
             print(f"FAIL activity log entry: {exc}", file=sys.stderr)
-            failures += 1
+            log_failures += 1
 
     for artifact in result.get("artifacts", []):
         try:
@@ -228,7 +258,7 @@ def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: boo
             successes += 1
         except ImportError_ as exc:
             print(f"FAIL artifact {artifact.get('title')}: {exc}", file=sys.stderr)
-            failures += 1
+            artifact_failures += 1
 
     review_package = result.get("reviewPackage")
     if review_package:
@@ -238,20 +268,82 @@ def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: boo
             successes += 1
         except ImportError_ as exc:
             print(f"FAIL review package: {exc}", file=sys.stderr)
-            failures += 1
+            review_package_write_failed = True
 
-    final_status = result.get("finalStatus")
-    if final_status:
+    # ── Atomic gate on the finalStatus write (OP-Import-Integrity-001) ──
+    # There is no real cross-call transaction available here — each write
+    # above is its own independent HTTP request, and a partial failure
+    # can't be rolled back without a transactional backend endpoint (that
+    # would be a major_architecture_change needing separate approval, see
+    # reviewPackage.risks). What IS achievable, and what every acceptance
+    # criterion here actually asks for, is: review_ready — the one status
+    # a human can treat as "safe to approve without re-reading the raw
+    # import log" — must never be written if any of its prerequisites
+    # failed to actually land. parse_and_validate_result() already refused
+    # a review_ready result with zero completed/skipped steps or a missing
+    # reviewPackage before any API call was made; this gate catches the
+    # remaining case, where the *writes themselves* failed partway through.
+    requested_final_status = result.get("finalStatus")
+    blocking_reasons: list[str] = []
+    if requested_final_status == "review_ready":
+        if step_failures:
+            blocking_reasons.append(f"{step_failures} step update(s) failed to write")
+        if not review_package:
+            blocking_reasons.append("reviewPackage is missing from the result JSON")
+        elif review_package_write_failed:
+            blocking_reasons.append("writing reviewPackage to the API failed")
+        if artifact_failures:
+            blocking_reasons.append(f"{artifact_failures} artifact(s) failed to write")
+
+    total_failures = step_failures + log_failures + artifact_failures + (1 if review_package_write_failed else 0)
+
+    if blocking_reasons:
+        print(
+            f"\nERROR: refusing to set finalStatus='review_ready' for work order {work_order_id} "
+            "— work order left at its previous status. Ursache(n):",
+            file=sys.stderr,
+        )
+        for reason in blocking_reasons:
+            print(f"  - {reason}", file=sys.stderr)
+        total_failures += 1
+    elif requested_final_status:
         try:
-            call_api(api_url, token, "PATCH", f"/api/work-orders/{work_order_id}", {"status": final_status}, dry_run)
-            print(f"OK   work order final status -> {final_status}")
+            call_api(api_url, token, "PATCH", f"/api/work-orders/{work_order_id}", {"status": requested_final_status}, dry_run)
+            print(f"OK   work order final status -> {requested_final_status}")
             successes += 1
         except ImportError_ as exc:
             print(f"FAIL setting final status: {exc}", file=sys.stderr)
-            failures += 1
+            total_failures += 1
 
-    print(f"\n{successes} succeeded, {failures} failed.")
-    return 1 if failures else 0
+    # ── Close out the AgentRun this session belongs to, if any (OP-Runner-
+    # Session-001) — reflects what actually happened, not what was merely
+    # requested: a review_ready request that the atomic gate above refused
+    # is recorded as a failed run, not a completed one.
+    if agent_run_id:
+        review_package_summary = (review_package or {}).get("summary")
+        if blocking_reasons:
+            agent_run_status = "failed"
+            agent_run_summary = "finalStatus='review_ready' was requested but blocked: " + "; ".join(blocking_reasons)
+        elif requested_final_status in ("review_ready", "blocked", "failed"):
+            agent_run_status = "completed" if requested_final_status == "review_ready" else requested_final_status
+            agent_run_summary = review_package_summary
+        else:
+            agent_run_status = None
+            agent_run_summary = None
+        if agent_run_status:
+            try:
+                call_api(
+                    api_url, token, "PATCH", f"/api/work-orders/{work_order_id}/agent-runs/{agent_run_id}",
+                    agent_run_update_payload(agent_run_status, agent_run_summary), dry_run,
+                )
+                print(f"OK   agent run {agent_run_id} -> {agent_run_status}")
+                successes += 1
+            except ImportError_ as exc:
+                print(f"FAIL agent run {agent_run_id}: {exc}", file=sys.stderr)
+                total_failures += 1
+
+    print(f"\n{successes} succeeded, {total_failures} failed.")
+    return 1 if total_failures else 0
 
 
 def main() -> int:
