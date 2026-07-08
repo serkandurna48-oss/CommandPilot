@@ -16,6 +16,12 @@ from app.models.work_order import (
 # the smaller per-step lifecycle (see supabase/migrations/007_work_order_steps.sql).
 _STEP_TERMINAL_STATUSES = {"completed", "failed", "skipped"}
 
+# Same idea, for agent_runs (see supabase/migrations/006_work_orders.sql).
+# "blocked" counts as terminal here (unlike work order status, which has its
+# own separate "blocked" meaning "needs approval mid-run") — an agent run
+# that ends up blocked has stopped, same as failed/completed.
+_AGENT_RUN_TERMINAL_STATUSES = {"completed", "failed", "blocked"}
+
 logger = logging.getLogger(__name__)
 
 # Status values that mark a work order as no longer active — reaching one of
@@ -265,6 +271,13 @@ def create_agent_run(work_order_id: str, data: AgentRunCreate) -> dict:
         "output_summary": data.output_summary,
         "model": data.model,
     }
+    # A run can be created already "running" (the runner harness creates it
+    # at the same moment it starts the session, see scripts/run_work_order.py
+    # OP-Runner-Session-001) — mirror update_agent_run's timestamp-on-status
+    # logic here too, otherwise a run created directly as "running" would
+    # never get a started_at and the UI couldn't show when it started.
+    if payload["status"] == "running":
+        payload.setdefault("started_at", _now_iso())
     result = db.table("agent_runs").insert(payload).execute()
     if not result.data:
         raise RuntimeError("Agent run insert returned no data")
@@ -273,10 +286,11 @@ def create_agent_run(work_order_id: str, data: AgentRunCreate) -> dict:
 
 def update_agent_run(run_id: str, work_order_id: str, updates: dict) -> dict | None:
     db = get_db()
-    if updates.get("status") == "completed":
-        updates.setdefault("completed_at", _now_iso())
-    elif updates.get("status") == "running":
+    status = updates.get("status")
+    if status == "running":
         updates.setdefault("started_at", _now_iso())
+    elif status in _AGENT_RUN_TERMINAL_STATUSES:
+        updates.setdefault("completed_at", _now_iso())
     result = (
         db.table("agent_runs")
         .update(updates)
@@ -347,6 +361,20 @@ def update_step(step_id: str, work_order_id: str, updates: dict) -> dict | None:
         .execute()
     )
     return result.data[0] if result.data else None
+
+
+def has_review_package(work_order_id: str) -> bool:
+    """Used to gate the status='review_ready' transition (OP-E2E-Loop-001,
+    AC10: 'Status review_ready nur bei vollständigem Review Package') — the
+    result-import path (scripts/import_work_order_result.py) already
+    enforces this client-side via its own atomic gate, but that only covers
+    the script path. The PATCH /work-orders/{id} endpoint had no equivalent
+    guard, so the "Mark Review Ready" lifecycle button (or any other direct
+    caller) could set review_ready with zero review package — exactly the
+    contradictory state this whole ticket exists to prevent."""
+    db = get_db()
+    row = _maybe_single(db.table("review_packages").select("id").eq("work_order_id", work_order_id).maybe_single())
+    return row is not None
 
 
 def upsert_review_package(work_order_id: str, data: ReviewPackageCreate) -> dict:

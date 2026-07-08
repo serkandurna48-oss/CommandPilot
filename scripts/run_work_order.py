@@ -64,6 +64,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 
 # Windows consoles often default to a legacy codepage (cp1252) rather than
 # UTF-8 — a plain print() of arbitrary runner/prompt text (em dashes,
@@ -83,6 +84,13 @@ from runner_adapters.base import extract_json_result, find_blocked_keyword, vali
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+# Where cmd_prompt_file() records the AgentRun it created for this session,
+# so a later (often separate-process) --mode import-result invocation can
+# find it again and close it out (OP-Runner-Session-001). Deliberately a
+# small standalone file rather than piggy-backing on run.log (plaintext,
+# append-only, not meant to be parsed back) or prompt.md (adapter-owned).
+_AGENT_RUN_STATE_FILENAME = "agent_run.json"
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -92,6 +100,25 @@ def session_dir(work_order_id: str) -> Path:
     d = REPO_ROOT / "tmp" / "work-order-runs" / work_order_id
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def write_agent_run_state(session_path: Path, agent_run_id: str, adapter_name: str, mode: str) -> None:
+    state = {"agent_run_id": agent_run_id, "adapter": adapter_name, "mode": mode, "recorded_at": now_iso()}
+    (session_path / _AGENT_RUN_STATE_FILENAME).write_text(json.dumps(state, indent=2), encoding="utf-8")
+
+
+def read_agent_run_id(session_path: Path) -> str | None:
+    """Best-effort: a missing or unreadable state file just means this
+    import isn't tied to a prompt-file-created AgentRun (e.g. an older
+    session predating this feature, or a manually-assembled result.json)
+    — not a reason to fail the import."""
+    path = session_path / _AGENT_RUN_STATE_FILENAME
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8")).get("agent_run_id")
+    except (json.JSONDecodeError, OSError):
+        return None
 
 
 def log_line(session_path: Path, message: str) -> None:
@@ -257,11 +284,53 @@ def cmd_prompt_file(args: argparse.Namespace, adapter: RunnerAdapter) -> int:
         except ImportError_ as exc:
             log_line(session_path, f"WARNUNG: konnte ersten Step nicht auf running setzen: {exc}")
 
+    # ── Real AgentRun record for this session (OP-Runner-Session-001) —
+    # `role` anchors on the first ticketplan step's role, same anchor the
+    # first-step PATCH above already uses; falls back to "coder" if the
+    # work order has no ticketplan at all. `model` doubles as "which
+    # runner ran this, in which mode" (adapter name + args.mode) since
+    # AgentRun has no dedicated column for either and adding one would be
+    # a migration (needs approval) — see reviewPackage.risks. Best-effort:
+    # a failure here is logged but never aborts prompt-file mode, matching
+    # the first-step PATCH above.
+    agent_run_id: str | None = None
+    agent_run_role = steps[0]["assigned_role"] if steps else "coder"
+    try:
+        created = call_api(
+            args.api_url, args.token, "POST", f"/api/work-orders/{args.work_order_id}/agent-runs",
+            {
+                "role": agent_run_role,
+                "status": "running",
+                "input_summary": f"Runner-Start ({adapter.info.name}, --mode {args.mode}) für Work Order '{order['title']}'"[:2000],
+                "model": f"{adapter.info.name} ({args.mode})",
+            },
+            dry_run=args.dry_run,
+        )
+        agent_run_id = created.get("id") if created else None
+        if agent_run_id:
+            write_agent_run_state(session_path, agent_run_id, adapter.info.name, args.mode)
+            log_line(session_path, f"AgentRun {agent_run_id} angelegt (role={agent_run_role}, status=running)")
+        elif args.dry_run:
+            log_line(session_path, "AgentRun-Anlage übersprungen (--dry-run liefert keine echte id)")
+        else:
+            # The POST didn't raise (so the server answered 2xx) but the
+            # response had no usable "id" — e.g. an unexpectedly empty body.
+            # Silently doing nothing here was the actual bug behind a real
+            # confusing session (OP-Runner-Session-001 follow-up): the run
+            # continued fine, but nothing said WHY no AgentRun got tracked.
+            log_line(session_path, f"WARNUNG: AgentRun-Antwort enthielt keine 'id' — nichts angelegt. Antwort: {created!r}")
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte AgentRun nicht anlegen: {exc}")
+
+    activity_log_payload: dict[str, Any] = {
+        "level": "info", "event_type": "runner_started",
+        "message": f"Lokaler Runner ({adapter.info.name}) gestartet, vorbereitet nach {session_path}",
+    }
+    if agent_run_id:
+        activity_log_payload["agent_run_id"] = agent_run_id
     try:
         call_api(args.api_url, args.token, "POST", f"/api/work-orders/{args.work_order_id}/activity-log",
-                  {"level": "info", "event_type": "runner_started",
-                   "message": f"Lokaler Runner ({adapter.info.name}) gestartet, vorbereitet nach {session_path}"},
-                  dry_run=args.dry_run)
+                  activity_log_payload, dry_run=args.dry_run)
         log_line(session_path, "ActivityLog-Eintrag 'runner_started' geschrieben")
     except ImportError_ as exc:
         log_line(session_path, f"WARNUNG: konnte ActivityLog nicht schreiben: {exc}")
@@ -313,8 +382,12 @@ def cmd_import_result(args: argparse.Namespace, adapter: RunnerAdapter) -> int:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1
 
-    log_line(session_path, f"Importiere Ergebnis (Adapter: {adapter.info.name})")
-    exit_code = import_result(result, args.api_url, args.token, dry_run=args.dry_run)
+    agent_run_id = read_agent_run_id(session_path)
+    if agent_run_id:
+        log_line(session_path, f"Importiere Ergebnis (Adapter: {adapter.info.name}, AgentRun: {agent_run_id})")
+    else:
+        log_line(session_path, f"Importiere Ergebnis (Adapter: {adapter.info.name}, kein AgentRun für diese Session gefunden)")
+    exit_code = import_result(result, args.api_url, args.token, dry_run=args.dry_run, agent_run_id=agent_run_id)
     log_line(session_path, f"Import abgeschlossen, exit_code={exit_code}")
     return exit_code
 

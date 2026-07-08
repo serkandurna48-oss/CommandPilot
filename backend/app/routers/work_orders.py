@@ -65,6 +65,11 @@ def update_work_order(
     updates = data.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
+    if updates.get("status") == "review_ready" and not work_order_service.has_review_package(work_order_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot set status to review_ready: no review package exists for this work order yet.",
+        )
     try:
         result = work_order_service.update_work_order(work_order_id, updates)
     except Exception as exc:
