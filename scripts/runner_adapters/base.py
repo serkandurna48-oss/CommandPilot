@@ -494,6 +494,14 @@ class ExecuteOutcome:
     exit_code: int
     output_log_path: Path
     result: dict | None  # auto-detected/produced result JSON, if any
+    # Actual spend for this one execute() call, if the adapter's runtime
+    # reports it (claude_code's --output-format json wrapper has
+    # total_cost_usd). None means "unknown" — CP-OP02's bounded-retry loop
+    # in run_work_order.py treats an unknown cost conservatively (assumes
+    # the whole remaining budget for that attempt) rather than assuming 0,
+    # so a cumulative budget ceiling across retries can never be exceeded
+    # even for an adapter that doesn't report cost.
+    cost_usd: float | None = None
 
 
 class RunnerAdapter(ABC):

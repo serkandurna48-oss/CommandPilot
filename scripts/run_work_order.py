@@ -91,6 +91,16 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 # append-only, not meant to be parsed back) or prompt.md (adapter-owned).
 _AGENT_RUN_STATE_FILENAME = "agent_run.json"
 
+# CP-OP02: the bounded auto-retry loop in --mode execute tries at most this
+# many attempts total (the first attempt plus up to 2 retries) before
+# finalizing the work order as 'failed' and requiring human intervention.
+# Retrying is scoped to harness-detected TECHNICAL failures only — an
+# exception from adapter.execute(), or a run that produced no usable result
+# JSON at all. A valid runner-reported result (any finalStatus) is never
+# retried, and a retry never happens if the working tree changed during the
+# failed attempt (see _worktree_changed()).
+_MAX_TECHNICAL_ATTEMPTS = 3
+
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -239,6 +249,308 @@ def check_execute_path_safety(order: dict, force: bool) -> list[str]:
     return []
 
 
+def _agent_run_role(order: dict) -> str:
+    """Anchors a new AgentRun's role on the first ticketplan step's role
+    (same anchor cmd_prompt_file's first-step PATCH uses), falling back to
+    "coder" if the work order has no ticketplan at all. Shared by
+    cmd_prompt_file() and the CP-OP02 retry loop so a retry's AgentRun uses
+    the same convention as the initial one."""
+    steps = order.get("steps") or []
+    return steps[0]["assigned_role"] if steps else "coder"
+
+
+def _current_status(args: argparse.Namespace) -> str | None:
+    """Fresh work-order status check (CP-OP02 cancellation gate). Returns
+    None — rather than raising — on a fetch failure, so a transient network
+    blip during a long-running retry sequence doesn't itself abort the run;
+    callers only stop the loop on an explicit 'cancelled' status, never on
+    "couldn't check" (the retry loop already fails closed on *working-tree*
+    uncertainty — see _worktree_changed() — status-check uncertainty is a
+    different, non-safety-critical failure mode and is only warned about)."""
+    try:
+        return fetch_work_order(args.api_url, args.token, args.work_order_id).get("status")
+    except RuntimeError as exc:
+        print(f"WARNUNG: konnte aktuellen Work-Order-Status nicht abrufen: {exc}", file=sys.stderr)
+        return None
+
+
+def _target_worktree() -> Path:
+    """Where the adapter's subprocess actually runs — for the CP-OP02
+    working-tree-safety check, this is deliberately NOT REPO_ROOT.
+    REPO_ROOT is fixed by this script's own file location (CommandPilot's
+    repo), but a cross-repo work order's runner is expected to operate
+    against a different repo (order.target_repo_path is prompt/display
+    context only, see build_runner_prompt() — CommandPilot itself never cds
+    anywhere). scripts/runner_adapters/claude_code.py's execute() spawns its
+    subprocess via subprocess.Popen() with no explicit cwd=, so it inherits
+    whatever directory the harness process itself was started in — i.e.
+    Path.cwd(). Snapshotting Path.cwd() instead of REPO_ROOT means the
+    safety check always looks at the exact worktree the adapter is about to
+    touch, whether that's CommandPilot itself (the common case, where
+    Path.cwd() == REPO_ROOT because the runbook says to invoke this script
+    from the CommandPilot repo root) or a different target repo the human
+    invoked this harness from within."""
+    return Path.cwd()
+
+
+def _git_snapshot(cwd: Path) -> tuple[str, str] | None:
+    """(HEAD sha, working-tree status) for cwd, or None if it can't be
+    determined at all (not a git repo, git missing from PATH, timeout, ...).
+    CP-OP02's retry-safety check (_worktree_changed) treats None as
+    "unknown" and fails closed — an undeterminable working-tree state is
+    treated exactly like a changed one, never like an unchanged one."""
+    try:
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True, timeout=10
+        )
+        status = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=cwd, capture_output=True, text=True, timeout=10
+        )
+        if head.returncode != 0 or status.returncode != 0:
+            return None
+        return head.stdout.strip(), status.stdout
+    except Exception:
+        return None
+
+
+def _worktree_changed(before: tuple[str, str] | None, after: tuple[str, str] | None) -> bool:
+    """True if the working tree looks different after an attempt than
+    before it started — OR if either snapshot couldn't be taken. A
+    technical failure with a changed (or undeterminable) working tree must
+    never be auto-retried (CP-OP02): retrying against a repo state the
+    failed attempt already modified risks compounding a half-finished
+    change instead of cleanly re-trying from the same starting point. Fail
+    closed: "unknown" is treated the same as "changed"."""
+    if before is None or after is None:
+        return True
+    return before != after
+
+
+def _finalize_technical_failure(
+    args: argparse.Namespace, session_path: Path, run_id: str | None, reason: str, detail: str
+) -> None:
+    """Closes out the current attempt's AgentRun as failed and transitions
+    the work order to 'failed' via PATCH /work-orders/{id} (routed through
+    transition_work_order(), CP-OP01) with source='harness' and the given
+    short reason code — the RPC writes its own audit-log entry atomically
+    with the status change. Also posts a richer, human-readable
+    activity-log entry with the full diagnostic detail, since the
+    transition's own audit entry only carries the short reason code.
+    Degrades to warnings (never raises) if the work order was concurrently
+    moved to some other terminal status (e.g. a human clicked Cancel while
+    this was running) — that PATCH failing with illegal_transition is an
+    expected race, not a bug."""
+    if run_id:
+        try:
+            call_api(
+                args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}/agent-runs/{run_id}",
+                {"status": "failed", "output_summary": detail[:2000]}, dry_run=args.dry_run,
+            )
+        except ImportError_ as exc:
+            log_line(session_path, f"WARNUNG: konnte AgentRun {run_id} nicht auf failed setzen: {exc}")
+    try:
+        call_api(
+            args.api_url, args.token, "POST", f"/api/work-orders/{args.work_order_id}/activity-log",
+            {"level": "error", "event_type": "auto_retry_exhausted", "message": detail[:2000], "agent_run_id": run_id},
+            dry_run=args.dry_run,
+        )
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte Activity-Log nicht schreiben: {exc}")
+    try:
+        call_api(
+            args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}",
+            {"status": "failed", "source": "harness", "reason": reason}, dry_run=args.dry_run,
+        )
+        log_line(session_path, f"Work Order -> failed (Grund: {reason})")
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte Work Order nicht auf failed setzen (evtl. bereits in anderem Endzustand): {exc}")
+        print(f"WARNUNG: {exc}", file=sys.stderr)
+
+
+def _terminalize_cancelled_run(args: argparse.Namespace, session_path: Path, run_id: str | None, detail: str) -> None:
+    """Closes out the given AgentRun (if any) when the harness stops
+    because the work order was cancelled out from under it — no AgentRun
+    may be left sitting on 'running' forever just because the harness gave
+    up early (CP-OP02 correction). Uses 'failed', not a new status:
+      - not 'completed' — nothing was actually recorded/applied for this
+        run (even if a valid result was obtained, it was deliberately never
+        imported once cancellation was seen).
+      - not 'blocked' — 'blocked' means paused pending a human decision to
+        CONTINUE this same run; a cancelled work order has no "continue"
+        left, there is nothing to resume.
+      - 'failed' is the closest existing terminal meaning: this run did not
+        finish successfully. The output_summary text ("... cancelled ...")
+        distinguishes this from a genuine technical failure for anyone
+        reading the Activity Log/Agent Runs UI.
+    Never touches work_orders.status — the work order is already in
+    whatever terminal-for-this-purpose state got it cancelled; this only
+    prevents its AgentRun from being stuck open."""
+    if not run_id:
+        return
+    try:
+        call_api(
+            args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}/agent-runs/{run_id}",
+            {"status": "failed", "output_summary": detail[:2000]}, dry_run=args.dry_run,
+        )
+        log_line(session_path, f"AgentRun {run_id} -> failed (Work Order cancelled)")
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte AgentRun {run_id} nach Cancellation nicht auf failed setzen: {exc}")
+
+
+def _run_adapter_with_bounded_retry(
+    args: argparse.Namespace,
+    adapter: RunnerAdapter,
+    order: dict,
+    session_path: Path,
+    total_budget: float | None,
+    initial_agent_run_id: str | None,
+) -> int:
+    """CP-OP02: drives up to _MAX_TECHNICAL_ATTEMPTS calls to
+    adapter.execute(). Retries ONLY on a harness-detected technical failure
+    — an exception from adapter.execute(), or a call that returned without
+    raising but produced no usable result JSON at all (e.g. a timeout). A
+    valid, structured runner result is handed straight to cmd_import_result()
+    and never retried, regardless of its finalStatus — blocked/failed are a
+    runner telling us something real, not a technical hiccup.
+
+    work_orders.status stays 'running' for the entire sequence: auto-retry
+    is deliberately not a work_order status transition (CP-OP01's state
+    machine has no notion of retries). Each attempt gets its own AgentRun
+    row (attempt_number/retry_reason) so the retry history stays visible.
+
+    total_budget, if not None, is a CUMULATIVE ceiling across every attempt
+    in this call — the per-attempt budget passed to adapter.execute() is
+    whatever remains after previously-reported spend, never the full amount
+    again. If an attempt doesn't report its actual cost, the entire
+    remaining budget for that attempt is conservatively assumed spent, so
+    the sum can never exceed total_budget even for a cost-silent adapter.
+    """
+    spent_so_far = 0.0
+    run_id = initial_agent_run_id
+
+    for attempt in range(1, _MAX_TECHNICAL_ATTEMPTS + 1):
+        if _current_status(args) == "cancelled":
+            detail = f"Work Order ist cancelled — kein weiterer Runner-Start (vor Attempt {attempt})."
+            log_line(session_path, detail)
+            print("Work Order wurde cancelled — breche ab, kein weiterer Runner-Start.")
+            _terminalize_cancelled_run(args, session_path, run_id, detail)
+            return 0
+
+        remaining_budget: float | None = None
+        if total_budget is not None:
+            remaining_budget = round(max(total_budget - spent_so_far, 0.0), 4)
+            if remaining_budget <= 0:
+                detail = (
+                    f"Gesamtbudget ${total_budget} durch vorherige Attempts aufgebraucht — "
+                    f"Attempt {attempt}/{_MAX_TECHNICAL_ATTEMPTS} wird nicht mehr gestartet."
+                )
+                log_line(session_path, detail)
+                _finalize_technical_failure(args, session_path, run_id, "technical_failure_budget_exhausted", detail)
+                return 1
+
+        before = _git_snapshot(_target_worktree())
+        budget_note = f" (Budget verbleibend: ${remaining_budget})" if remaining_budget is not None else ""
+        log_line(session_path, f"Attempt {attempt}/{_MAX_TECHNICAL_ATTEMPTS} — starte adapter.execute(){budget_note}")
+
+        outcome = None
+        exec_error: Exception | None = None
+        try:
+            outcome = adapter.execute(order, session_path, None, max_budget_usd=remaining_budget)
+        except NotImplementedError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1
+        except Exception as exc:  # noqa: BLE001 — any adapter failure here is a technical failure by definition
+            exec_error = exc
+            log_line(session_path, f"FEHLER bei adapter.execute() (Attempt {attempt}): {exc}")
+
+        if outcome is not None:
+            log_line(session_path, f"adapter.execute() beendet (Attempt {attempt}), exit_code={outcome.exit_code}")
+            if remaining_budget is not None:
+                spent_so_far += outcome.cost_usd if outcome.cost_usd is not None else remaining_budget
+
+        if outcome is not None and outcome.result is not None:
+            (session_path / "result.json").write_text(
+                json.dumps(outcome.result, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            log_line(session_path, "Ergebnis-JSON aus adapter.execute() als result.json gespeichert.")
+
+            if _current_status(args) == "cancelled":
+                detail = "Work Order wurde cancelled — Ergebnis liegt lokal vor, wird NICHT importiert."
+                log_line(session_path, detail)
+                print("Work Order wurde inzwischen cancelled — Ergebnis-Import wird übersprungen.")
+                _terminalize_cancelled_run(args, session_path, run_id, detail)
+                return 0
+            return cmd_import_result(args, adapter)
+
+        # Technical failure: either an exception, or execute() returned
+        # without one but produced no usable result at all.
+        after = _git_snapshot(_target_worktree())
+        failure_detail = f"Fehler: {exec_error}" if exec_error else f"exit_code={outcome.exit_code if outcome else 'unbekannt'}"
+
+        if _worktree_changed(before, after):
+            detail = (
+                f"Technischer Fehler bei Attempt {attempt} UND der Working Tree hat sich seitdem verändert "
+                "(oder war nicht feststellbar) — kein Auto-Retry, menschliches Eingreifen nötig. " + failure_detail
+            )
+            log_line(session_path, detail)
+            _finalize_technical_failure(args, session_path, run_id, "technical_failure_with_worktree_changes", detail)
+            return 1
+
+        if attempt >= _MAX_TECHNICAL_ATTEMPTS:
+            detail = (
+                f"Technischer Fehler, {attempt}/{_MAX_TECHNICAL_ATTEMPTS} Versuche ausgeschöpft, Working Tree "
+                "unverändert — kein weiterer Retry mehr erlaubt. " + failure_detail
+            )
+            log_line(session_path, detail)
+            _finalize_technical_failure(args, session_path, run_id, "technical_failure_retries_exhausted", detail)
+            return 1
+
+        if _current_status(args) == "cancelled":
+            detail = "Work Order wurde cancelled — kein weiterer Retry."
+            log_line(session_path, detail)
+            print(detail)
+            _terminalize_cancelled_run(args, session_path, run_id, detail)
+            return 0
+
+        # Close out this attempt's AgentRun, open a new one for the next
+        # attempt — each attempt is its own row (CP-OP02).
+        next_attempt = attempt + 1
+        if run_id:
+            try:
+                call_api(
+                    args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}/agent-runs/{run_id}",
+                    {"status": "failed", "output_summary": f"Attempt {attempt} technischer Fehler — wird retried. {failure_detail}"[:2000]},
+                    dry_run=args.dry_run,
+                )
+            except ImportError_ as exc:
+                log_line(session_path, f"WARNUNG: konnte AgentRun {run_id} nicht auf failed setzen: {exc}")
+
+        retry_reason = f"technical_failure_attempt_{attempt}"
+        try:
+            created = call_api(
+                args.api_url, args.token, "POST", f"/api/work-orders/{args.work_order_id}/agent-runs",
+                {
+                    "role": _agent_run_role(order),
+                    "status": "running",
+                    "input_summary": f"Auto-Retry Attempt {next_attempt}/{_MAX_TECHNICAL_ATTEMPTS} ({adapter.info.name})"[:2000],
+                    "model": f"{adapter.info.name} (execute, retry)",
+                    "attempt_number": next_attempt,
+                    "retry_reason": retry_reason,
+                },
+                dry_run=args.dry_run,
+            )
+            run_id = created.get("id") if created else run_id
+            if run_id:
+                write_agent_run_state(session_path, run_id, adapter.info.name, args.mode)
+            log_line(session_path, f"AgentRun für Attempt {next_attempt} angelegt: {run_id}")
+        except ImportError_ as exc:
+            log_line(session_path, f"WARNUNG: konnte AgentRun für Attempt {next_attempt} nicht anlegen: {exc}")
+
+    # Unreachable: the loop always returns on its final iteration
+    # (attempt >= _MAX_TECHNICAL_ATTEMPTS is guaranteed to be true then).
+    return 1
+
+
 def cmd_prompt_file(args: argparse.Namespace, adapter: RunnerAdapter) -> int:
     order = fetch_work_order(args.api_url, args.token, args.work_order_id)
 
@@ -294,7 +606,7 @@ def cmd_prompt_file(args: argparse.Namespace, adapter: RunnerAdapter) -> int:
     # a failure here is logged but never aborts prompt-file mode, matching
     # the first-step PATCH above.
     agent_run_id: str | None = None
-    agent_run_role = steps[0]["assigned_role"] if steps else "coder"
+    agent_run_role = _agent_run_role(order)
     try:
         created = call_api(
             args.api_url, args.token, "POST", f"/api/work-orders/{args.work_order_id}/agent-runs",
@@ -501,30 +813,15 @@ def cmd_execute(args: argparse.Namespace, adapter: RunnerAdapter) -> int:
             "Ein Fehlschlag hier ist erwartbar, kein Bug."
         )
 
-    try:
-        outcome = adapter.execute(order, session_path, None, max_budget_usd=effective_budget)
-    except NotImplementedError as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-    except Exception as exc:
-        log_line(session_path, f"FEHLER bei adapter.execute(): {exc}")
-        print(f"ERROR: {exc}", file=sys.stderr)
-        return 1
-
-    log_line(session_path, f"Adapter-natives execute() beendet, exit_code={outcome.exit_code}")
-    if outcome.result is not None:
-        # collect_result() (called inside cmd_import_result) reads from disk
-        # by default — persist the in-memory result here first, mirroring
-        # the generic --runner-command branch above, or import would fail
-        # with "result file not found" despite outcome.result already
-        # holding the parsed data. Caught by this file's own dry-run suite.
-        (session_path / "result.json").write_text(
-            json.dumps(outcome.result, indent=2, ensure_ascii=False), encoding="utf-8"
-        )
-        log_line(session_path, "Ergebnis-JSON aus adapter.execute() als result.json gespeichert.")
-        return cmd_import_result(args, adapter)
-    print(f"Kein Ergebnis-JSON von Adapter '{adapter.info.name}' erhalten — siehe {outcome.output_log_path}.")
-    return outcome.exit_code
+    # CP-OP02: bounded, harness-driven retry — up to _MAX_TECHNICAL_ATTEMPTS
+    # calls to adapter.execute(), retried only on a technical failure with
+    # an unchanged working tree. See _run_adapter_with_bounded_retry()'s
+    # docstring for the full contract; cmd_prompt_file() above already
+    # created the first AgentRun (status=running), which is attempt 1.
+    initial_agent_run_id = read_agent_run_id(session_path)
+    return _run_adapter_with_bounded_retry(
+        args, adapter, order, session_path, effective_budget, initial_agent_run_id
+    )
 
 
 def main() -> int:

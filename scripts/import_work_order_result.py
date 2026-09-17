@@ -35,6 +35,7 @@ Field name convention:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
@@ -122,7 +123,37 @@ def step_update_payload(step: dict[str, Any]) -> dict[str, Any]:
     return payload
 
 
-def activity_log_payload(entry: dict[str, Any]) -> dict[str, Any]:
+def position_dedup_key(agent_run_id: str | None, item_kind: str, index: int) -> str | None:
+    """Stable, POSITION-based idempotency key for one activityLogs/artifacts
+    item within a single agent_run's result import (CP-OP03).
+
+    Deliberately NOT content-based (e.g. hashing agent_run_id + the item's
+    full JSON) — two genuinely identical log/artifact entries at different
+    positions in the same result must stay distinct rows, not collapse into
+    one. Keying on (agent_run_id, kind, index) instead means:
+      - importing the exact same result.json twice reproduces the same
+        keys for the same positions — a safe no-op upsert, not a duplicate.
+      - a corrected re-import of the SAME agent_run's result (e.g. after a
+        partial failure) updates the same positional slots rather than
+        duplicating whatever already landed.
+      - two different agent_runs (e.g. CP-OP02 retry attempts, each with
+        their own agent_run_id) never collide with each other, since
+        agent_run_id is part of the key.
+
+    Returns None — no dedup key at all, plain-insert behavior — when there
+    is no agent_run_id to scope the key to (a standalone/manual import not
+    tied to any tracked AgentRun, e.g. an older session or a hand-crafted
+    result.json). Without an agent_run_id there is no safe way to
+    distinguish "the same import, run again" from "an unrelated import that
+    happens to have an item at the same index," so this deliberately
+    doesn't guess."""
+    if not agent_run_id:
+        return None
+    raw = f"{agent_run_id}|{item_kind}|{index}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def activity_log_payload(entry: dict[str, Any], dedup_key: str | None = None) -> dict[str, Any]:
     payload = {
         "level": entry["level"],
         "event_type": entry.get("eventType", entry.get("event_type", "runner_event")),
@@ -132,10 +163,12 @@ def activity_log_payload(entry: dict[str, Any]) -> dict[str, Any]:
         payload["agent_run_id"] = entry["agentRunId"]
     if entry.get("metadata"):
         payload["metadata"] = entry["metadata"]
+    if dedup_key:
+        payload["dedup_key"] = dedup_key
     return payload
 
 
-def artifact_payload(artifact: dict[str, Any]) -> dict[str, Any]:
+def artifact_payload(artifact: dict[str, Any], dedup_key: str | None = None) -> dict[str, Any]:
     payload = {
         "type": artifact["type"],
         "title": artifact["title"],
@@ -144,6 +177,8 @@ def artifact_payload(artifact: dict[str, Any]) -> dict[str, Any]:
         payload["content"] = artifact["content"]
     if artifact.get("filePath"):
         payload["file_path"] = artifact["filePath"]
+    if dedup_key:
+        payload["dedup_key"] = dedup_key
     return payload
 
 
@@ -235,7 +270,7 @@ def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: boo
             print(f"FAIL step {step_id}: {exc}", file=sys.stderr)
             step_failures += 1
 
-    for entry in result.get("activityLogs", []):
+    for i, entry in enumerate(result.get("activityLogs", [])):
         # Backfill agentRunId so every log from this run hangs off its
         # AgentRun (OP-Runner-Session-001) — a copy, not a mutation, since
         # `result` may still be inspected/re-serialized by the caller after
@@ -243,17 +278,19 @@ def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: boo
         # an explicit agentRunId the runner set itself is never overwritten.
         if agent_run_id and not entry.get("agentRunId"):
             entry = {**entry, "agentRunId": agent_run_id}
+        dedup_key = position_dedup_key(agent_run_id, "activity_log", i)
         try:
-            call_api(api_url, token, "POST", f"/api/work-orders/{work_order_id}/activity-log", activity_log_payload(entry), dry_run)
+            call_api(api_url, token, "POST", f"/api/work-orders/{work_order_id}/activity-log", activity_log_payload(entry, dedup_key), dry_run)
             print(f"OK   activity log: {entry.get('eventType', entry.get('event_type'))}")
             successes += 1
         except ImportError_ as exc:
             print(f"FAIL activity log entry: {exc}", file=sys.stderr)
             log_failures += 1
 
-    for artifact in result.get("artifacts", []):
+    for i, artifact in enumerate(result.get("artifacts", [])):
+        dedup_key = position_dedup_key(agent_run_id, "artifact", i)
         try:
-            call_api(api_url, token, "POST", f"/api/work-orders/{work_order_id}/artifacts", artifact_payload(artifact), dry_run)
+            call_api(api_url, token, "POST", f"/api/work-orders/{work_order_id}/artifacts", artifact_payload(artifact, dedup_key), dry_run)
             print(f"OK   artifact: {artifact.get('title')}")
             successes += 1
         except ImportError_ as exc:

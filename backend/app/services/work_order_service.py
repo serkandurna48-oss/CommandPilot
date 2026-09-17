@@ -24,14 +24,6 @@ _AGENT_RUN_TERMINAL_STATUSES = {"completed", "failed", "blocked"}
 
 logger = logging.getLogger(__name__)
 
-# Status values that mark a work order as no longer active — reaching one of
-# these sets completed_at if it isn't already set. Never trusts a
-# client-supplied timestamp; both started_at and completed_at are derived
-# server-side from the status transition, matching the request_date /
-# generated_at pattern used elsewhere in this backend.
-_TERMINAL_STATUSES = {"accepted", "failed", "cancelled"}
-_STARTED_STATUSES = {"running", "needs_approval", "blocked", "review_ready", "accepted", "rework_requested"}
-
 
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -221,21 +213,77 @@ def get_work_order_children(work_order_id: str) -> dict:
     }
 
 
-def update_work_order(work_order_id: str, updates: dict) -> dict | None:
-    db = get_db()
+def _extract_postgrest_message(exc: Exception) -> str:
+    """Best-effort extraction of the human-readable message from whatever
+    exception shape postgrest-py raises for a failed RPC call — different
+    client versions expose this as `.message`, or as a dict in `.args[0]`.
+    Falls back to `str(exc)` so a shape we didn't anticipate still surfaces
+    *something* useful instead of a bare traceback."""
+    message = getattr(exc, "message", None)
+    if message:
+        return str(message)
+    args = getattr(exc, "args", None)
+    if args and isinstance(args[0], dict):
+        return str(args[0].get("message") or args[0])
+    return str(exc)
 
+
+def transition_work_order(work_order_id: str, to_status: str, source: str = "ui", reason: str | None = None) -> dict:
+    """The only way work_orders.status may change (CP-OP01).
+
+    Delegates to the transition_work_order() Postgres function (see
+    supabase/migrations/010_transition_work_order_function.sql), which
+    validates the transition against the authoritative state machine, checks
+    per-edge preconditions (e.g. review_ready requires an existing review
+    package), applies the status + started_at/completed_at update, and
+    inserts the matching activity_logs audit entry — all inside one DB
+    transaction. A successful transition without its audit entry is not
+    possible; a rejected transition changes nothing.
+
+    Raises:
+        LookupError: work_order_id does not exist.
+        ValueError: the transition is illegal or fails a precondition —
+            callers should map this to HTTP 400.
+    """
+    db = get_db()
+    try:
+        result = db.rpc(
+            "transition_work_order",
+            {
+                "p_work_order_id": work_order_id,
+                "p_to_status": to_status,
+                "p_source": source,
+                "p_reason": reason,
+            },
+        ).execute()
+    except Exception as exc:
+        message = _extract_postgrest_message(exc)
+        if "work_order_not_found" in message:
+            raise LookupError(work_order_id) from exc
+        raise ValueError(message) from exc
+
+    data = result.data
+    if isinstance(data, list):
+        data = data[0] if data else None
+    if not data:
+        raise LookupError(work_order_id)
+
+    scope = _maybe_single(db.table("approval_scopes").select("id").eq("work_order_id", work_order_id).maybe_single())
+    return _attach_approval_scope_id(data, scope)
+
+
+def update_work_order_fields(work_order_id: str, updates: dict) -> dict | None:
+    """Applies non-status work_order field updates (recommended_next_step,
+    missing_context). Status changes must go through transition_work_order()
+    instead — this function deliberately refuses to touch `status` so a
+    future regression can't silently reintroduce the unvalidated
+    any-status-to-any-status write CP-OP01 removed."""
+    if "status" in updates:
+        raise ValueError("update_work_order_fields() must not receive 'status' — use transition_work_order() instead")
+
+    db = get_db()
     if "missing_context" in updates and updates["missing_context"] is not None:
         updates["missing_context"] = [m.model_dump() if hasattr(m, "model_dump") else m for m in updates["missing_context"]]
-
-    status = updates.get("status")
-    if status in _STARTED_STATUSES:
-        # Only set started_at if it isn't already set — don't overwrite the
-        # original start time on every subsequent status change.
-        existing = _maybe_single(db.table("work_orders").select("started_at").eq("id", work_order_id).maybe_single())
-        if existing and not existing.get("started_at"):
-            updates["started_at"] = _now_iso()
-    if status in _TERMINAL_STATUSES:
-        updates["completed_at"] = _now_iso()
 
     result = db.table("work_orders").update(updates).eq("id", work_order_id).execute()
     if not result.data:
@@ -254,8 +302,15 @@ def append_activity_log(work_order_id: str, data: ActivityLogCreate) -> dict:
         "event_type": data.event_type,
         "message": data.message,
         "metadata": data.metadata,
+        "dedup_key": data.dedup_key,
     }
-    result = db.table("activity_logs").insert(payload).execute()
+    # Upsert on (work_order_id, dedup_key) (CP-OP03): when the import script
+    # sets dedup_key, a repeated or corrected re-import of the same
+    # agent_run's result updates the same slot instead of duplicating it.
+    # Every other caller leaves dedup_key None — Postgres never treats two
+    # NULLs as equal for uniqueness, so an upsert with dedup_key=None can
+    # never match an existing row and behaves exactly like a plain insert.
+    result = db.table("activity_logs").upsert(payload, on_conflict="work_order_id,dedup_key").execute()
     if not result.data:
         raise RuntimeError("Activity log insert returned no data")
     return result.data[0]
@@ -270,6 +325,8 @@ def create_agent_run(work_order_id: str, data: AgentRunCreate) -> dict:
         "input_summary": data.input_summary,
         "output_summary": data.output_summary,
         "model": data.model,
+        "attempt_number": data.attempt_number,
+        "retry_reason": data.retry_reason,
     }
     # A run can be created already "running" (the runner harness creates it
     # at the same moment it starts the session, see scripts/run_work_order.py
@@ -309,8 +366,11 @@ def create_artifact(work_order_id: str, data: ArtifactCreate) -> dict:
         "title": data.title,
         "content": data.content,
         "file_path": data.file_path,
+        "dedup_key": data.dedup_key,
     }
-    result = db.table("artifacts").insert(payload).execute()
+    # See append_activity_log()'s comment — same upsert-on-(work_order_id,
+    # dedup_key) idempotency pattern (CP-OP03).
+    result = db.table("artifacts").upsert(payload, on_conflict="work_order_id,dedup_key").execute()
     if not result.data:
         raise RuntimeError("Artifact insert returned no data")
     return result.data[0]
@@ -361,20 +421,6 @@ def update_step(step_id: str, work_order_id: str, updates: dict) -> dict | None:
         .execute()
     )
     return result.data[0] if result.data else None
-
-
-def has_review_package(work_order_id: str) -> bool:
-    """Used to gate the status='review_ready' transition (OP-E2E-Loop-001,
-    AC10: 'Status review_ready nur bei vollständigem Review Package') — the
-    result-import path (scripts/import_work_order_result.py) already
-    enforces this client-side via its own atomic gate, but that only covers
-    the script path. The PATCH /work-orders/{id} endpoint had no equivalent
-    guard, so the "Mark Review Ready" lifecycle button (or any other direct
-    caller) could set review_ready with zero review package — exactly the
-    contradictory state this whole ticket exists to prevent."""
-    db = get_db()
-    row = _maybe_single(db.table("review_packages").select("id").eq("work_order_id", work_order_id).maybe_single())
-    return row is not None
 
 
 def upsert_review_package(work_order_id: str, data: ReviewPackageCreate) -> dict:

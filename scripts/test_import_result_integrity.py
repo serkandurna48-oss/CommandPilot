@@ -246,5 +246,139 @@ class ImportResultAtomicGateTests(unittest.TestCase):
         self.assertEqual(len(final_status_calls), 1, "a non-review_ready status is written regardless of step failures")
 
 
+class ResultImportDedupKeyTests(unittest.TestCase):
+    """CP-OP03: position-based idempotency keys for activityLogs/artifacts
+    writes. call_api is mocked, so these verify the SCRIPT's contract (same
+    position -> same key across repeated/partial imports; different
+    positions/agent_runs -> different keys) — the actual DB-level
+    upsert-on-conflict behavior is covered separately by backend/tests."""
+
+    def _result_with_two_items(self):
+        return _valid_result(
+            activityLogs=[
+                {"level": "info", "eventType": "step_started", "message": "a", "agentRunId": None},
+                {"level": "info", "eventType": "step_finished", "message": "b", "agentRunId": None},
+            ],
+            artifacts=[
+                {"type": "summary", "title": "First", "content": "..."},
+                {"type": "diff", "title": "Second", "content": "..."},
+            ],
+        )
+
+    @staticmethod
+    def _payloads_for(mock_call, path_substring):
+        return [c.args[4] for c in mock_call.call_args_list if path_substring in c.args[3]]
+
+    def test_no_agent_run_id_means_no_dedup_key(self):
+        self.assertIsNone(importer.position_dedup_key(None, "activity_log", 0))
+        self.assertIsNone(importer.position_dedup_key(None, "artifact", 3))
+
+    def test_different_positions_get_different_full_length_keys(self):
+        k0 = importer.position_dedup_key("run-1", "activity_log", 0)
+        k1 = importer.position_dedup_key("run-1", "activity_log", 1)
+        self.assertIsNotNone(k0)
+        self.assertNotEqual(k0, k1)
+        self.assertEqual(len(k0), 64)  # full, untruncated SHA-256 hex digest — not shortened
+
+    def test_different_agent_runs_get_different_keys_for_the_same_position(self):
+        self.assertNotEqual(
+            importer.position_dedup_key("run-1", "activity_log", 0),
+            importer.position_dedup_key("run-2", "activity_log", 0),
+        )
+
+    def test_activity_log_and_artifact_kinds_never_collide(self):
+        self.assertNotEqual(
+            importer.position_dedup_key("run-1", "activity_log", 0),
+            importer.position_dedup_key("run-1", "artifact", 0),
+        )
+
+    def test_identical_items_at_different_positions_stay_distinct(self):
+        # The whole reason this is position-based rather than content-based:
+        # two items with byte-identical content at different indices must
+        # not collapse into the same key.
+        result = _valid_result(activityLogs=[
+            {"level": "info", "eventType": "same", "message": "same", "agentRunId": None},
+            {"level": "info", "eventType": "same", "message": "same", "agentRunId": None},
+        ])
+        with patch.object(importer, "fetch_work_order", return_value=_order_for(result)), \
+             patch.object(importer, "call_api", side_effect=lambda *a, **k: {}) as mock_call:
+            importer.import_result(result, "http://localhost:8000", "fake-token", dry_run=False, agent_run_id="run-1")
+        keys = [p.get("dedup_key") for p in self._payloads_for(mock_call, "/activity-log")]
+        self.assertEqual(len(keys), 2)
+        self.assertNotEqual(keys[0], keys[1])
+
+    def test_repeated_import_of_the_same_result_produces_identical_keys_per_position(self):
+        result = self._result_with_two_items()
+
+        with patch.object(importer, "fetch_work_order", return_value=_order_for(result)), \
+             patch.object(importer, "call_api", side_effect=lambda *a, **k: {}) as mock_call_1:
+            importer.import_result(result, "http://localhost:8000", "fake-token", dry_run=False, agent_run_id="run-1")
+        first_log_keys = [p.get("dedup_key") for p in self._payloads_for(mock_call_1, "/activity-log")]
+        first_artifact_keys = [p.get("dedup_key") for p in self._payloads_for(mock_call_1, "/artifacts")]
+
+        with patch.object(importer, "fetch_work_order", return_value=_order_for(result)), \
+             patch.object(importer, "call_api", side_effect=lambda *a, **k: {}) as mock_call_2:
+            importer.import_result(result, "http://localhost:8000", "fake-token", dry_run=False, agent_run_id="run-1")
+        second_log_keys = [p.get("dedup_key") for p in self._payloads_for(mock_call_2, "/activity-log")]
+        second_artifact_keys = [p.get("dedup_key") for p in self._payloads_for(mock_call_2, "/artifacts")]
+
+        self.assertEqual(first_log_keys, second_log_keys)
+        self.assertEqual(first_artifact_keys, second_artifact_keys)
+        self.assertTrue(all(k is not None for k in first_log_keys + first_artifact_keys))
+        self.assertEqual(len(set(first_log_keys)), 2)
+        self.assertEqual(len(set(first_artifact_keys)), 2)
+
+    def test_partial_failure_then_repeat_reuses_the_same_keys_for_every_slot(self):
+        # First import: the SECOND artifact's POST fails (simulating a
+        # partial import, e.g. a transient blip after call_api()'s own 3
+        # retries were exhausted) — the first artifact and both activity
+        # logs succeed.
+        result = self._result_with_two_items()
+
+        def first_side_effect(api_url, token, method, path, payload, dry_run):
+            if "/artifacts" in path and payload.get("title") == "Second":
+                raise importer.ImportError_("simulated transient failure on the second artifact")
+            return {}
+
+        with patch.object(importer, "fetch_work_order", return_value=_order_for(result)), \
+             patch.object(importer, "call_api", side_effect=first_side_effect):
+            exit_code_1 = importer.import_result(result, "http://localhost:8000", "fake-token", dry_run=False, agent_run_id="run-1")
+        self.assertEqual(exit_code_1, 1)  # review_ready was refused — one artifact failed to write
+
+        # Second import: same result, same agent_run_id, everything
+        # succeeds this time. Both artifact POSTs must carry the exact same
+        # dedup_key values as the first attempt — including for the
+        # artifact that already succeeded — so a real backend's upsert
+        # fills in the missing slot without duplicating the one that
+        # already landed.
+        with patch.object(importer, "fetch_work_order", return_value=_order_for(result)), \
+             patch.object(importer, "call_api", side_effect=lambda *a, **k: {}) as mock_call_2:
+            exit_code_2 = importer.import_result(result, "http://localhost:8000", "fake-token", dry_run=False, agent_run_id="run-1")
+        self.assertEqual(exit_code_2, 0)
+
+        second_keys_by_title = {p["title"]: p.get("dedup_key") for p in self._payloads_for(mock_call_2, "/artifacts")}
+        self.assertEqual(second_keys_by_title["First"], importer.position_dedup_key("run-1", "artifact", 0))
+        self.assertEqual(second_keys_by_title["Second"], importer.position_dedup_key("run-1", "artifact", 1))
+
+    def test_same_final_status_reimport_is_still_attempted_as_a_plain_patch(self):
+        # The script always PATCHes whatever finalStatus the result carries
+        # — the actual "same status -> no-op, no duplicate audit log" logic
+        # lives in transition_work_order() (CP-OP01), not here (see
+        # backend/tests/test_work_order_transitions.py::
+        # test_same_state_transition_succeeds_without_special_casing_in_python).
+        # This just documents that a repeated import doesn't error out on
+        # the script side when the work order is already at that status.
+        result = self._result_with_two_items()
+        with patch.object(importer, "fetch_work_order", return_value=_order_for(result)), \
+             patch.object(importer, "call_api", side_effect=lambda *a, **k: {}) as mock_call:
+            exit_code = importer.import_result(result, "http://localhost:8000", "fake-token", dry_run=False, agent_run_id="run-1")
+        self.assertEqual(exit_code, 0)
+        final_status_calls = [
+            c for c in mock_call.call_args_list
+            if c.args[2] == "PATCH" and c.args[3] == f"/api/work-orders/{result['workOrderId']}"
+        ]
+        self.assertEqual(final_status_calls[0].args[4], {"status": "review_ready"})
+
+
 if __name__ == "__main__":
     unittest.main()

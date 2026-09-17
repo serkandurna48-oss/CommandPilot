@@ -13,19 +13,59 @@ interface Props {
 }
 
 // Only the transitions a human is expected to trigger from this UI.
-// running → review_ready is exclusively the import script's job (see
-// scripts/import_work_order_result.py's atomic gate, OP-Import-Integrity-001)
-// — no manual button here for that transition. The backend now rejects a
-// direct PATCH to review_ready without a review package regardless
-// (OP-E2E-Loop-001), but removing the button avoids offering an action
-// that would just fail with a 400.
+// running → {needs_approval, blocked, failed, review_ready} is exclusively
+// the harness/import script's job (see scripts/import_work_order_result.py's
+// atomic gate, OP-Import-Integrity-001) — no manual button for those. The
+// backend enforces this as the authoritative state machine regardless
+// (CP-OP01, transition_work_order()), so these buttons only ever offer
+// edges the backend actually allows.
+//
+// needs_approval/blocked/failed/rework_requested → queued are the CP-OP01
+// human resume paths: a human resolved whatever paused/failed the work
+// order and sends it back into the queue. cancelled is offered from every
+// non-terminal status ("any non-terminal state is cancellable").
 const TRANSITIONS: Partial<Record<WorkOrderStatus, { action: WorkOrderStatus; labelKey: string; variant: "primary" | "secondary" }[]>> = {
-  draft: [{ action: "approved", labelKey: "operator.lifecycle.approve", variant: "primary" }],
-  approved: [{ action: "queued", labelKey: "operator.lifecycle.mark_queued", variant: "primary" }],
-  queued: [{ action: "running", labelKey: "operator.lifecycle.mark_running", variant: "primary" }],
+  draft: [
+    { action: "approved", labelKey: "operator.lifecycle.approve", variant: "primary" },
+    { action: "cancelled", labelKey: "operator.lifecycle.cancel", variant: "secondary" },
+  ],
+  approved: [
+    { action: "queued", labelKey: "operator.lifecycle.mark_queued", variant: "primary" },
+    { action: "cancelled", labelKey: "operator.lifecycle.cancel", variant: "secondary" },
+  ],
+  queued: [
+    { action: "running", labelKey: "operator.lifecycle.mark_running", variant: "primary" },
+    { action: "cancelled", labelKey: "operator.lifecycle.cancel", variant: "secondary" },
+  ],
+  running: [
+    // Cancelling a running work order does not stop the local harness
+    // process — it only marks the work order as withdrawn so a later
+    // result import can no longer land on it (running -> cancelled means
+    // the harness's eventual running -> review_ready/blocked/failed import
+    // attempt is rejected as an illegal_transition instead of clobbering a
+    // cancelled work order).
+    { action: "cancelled", labelKey: "operator.lifecycle.cancel", variant: "secondary" },
+  ],
+  needs_approval: [
+    { action: "queued", labelKey: "operator.lifecycle.requeue", variant: "primary" },
+    { action: "cancelled", labelKey: "operator.lifecycle.cancel", variant: "secondary" },
+  ],
+  blocked: [
+    { action: "queued", labelKey: "operator.lifecycle.requeue", variant: "primary" },
+    { action: "cancelled", labelKey: "operator.lifecycle.cancel", variant: "secondary" },
+  ],
+  failed: [
+    { action: "queued", labelKey: "operator.lifecycle.requeue", variant: "primary" },
+    { action: "cancelled", labelKey: "operator.lifecycle.cancel", variant: "secondary" },
+  ],
   review_ready: [
     { action: "accepted", labelKey: "operator.lifecycle.accept", variant: "primary" },
     { action: "rework_requested", labelKey: "operator.lifecycle.request_rework", variant: "secondary" },
+    { action: "cancelled", labelKey: "operator.lifecycle.cancel", variant: "secondary" },
+  ],
+  rework_requested: [
+    { action: "queued", labelKey: "operator.lifecycle.requeue", variant: "primary" },
+    { action: "cancelled", labelKey: "operator.lifecycle.cancel", variant: "secondary" },
   ],
 };
 

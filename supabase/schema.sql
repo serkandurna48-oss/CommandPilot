@@ -264,6 +264,11 @@ create table if not exists agent_runs (
   input_summary     text not null,
   output_summary    text,
   model             text,
+  -- CP-OP02: which retry attempt this row represents (1 = first attempt),
+  -- and why a retry happened, when applicable. See
+  -- supabase/migrations/011_agent_run_attempts.sql.
+  attempt_number    integer not null default 1,
+  retry_reason      text,
   started_at        timestamptz,
   completed_at      timestamptz,
   created_at        timestamptz not null default now()
@@ -278,6 +283,10 @@ create table if not exists activity_logs (
   event_type      text not null,
   message         text not null,
   metadata        jsonb,
+  -- CP-OP03: position-based idempotency key for import-script-written rows
+  -- (NULL for every other caller). See
+  -- supabase/migrations/012_result_import_dedup_keys.sql.
+  dedup_key       text,
   created_at      timestamptz not null default now()
 );
 
@@ -289,6 +298,7 @@ create table if not exists artifacts (
   title           text not null,
   content         text,
   file_path       text,
+  dedup_key       text,
   created_at      timestamptz not null default now()
 );
 
@@ -376,6 +386,16 @@ create index if not exists idx_activity_logs_work_order
 
 create index if not exists idx_artifacts_work_order
   on artifacts(work_order_id, created_at);
+
+-- CP-OP03: normal (non-partial) UNIQUE indexes — PostgreSQL never treats
+-- two NULLs as equal for uniqueness, so rows with dedup_key IS NULL (every
+-- non-import caller) are unaffected; only non-null, import-supplied keys
+-- are deduplicated.
+create unique index if not exists idx_activity_logs_dedup_key
+  on activity_logs (work_order_id, dedup_key);
+
+create unique index if not exists idx_artifacts_dedup_key
+  on artifacts (work_order_id, dedup_key);
 
 create index if not exists idx_work_order_steps_work_order
   on work_order_steps(work_order_id, order_index);
@@ -514,6 +534,103 @@ create policy "Users own work_order_steps via work order"
         and wo.user_id = auth.uid()
     )
   );
+
+-- ---------------------------------------------------------------------------
+-- transition_work_order(): atomic status transition + audit log (CP-OP01)
+-- Single authoritative state machine for work_orders.status. See
+-- supabase/migrations/010_transition_work_order_function.sql for full
+-- rationale — this is a verbatim copy for fresh installs.
+-- ---------------------------------------------------------------------------
+create or replace function transition_work_order(
+  p_work_order_id uuid,
+  p_to_status text,
+  p_source text default 'ui',
+  p_reason text default null
+)
+returns work_orders
+language plpgsql
+set search_path = public
+as $$
+declare
+  v_current text;
+  v_actor text;
+  v_allowed text[];
+  v_updated work_orders;
+begin
+  select status into v_current
+  from work_orders
+  where id = p_work_order_id
+  for update;
+
+  if not found then
+    raise exception 'work_order_not_found';
+  end if;
+
+  if v_current = p_to_status then
+    select * into v_updated from work_orders where id = p_work_order_id;
+    return v_updated;
+  end if;
+
+  v_allowed := case v_current
+    when 'draft'            then array['approved', 'cancelled']
+    when 'approved'         then array['queued', 'cancelled']
+    when 'queued'           then array['running', 'cancelled']
+    when 'running'          then array['needs_approval', 'blocked', 'failed', 'review_ready', 'cancelled']
+    when 'needs_approval'   then array['queued', 'cancelled']
+    when 'blocked'          then array['queued', 'cancelled']
+    when 'failed'           then array['queued', 'cancelled']
+    when 'review_ready'     then array['accepted', 'rework_requested', 'cancelled']
+    when 'rework_requested' then array['queued', 'cancelled']
+    else array[]::text[]  -- accepted, cancelled: terminal, no outgoing edges
+  end;
+
+  if not (p_to_status = any(v_allowed)) then
+    raise exception 'illegal_transition: % -> % is not allowed', v_current, p_to_status;
+  end if;
+
+  if p_to_status = 'review_ready' and not exists (
+    select 1 from review_packages where work_order_id = p_work_order_id
+  ) then
+    raise exception 'Cannot set status to review_ready: no review package exists for this work order yet.';
+  end if;
+
+  v_actor := case when p_source = 'ui' then 'human' else 'system' end;
+
+  update work_orders
+  set status = p_to_status,
+      started_at = case
+        when started_at is null
+         and p_to_status in ('running', 'needs_approval', 'blocked', 'review_ready', 'accepted', 'rework_requested')
+        then now()
+        else started_at
+      end,
+      completed_at = case
+        when p_to_status in ('accepted', 'failed', 'cancelled') then now()
+        else completed_at
+      end
+  where id = p_work_order_id
+  returning * into v_updated;
+
+  insert into activity_logs (work_order_id, level, event_type, message, metadata)
+  values (
+    p_work_order_id,
+    case when p_to_status in ('blocked', 'failed', 'cancelled', 'needs_approval') then 'warning' else 'info' end,
+    'status_transition',
+    format('Status changed from %s to %s', v_current, p_to_status),
+    jsonb_build_object(
+      'from_status', v_current,
+      'to_status', p_to_status,
+      'actor', v_actor,
+      'source', p_source,
+      'reason', p_reason
+    )
+  );
+
+  return v_updated;
+end;
+$$;
+
+grant execute on function transition_work_order(uuid, text, text, text) to service_role;
 
 -- ---------------------------------------------------------------------------
 -- Trigger: auto-create profile on new user signup

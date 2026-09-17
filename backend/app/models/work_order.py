@@ -14,6 +14,12 @@ ActivityLogLevelLiteral = Literal["info", "warning", "error", "approval_required
 ArtifactTypeLiteral = Literal["plan", "diff", "test_output", "review", "summary", "screenshot", "prompt"]
 ReviewVerdictLiteral = Literal["ready_for_review", "needs_fix", "blocked", "unsafe"]
 WorkOrderStepStatusLiteral = Literal["pending", "queued", "running", "blocked", "completed", "failed", "skipped"]
+# Who/what asked for a status transition (CP-OP01). Self-reported by the
+# caller, not cryptographically verified — see transition_work_order() in
+# supabase/migrations/010_transition_work_order_function.sql. "ui" is the
+# default so existing frontend/script callers that don't pass this field
+# keep working unchanged.
+WorkOrderTransitionSourceLiteral = Literal["ui", "harness", "import_script"]
 
 
 class MissingContextItem(BaseModel):
@@ -66,6 +72,12 @@ class AgentRunCreate(BaseModel):
     input_summary: str = Field(..., min_length=1, max_length=2000)
     output_summary: Optional[str] = Field(None, max_length=2000)
     model: Optional[str] = None
+    # CP-OP02: which bounded-retry attempt this run represents (1 = first
+    # attempt) and, for attempt 2+, why the previous attempt was retried.
+    # Set by scripts/run_work_order.py's retry loop — never by a human/UI
+    # caller, which always leaves this at the default.
+    attempt_number: int = Field(1, ge=1)
+    retry_reason: Optional[str] = Field(None, max_length=500)
 
 
 class AgentRunUpdate(BaseModel):
@@ -82,6 +94,8 @@ class AgentRunResponse(BaseModel):
     input_summary: str
     output_summary: Optional[str] = None
     model: Optional[str] = None
+    attempt_number: int = 1
+    retry_reason: Optional[str] = None
     started_at: Optional[str] = None
     completed_at: Optional[str] = None
     created_at: str
@@ -94,6 +108,10 @@ class ActivityLogCreate(BaseModel):
     event_type: str = Field(..., min_length=1, max_length=100)
     message: str = Field(..., min_length=1, max_length=2000)
     metadata: Optional[dict] = None
+    # CP-OP03: position-based idempotency key (full SHA-256 hex digest, 64
+    # chars), set only by scripts/import_work_order_result.py. Never set by
+    # a human/UI caller. See supabase/migrations/012_result_import_dedup_keys.sql.
+    dedup_key: Optional[str] = Field(None, max_length=64)
 
 
 class ActivityLogResponse(BaseModel):
@@ -104,6 +122,7 @@ class ActivityLogResponse(BaseModel):
     event_type: str
     message: str
     metadata: Optional[dict] = None
+    dedup_key: Optional[str] = None
     created_at: str
 
 
@@ -113,6 +132,10 @@ class ArtifactCreate(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     content: Optional[str] = None
     file_path: Optional[str] = None
+    # CP-OP03: position-based idempotency key (full SHA-256 hex digest, 64
+    # chars), set only by scripts/import_work_order_result.py. Never set by
+    # a human/UI caller. See supabase/migrations/012_result_import_dedup_keys.sql.
+    dedup_key: Optional[str] = Field(None, max_length=64)
 
 
 class ArtifactResponse(BaseModel):
@@ -122,6 +145,7 @@ class ArtifactResponse(BaseModel):
     title: str
     content: Optional[str] = None
     file_path: Optional[str] = None
+    dedup_key: Optional[str] = None
     created_at: str
 
 
@@ -210,6 +234,10 @@ class WorkOrderUpdate(BaseModel):
     status: Optional[WorkOrderStatusLiteral] = None
     recommended_next_step: Optional[str] = None
     missing_context: Optional[list[MissingContextItem]] = None
+    # Only meaningful together with `status` — routed to transition_work_order()
+    # and never persisted as work_order columns. See CP-OP01.
+    source: Optional[WorkOrderTransitionSourceLiteral] = None
+    reason: Optional[str] = Field(None, max_length=2000)
 
 
 class WorkOrderResponse(BaseModel):

@@ -65,15 +65,36 @@ def update_work_order(
     updates = data.model_dump(exclude_none=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
-    if updates.get("status") == "review_ready" and not work_order_service.has_review_package(work_order_id):
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot set status to review_ready: no review package exists for this work order yet.",
-        )
-    try:
-        result = work_order_service.update_work_order(work_order_id, updates)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Failed to update work order: {exc}")
+
+    status = updates.pop("status", None)
+    source = updates.pop("source", None) or "ui"
+    reason = updates.pop("reason", None)
+
+    if status is None and not updates:
+        # The only fields provided were source/reason with no status and no
+        # other field — nothing to actually apply.
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    result = None
+    if status is not None:
+        # transition_work_order() (CP-OP01) is the sole authoritative state
+        # machine for work_orders.status — see
+        # supabase/migrations/010_transition_work_order_function.sql.
+        try:
+            result = work_order_service.transition_work_order(work_order_id, status, source=source, reason=reason)
+        except LookupError:
+            raise HTTPException(status_code=404, detail="Work order not found")
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to transition work order: {exc}")
+
+    if updates:
+        try:
+            result = work_order_service.update_work_order_fields(work_order_id, updates)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Failed to update work order: {exc}")
+
     if not result:
         raise HTTPException(status_code=404, detail="Work order not found")
     return result

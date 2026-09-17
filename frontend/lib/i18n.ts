@@ -416,6 +416,8 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.lifecycle.mark_running":     { en: "Mark Running",           de: "Als laufend markieren" },
   "operator.lifecycle.request_rework":   { en: "Request Rework",         de: "Überarbeitung anfordern" },
   "operator.lifecycle.accept":           { en: "Accept",                 de: "Akzeptieren" },
+  "operator.lifecycle.requeue":          { en: "Requeue",                de: "Erneut einreihen" },
+  "operator.lifecycle.cancel":           { en: "Cancel",                 de: "Abbrechen" },
   "operator.lifecycle.demo_note":        { en: "Showing seed data — connect the API to control a real work order.", de: "Zeigt Seed-Daten — für echte Steuerung API verbinden." },
 
   // Runner prompt

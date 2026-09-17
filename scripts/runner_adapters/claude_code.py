@@ -262,6 +262,7 @@ class ClaudeCodeAdapter(RunnerAdapter):
         output_log_path.write_text(combined, encoding="utf-8")
 
         result_json: dict | None = None
+        cost_usd: float | None = None
         try:
             wrapper = json.loads(stdout)
         except json.JSONDecodeError:
@@ -302,8 +303,9 @@ class ClaudeCodeAdapter(RunnerAdapter):
             result_text = wrapper.get("result", "")
             if isinstance(result_text, str):
                 result_json = extract_json_result(result_text)
+            cost_usd = wrapper.get("total_cost_usd")
 
-        return ExecuteOutcome(exit_code=returncode, output_log_path=output_log_path, result=result_json)
+        return ExecuteOutcome(exit_code=returncode, output_log_path=output_log_path, result=result_json, cost_usd=cost_usd)
 
     def collect_result(self, session_path: Path, result_file: str | None) -> dict:
         path_arg = result_file or str(session_path / "result.json")

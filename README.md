@@ -47,6 +47,9 @@ After running `supabase/schema.sql` for the first time, apply any incremental mi
 | `supabase/migrations/007_work_order_steps.sql` | Adds `work_order_steps` table (the ticket plan) + RLS | Before deploying the Execution Plan UI / step endpoints |
 | `supabase/migrations/008_work_orders_team_type.sql` | Adds `work_orders.team_type text not null default 'development'` | Before deploying the Work Order creation UI (OP-Create-001) |
 | `supabase/migrations/009_work_orders_target_repo.sql` | Adds nullable `work_orders.target_repo_name`/`target_repo_path` | Before deploying cross-repo work order support (OP-Runner-RepoPath-001) |
+| `supabase/migrations/010_transition_work_order_function.sql` | Adds `transition_work_order()`: the atomic, authoritative state machine + audit-log function for `work_orders.status` | Before deploying the CP-OP01 state machine / PATCH `/api/work-orders/{id}` backend |
+| `supabase/migrations/011_agent_run_attempts.sql` | Adds `agent_runs.attempt_number`/`retry_reason` | Before deploying the CP-OP02 bounded auto-retry loop (`scripts/run_work_order.py --mode execute`) |
+| `supabase/migrations/012_result_import_dedup_keys.sql` | Adds `activity_logs.dedup_key`/`artifacts.dedup_key` + UNIQUE indexes on `(work_order_id, dedup_key)` | Before deploying the CP-OP03 idempotent result import (`scripts/import_work_order_result.py`) |
 
 Run each file in the Supabase SQL Editor. Migrations are idempotent — safe to re-run, except `006_work_orders.sql` (its `CREATE POLICY` statements have no `IF NOT EXISTS` guard, matching the existing `004_ai_usage_log.sql` precedent) — run it once.
 
