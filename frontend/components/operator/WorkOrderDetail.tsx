@@ -15,7 +15,31 @@ import {
 import type { WorkOrderDetailBundle } from "@/lib/workOrderMapper";
 import type { WorkOrderStatus } from "@/types";
 import { cn } from "@/lib/utils";
-import { Clock, ShieldCheck, ShieldAlert, ShieldX, FolderTree, Info, AlertTriangle } from "lucide-react";
+import { Clock, ShieldCheck, ShieldAlert, ShieldX, FolderTree, Info, AlertTriangle, RotateCcw, XOctagon } from "lucide-react";
+
+// CP-OP02's harness-side reason codes for why work_orders.status was set to
+// 'failed' by the auto-retry loop (scripts/run_work_order.py) — these are
+// the values transition_work_order() stores in the status_transition
+// activity log's metadata.reason. Anything not in this map (e.g. a human
+// didn't give a reason, or a future code this UI doesn't know yet) falls
+// back to a generic message rather than showing a raw machine code.
+const KNOWN_FAILURE_REASON_KEYS: Record<string, string> = {
+  technical_failure_with_worktree_changes: "operator.failure_reason.technical_failure_with_worktree_changes",
+  technical_failure_retries_exhausted: "operator.failure_reason.technical_failure_retries_exhausted",
+  technical_failure_budget_exhausted: "operator.failure_reason.technical_failure_budget_exhausted",
+};
+
+// retryReason on an AgentRun (CP-OP02) is a short code, either
+// "technical_failure_attempt_{N}" (set by the harness's own retry loop) or
+// undefined (attempt 1, or a run not created by the retry loop at all).
+// This never needs a fallback-to-generic path the way work-order failure
+// reasons do, because the harness is the only writer of this field.
+function attemptFailureLabel(retryReason: string | undefined, t: (key: string) => string): string | null {
+  if (!retryReason) return null;
+  const match = /^technical_failure_attempt_(\d+)$/.exec(retryReason);
+  if (!match) return retryReason;
+  return `${t("operator.agent_run.retry_reason_prefix")} ${match[1]}`;
+}
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
@@ -54,6 +78,23 @@ export function WorkOrderDetail({
 }: WorkOrderDetailProps) {
   const t = useT();
 
+  // The most recent transition_work_order() (CP-OP01) audit-log entry that
+  // landed the work order on its CURRENT status, if any — used below only
+  // to explain a 'failed' status. Every transition writes exactly one
+  // status_transition entry (see supabase/migrations/010_..._function.sql),
+  // so scanning newest-first and taking the first match with
+  // metadata.to_status === order.status is always the transition that
+  // actually produced the status we're looking at, not some earlier one.
+  const latestTransitionToCurrentStatus = order.status === "failed"
+    ? [...log].reverse().find(
+        (entry) => entry.eventType === "status_transition" && entry.metadata?.to_status === order.status
+      )
+    : undefined;
+  const failureReasonCode = latestTransitionToCurrentStatus?.metadata?.reason;
+  const failureReasonKey = failureReasonCode && typeof failureReasonCode === "string"
+    ? KNOWN_FAILURE_REASON_KEYS[failureReasonCode]
+    : undefined;
+
   return (
     <div className="space-y-4">
       {/* ── Data source banner — mirrors OperatorManager's list-page banner
@@ -89,6 +130,21 @@ export function WorkOrderDetail({
           <StatusFlowStrip current={order.status} />
         </CardContent>
       </Card>
+
+      {/* ── Failed banner — makes "retries exhausted"/other harness-driven
+          failures immediately visible instead of only a status badge
+          (CP-OP04) ───────────────────────────────────────────────────────── */}
+      {order.status === "failed" && (
+        <div className="rounded-lg bg-rose-950/20 border border-rose-900/30 px-3 py-2 flex items-start gap-2">
+          <XOctagon className="h-4 w-4 shrink-0 mt-0.5 text-rose-400/80" />
+          <div className="text-xs">
+            <p className="text-rose-300/90 font-medium">{t("operator.failure_banner.title")}</p>
+            <p className="text-rose-300/70 mt-0.5">
+              {failureReasonKey ? t(failureReasonKey) : t("operator.failure_reason.generic")}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* ── Lifecycle controls ────────────────────────────────────────────── */}
       {onStatusChange && (
@@ -200,27 +256,48 @@ export function WorkOrderDetail({
           <p className="text-slate-500 text-xs">{t("operator.section.no_runs")}</p>
         ) : (
           <div className="space-y-2">
-            {runs.map((run) => (
-              <div key={run.id} className="flex items-start gap-3 py-1.5">
-                <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0", AGENT_RUN_STATUS_COLORS[run.status])}>
-                  {t(`operator.run_status.${run.status}`)}
-                </span>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-slate-200 text-xs font-medium">{t(`operator.role.${run.role}`)}</p>
-                    {/* run.model doubles as "which runner, which mode" (e.g. "claude_code
-                        (prompt-file)") — no dedicated column for either exists yet, see
-                        OP-Runner-Session-001's reviewPackage.risks. */}
-                    {run.model && <span className="text-[10px] font-mono text-slate-500">{run.model}</span>}
-                    {run.startedAt && (
-                      <span className="text-[10px] font-mono text-slate-600">{new Date(run.startedAt).toLocaleString()}</span>
+            {runs.map((run) => {
+              // Attempt 1 is the normal case (a human-triggered run, or the
+              // first attempt of an auto-executed one) — attemptNumber > 1
+              // only ever comes from CP-OP02's harness retry loop. Indenting
+              // retries and connecting them with a small icon is what makes
+              // "these attempts belong to the same run sequence" visible
+              // without introducing any new grouping data structure — the
+              // existing attemptNumber ordering already carries that
+              // information, this just renders it.
+              const isRetry = (run.attemptNumber ?? 1) > 1;
+              const retryLabel = attemptFailureLabel(run.retryReason, t);
+              return (
+                <div key={run.id} className={cn("flex items-start gap-3 py-1.5", isRetry && "ml-4 pl-3 border-l border-slate-700/50")}>
+                  {isRetry && <RotateCcw className="h-3.5 w-3.5 text-amber-500/70 shrink-0 mt-0.5" />}
+                  <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-mono shrink-0", AGENT_RUN_STATUS_COLORS[run.status])}>
+                    {t(`operator.run_status.${run.status}`)}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-slate-200 text-xs font-medium">{t(`operator.role.${run.role}`)}</p>
+                      {/* run.model doubles as "which runner, which mode" (e.g. "claude_code
+                          (prompt-file)") — no dedicated column for either exists yet, see
+                          OP-Runner-Session-001's reviewPackage.risks. */}
+                      {run.model && <span className="text-[10px] font-mono text-slate-500">{run.model}</span>}
+                      <span className="text-[10px] font-mono text-slate-600">
+                        {t("operator.agent_run.attempt_label")} {run.attemptNumber ?? 1}
+                      </span>
+                      {run.startedAt && (
+                        <span className="text-[10px] font-mono text-slate-600">{new Date(run.startedAt).toLocaleString()}</span>
+                      )}
+                    </div>
+                    <p className="text-slate-400 text-xs">{run.inputSummary}</p>
+                    {run.outputSummary && <p className="text-slate-500 text-xs mt-0.5">→ {run.outputSummary}</p>}
+                    {retryLabel && (
+                      <p className="text-amber-500/70 text-[11px] mt-0.5 flex items-center gap-1">
+                        <RotateCcw className="h-3 w-3 shrink-0" /> {retryLabel}
+                      </p>
                     )}
                   </div>
-                  <p className="text-slate-400 text-xs">{run.inputSummary}</p>
-                  {run.outputSummary && <p className="text-slate-500 text-xs mt-0.5">→ {run.outputSummary}</p>}
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Section>

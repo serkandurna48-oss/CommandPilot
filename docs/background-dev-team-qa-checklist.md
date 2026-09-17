@@ -17,6 +17,11 @@ Run in the Supabase SQL editor, in order, if not already applied:
 
 - [ ] `supabase/migrations/006_work_orders.sql`
 - [ ] `supabase/migrations/007_work_order_steps.sql`
+- [ ] `supabase/migrations/008_work_orders_team_type.sql`
+- [ ] `supabase/migrations/009_work_orders_target_repo.sql`
+- [ ] `supabase/migrations/010_transition_work_order_function.sql` (adds `transition_work_order()` — the authoritative state machine, see §7 below)
+- [ ] `supabase/migrations/011_agent_run_attempts.sql` (adds `agent_runs.attempt_number`/`retry_reason`)
+- [ ] `supabase/migrations/012_result_import_dedup_keys.sql` (adds `activity_logs.dedup_key`/`artifacts.dedup_key` + unique indexes)
 
 **Verify, don't assume.** Run this in the SQL editor after:
 
@@ -28,6 +33,17 @@ where table_schema = 'public'
 
 Expect exactly 7 rows back. Fewer than 7 → a migration didn't apply; do not
 proceed until it does (everything below assumes all 7 tables exist).
+
+Additionally, for 010–012 specifically (a table existing doesn't prove the
+function/columns from a later migration were also applied):
+
+```sql
+select routine_name from information_schema.routines where routine_name = 'transition_work_order';
+select column_name from information_schema.columns where table_name = 'agent_runs' and column_name in ('attempt_number','retry_reason');
+select column_name from information_schema.columns where table_name in ('activity_logs','artifacts') and column_name = 'dedup_key';
+```
+
+Expect 1 row, 2 rows, 2 rows respectively.
 
 ---
 
@@ -71,10 +87,18 @@ staging"` inside `allowed_actions`.
   from the first call (proves timestamps aren't clobbered on every update).
 
 **2.6 Work order status transition** — `PATCH /api/work-orders/{id}` through
-`approved → queued → running`.
+`approved → queued → running`. As of CP-OP01, this now routes through the
+`transition_work_order()` Postgres function (see §7 below) rather than an
+unvalidated direct write — a nonsensical jump like `draft → accepted`
+should now be rejected with `400`, not silently accepted.
 - [ ] `started_at` appears once, on the first transition into `running`
-  (or any of `_STARTED_STATUSES`), and does not change on subsequent
-  PATCHes.
+  (or any status the function treats as "started"), and does not change on
+  subsequent PATCHes.
+- [ ] Each of the three PATCHes above produced exactly one new
+  `activity_logs` row with `event_type: "status_transition"` (check via
+  `GET /api/work-orders/{id}` — the `activity_log` array).
+- [ ] `PATCH` with `{"status": "accepted"}` directly from `draft` (skipping
+  every intermediate status) returns `400`, not `200`.
 
 If 2.1–2.6 all pass: the persistence layer is sound. If any fails, fix that
 specific endpoint/table before touching anything UI-side — a UI bug on top
@@ -217,10 +241,86 @@ is still open.
 | A step you expected in the result JSON is silently missing (not marked `failed`/`blocked`, just absent) | The runner skipped a planned step without saying so. Under supervision you'll notice a step still `pending` — under a triggered runner, "silently incomplete" and "actually done" look identical unless something enforces that every planned step must appear in the result. |
 | Import script reports `404` on a step/agent-run update | Either the runner invented an id (see row 1), or the work order id in the JSON doesn't match — either way, a broken link between plan and result that must be air-tight before removing the human from the loop. |
 | An obviously-blocked action gets past the `ApprovalScopeCreate` keyword validator by rephrasing (e.g. "ship it" instead of "deploy") | Known, documented limitation (system design doc §11) — not a new problem, but a live reminder that scope *creation* safety and runner *execution* safety are two different, both-still-partial layers. |
-| Token expires mid-import, some calls succeed and some 401 | Operational rough edge, not a blocker — every import-script call is independent and safe to re-run (steps/artifacts/review-package are idempotent PATCH/PUT/POST-of-a-new-row), but confirms the recorder bridge still needs a human refreshing a token by hand — another manual step a triggered runner can't yet do for itself. |
+| Token expires mid-import, some calls succeed and some 401 | Operational rough edge, not a blocker — as of CP-OP03, every import-script call is genuinely safe to re-run: steps/review-package were already idempotent (PATCH/PUT), and activity-logs/artifacts now upsert on a stable `dedup_key` too (previously a plain `POST`, which *would* have duplicated on re-import — see §7). Re-running the same `result.json` after a token refresh is now a real no-op for already-landed items, not just "probably fine." Still confirms the recorder bridge needs a human refreshing a token by hand — another manual step a triggered runner can't yet do for itself. |
 
 **Decision rule:** if §5's checklist is fully green *and* none of §6's red
 flags occurred during this run, OP-Runner-002 is a reasonable next step to
 scope out. If any red-flag row fired, the next work order should close
 that specific gap — not "build the triggered runner and hope it doesn't
 come up."
+
+---
+
+## 7. CP-OP01–04 — verifying the automation loop itself
+
+The checklist above validates the *lifecycle*; this section validates the
+*automation* added on top of it (state machine, bounded retry, idempotent
+import). See `docs/background-dev-team-system-design.md` §17 for the full
+design writeup, and `docs/manual-e2e-checklist.md` AC13–AC23 for the
+step-by-step browser walkthrough of every item below.
+
+**State machine (CP-OP01):**
+- [ ] An illegal transition (e.g. `draft → accepted`) is rejected with
+  `400`, and — critically — produces **zero** new `activity_logs` rows
+  (a rejected transition must not leave a partial audit trail).
+- [ ] A legal transition produces **exactly one** new `activity_logs` row
+  with `event_type: "status_transition"` and `metadata` containing
+  `from_status`, `to_status`, `actor`, `source`, `reason` — never zero,
+  never more than one.
+- [ ] Re-PATCHing the status a work order is already in returns success
+  with no new audit row (documented no-op — this is what makes a repeated
+  result import safe, see below).
+- [ ] Each of `needs_approval → queued`, `blocked → queued`, `failed →
+  queued`, `rework_requested → queued`, and `<non-terminal> → cancelled`
+  (including `review_ready → cancelled`) succeeds via the UI's Requeue/
+  Cancel buttons.
+
+**Bounded retry (CP-OP02):**
+- [ ] A harness-detected technical failure (adapter exception, or no
+  parseable result) with an **unchanged** working tree triggers a retry —
+  up to 3 attempts total, each with its own `agent_runs` row
+  (`attempt_number`, `retry_reason`).
+- [ ] A runner-*reported* `blocked`/`failed` result (a real, parsed result
+  JSON) is **never** retried, regardless of `finalStatus`.
+- [ ] A technical failure with a **changed** working tree (or an
+  undeterminable git state) skips retry entirely and fails the work order
+  immediately with reason `technical_failure_with_worktree_changes`.
+- [ ] `work_orders.status` stays `running` throughout a retry sequence —
+  it never visits an intermediate status for the retry itself.
+- [ ] Cancelling mid-sequence (before an attempt, or after a valid result
+  but before import) stops the loop and leaves no `agent_runs` row stuck
+  on `running` (closed as `failed` — see system design doc §17 for why not
+  `blocked`/`completed`).
+- [ ] For a credit-consuming adapter, the total budget is enforced
+  cumulatively — verify by giving a small `--max-budget-usd` and
+  confirming attempt 2 is refused once attempt 1's (unreported or
+  reported) cost already consumes it.
+
+**Idempotent import (CP-OP03):**
+- [ ] Re-importing the identical `result.json` twice produces no duplicate
+  `activity_logs`/`artifacts` rows (see AC22).
+- [ ] A partial import (some items fail to write) followed by a corrected
+  re-import of the **same** `agent_run`'s result fills in only the missing
+  slots — already-landed items are not duplicated (see AC23).
+- [ ] Confirm the known v1 limit: reordering items between re-imports of
+  the *same* `agent_run_id` is not supported (position is canonical) — not
+  a bug to file if encountered, a documented constraint.
+
+**Visibility (CP-OP04):**
+- [ ] `WorkOrderDetail`'s Agent Runs section shows `attemptNumber` for
+  every run and a translated retry reason for attempt 2+.
+- [ ] A work order in `failed` status shows the dedicated failure banner
+  with a human-readable (not raw machine-code) explanation.
+- [ ] Clicking **Cancel** always shows the inline confirm step first —
+  never fires on the first click.
+
+**Explicit v1 limits — confirm these are true, not regressions:**
+- [ ] Cancelling a work order while a `claude` subprocess is genuinely
+  mid-execution does **not** kill that process — it keeps running to
+  completion or its own timeout; only the *next* harness status check
+  reacts to the cancellation.
+- [ ] There is no cryptographic distinction between a human's UI click and
+  a script claiming `source: "ui"` — `actor`/`source` are self-reported.
+- [ ] The Approval Scope still has no runtime enforcement beyond
+  `claude_code`'s wall-clock timeout — a scope violation mid-execution is
+  not mechanically blocked.

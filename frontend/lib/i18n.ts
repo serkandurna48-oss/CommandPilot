@@ -419,6 +419,20 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.lifecycle.requeue":          { en: "Requeue",                de: "Erneut einreihen" },
   "operator.lifecycle.cancel":           { en: "Cancel",                 de: "Abbrechen" },
   "operator.lifecycle.demo_note":        { en: "Showing seed data — connect the API to control a real work order.", de: "Zeigt Seed-Daten — für echte Steuerung API verbinden." },
+  "operator.lifecycle.cancel_confirm_message": { en: "Cancel this work order? This cannot be undone. If a runner is currently executing it, cancelling here does not stop that process immediately — it only marks the work order withdrawn so its eventual result can no longer be imported.", de: "Dieses Work Order abbrechen? Das kann nicht rückgängig gemacht werden. Falls gerade ein Runner läuft, wird dieser Prozess dadurch nicht sofort gestoppt — nur der Work-Order-Status wird zurückgezogen, sodass ein späteres Ergebnis nicht mehr importiert werden kann." },
+  "operator.lifecycle.cancel_confirm_yes": { en: "Yes, cancel",             de: "Ja, abbrechen" },
+  "operator.lifecycle.cancel_confirm_no":  { en: "No, keep it",            de: "Nein, behalten" },
+
+  // Agent run attempts (CP-OP02 bounded auto-retry)
+  "operator.agent_run.attempt_label":        { en: "Attempt",                             de: "Attempt" },
+  "operator.agent_run.retry_reason_prefix":  { en: "Auto-retry — technical failure in attempt", de: "Auto-Retry — technischer Fehler in Attempt" },
+
+  // Work order failure banner (CP-OP02)
+  "operator.failure_banner.title": { en: "This work order failed.", de: "Dieses Work Order ist fehlgeschlagen." },
+  "operator.failure_reason.generic": { en: "No further detail was recorded for this failure.", de: "Für diesen Fehlschlag wurde kein weiterer Grund erfasst." },
+  "operator.failure_reason.technical_failure_with_worktree_changes": { en: "A technical failure occurred and the working tree had already changed — auto-retry was skipped to avoid compounding a half-finished change. Check the run's output log and decide manually.", de: "Ein technischer Fehler ist aufgetreten und der Working Tree hatte sich bereits verändert — Auto-Retry wurde übersprungen, um keine halbfertige Änderung zu verschlimmern. Bitte Run-Log prüfen und manuell entscheiden." },
+  "operator.failure_reason.technical_failure_retries_exhausted": { en: "All automatic retry attempts (max. 3) were exhausted after repeated technical failures. Human intervention is required.", de: "Alle automatischen Retry-Versuche (max. 3) wurden nach wiederholten technischen Fehlern aufgebraucht. Menschliches Eingreifen nötig." },
+  "operator.failure_reason.technical_failure_budget_exhausted": { en: "The configured budget was used up across retry attempts before a result could be produced.", de: "Das konfigurierte Budget wurde über die Retry-Versuche hinweg aufgebraucht, bevor ein Ergebnis vorlag." },
 
   // Runner prompt
   "operator.prompt.generate": { en: "Generate Runner Prompt", de: "Runner-Prompt generieren" },

@@ -71,6 +71,8 @@ export interface ApiAgentRun {
   input_summary: string;
   output_summary?: string | null;
   model?: string | null;
+  attempt_number?: number;
+  retry_reason?: string | null;
   started_at?: string | null;
   completed_at?: string | null;
   created_at: string;
@@ -232,6 +234,8 @@ export function mapAgentRunFromApi(raw: ApiAgentRun): AgentRun {
     startedAt: raw.started_at ?? undefined,
     completedAt: raw.completed_at ?? undefined,
     model: raw.model ?? undefined,
+    attemptNumber: raw.attempt_number ?? 1,
+    retryReason: raw.retry_reason ?? undefined,
   };
 }
 

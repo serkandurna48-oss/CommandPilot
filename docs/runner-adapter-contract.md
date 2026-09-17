@@ -101,6 +101,64 @@ OP-Runner-002) only ever calls these methods. It does not know or care
 whether "prepare" means "write a text file" or, for a future adapter,
 "open a websocket" — that's the adapter's business.
 
+`ExecuteOutcome` (CP-OP02 addition: `cost_usd`) —
+
+```python
+@dataclass
+class ExecuteOutcome:
+    exit_code: int
+    output_log_path: Path
+    result: dict | None       # parsed result JSON, if one was produced
+    cost_usd: float | None = None  # actual spend for THIS call, if known
+```
+
+An adapter that can report its own real cost (`claude_code`'s
+`--output-format json` wrapper's `total_cost_usd` field) should populate
+`cost_usd` — the harness's bounded-retry loop (see below) uses it to track
+spend cumulatively across attempts. `None` means "unknown," not "zero":
+the harness treats an unreported cost conservatively (assumes the entire
+remaining budget was spent), never optimistically.
+
+## Retry contract (CP-OP02) — what the harness does, not the adapter
+
+Adapters do not implement their own retry logic — `run_work_order.py`'s
+`--mode execute` owns a bounded retry loop (max. 3 attempts total) around
+a single adapter's `execute()` calls. This is deliberate: retry-or-not is
+a policy decision (is this failure technical, or did the runner tell us
+something real?) that belongs at the orchestration layer, not duplicated
+in every adapter.
+
+**What counts as a retryable "technical failure"**: `execute()` raising an
+exception, or returning an `ExecuteOutcome` with `result=None` (no usable
+result JSON at all — a timeout is the common case). **What is never
+retried**: any call that returns a real, parsed `result` — regardless of
+its `finalStatus`. A runner reporting `blocked` or `failed` already told
+the operator something true about the work order; silently trying again
+would contradict that report exactly the same way faking a `review_ready`
+would (see "What an adapter must never do," below).
+
+**Working-tree safety**: before and after each attempt, the harness
+snapshots the git state of wherever `execute()`'s subprocess actually runs
+(the harness process's own current working directory at invocation time —
+not this repo's root, which matters for a cross-repo work order). If the
+working tree changed during a technical failure — or its state couldn't
+be determined at all — the harness does **not** retry; it fails the work
+order outright and asks for human intervention. This exists because
+retrying a technical failure against a worktree the failed attempt
+already touched risks compounding a half-finished change, not cleanly
+re-trying from the same starting point.
+
+**Cumulative budget**: for adapters with `consumes_paid_credits=True`, the
+budget gate's value is a ceiling shared across every attempt in a retry
+sequence, not reissued per attempt — see `ExecuteOutcome.cost_usd` above.
+
+An adapter implementation does not need to do anything special to support
+this — it just needs to raise on a genuine failure (rather than returning
+a fabricated/partial `result`) and populate `cost_usd` when it can. See
+`docs/background-dev-team-system-design.md` §17 for the full CP-OP02
+writeup, including why a work order stays `running` throughout a retry
+sequence instead of visiting some intermediate status.
+
 ## Safety requirements — non-negotiable for every adapter
 
 1. **Declare capabilities honestly.** `info.capabilities` is not

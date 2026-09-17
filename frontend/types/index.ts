@@ -233,6 +233,15 @@ export interface AgentRun {
   startedAt?: string;
   completedAt?: string;
   model?: string;
+  // CP-OP02: which bounded-retry attempt this run represents (1 = first
+  // attempt). Always 1 for a human-triggered run; > 1 only ever appears on
+  // a run scripts/run_work_order.py's auto-retry loop created after a
+  // harness-detected technical failure on the previous attempt.
+  attemptNumber?: number;
+  // Set only on attempt 2+ — a short machine-readable code (e.g.
+  // "technical_failure_attempt_1") naming why the previous attempt was
+  // retried. Never set on attempt 1.
+  retryReason?: string;
 }
 
 export type WorkOrderStepStatus = "pending" | "queued" | "running" | "blocked" | "completed" | "failed" | "skipped";

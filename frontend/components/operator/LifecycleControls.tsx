@@ -72,11 +72,22 @@ const TRANSITIONS: Partial<Record<WorkOrderStatus, { action: WorkOrderStatus; la
 export function LifecycleControls({ status, isLive, onStatusChange }: Props) {
   const t = useT();
   const [pending, setPending] = useState<WorkOrderStatus | null>(null);
+  // Inline confirm — no new modal/dialog component introduced. Cancel is the
+  // one irreversible-feeling action here (every other transition can itself
+  // be undone or re-driven; cancelling a work order withdraws it for good,
+  // see the "running" case comment above), so it gets a lightweight
+  // "really cancel? yes/no" step instead of firing immediately on click.
+  const [confirmingCancel, setConfirmingCancel] = useState(false);
   const options = TRANSITIONS[status];
 
   if (!options || options.length === 0) return null;
 
   async function handleClick(action: WorkOrderStatus) {
+    if (action === "cancelled" && !confirmingCancel) {
+      setConfirmingCancel(true);
+      return;
+    }
+    setConfirmingCancel(false);
     setPending(action);
     try {
       await onStatusChange(action);
@@ -92,14 +103,33 @@ export function LifecycleControls({ status, isLive, onStatusChange }: Props) {
       </CardHeader>
       <CardContent className="space-y-2">
         {!isLive && <p className="text-amber-400/70 text-xs">{t("operator.lifecycle.demo_note")}</p>}
+        {confirmingCancel && (
+          <div className="rounded-lg bg-rose-950/20 border border-rose-900/30 px-3 py-2 space-y-2">
+            <p className="text-rose-300/90 text-xs">{t("operator.lifecycle.cancel_confirm_message")}</p>
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                variant="danger"
+                disabled={pending !== null}
+                loading={pending === "cancelled"}
+                onClick={() => handleClick("cancelled")}
+              >
+                {t("operator.lifecycle.cancel_confirm_yes")}
+              </Button>
+              <Button size="sm" variant="ghost" disabled={pending !== null} onClick={() => setConfirmingCancel(false)}>
+                {t("operator.lifecycle.cancel_confirm_no")}
+              </Button>
+            </div>
+          </div>
+        )}
         <div className="flex flex-wrap gap-2">
           {options.map(({ action, labelKey, variant }) => (
             <Button
               key={action}
               size="sm"
-              variant={variant}
-              disabled={!isLive || pending !== null}
-              loading={pending === action}
+              variant={action === "cancelled" ? "danger" : variant}
+              disabled={!isLive || pending !== null || (action === "cancelled" && confirmingCancel)}
+              loading={pending === action && !confirmingCancel}
               onClick={() => handleClick(action)}
             >
               {t(labelKey)}

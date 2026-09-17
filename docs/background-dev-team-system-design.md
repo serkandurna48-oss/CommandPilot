@@ -180,18 +180,26 @@ mapper is missing a field, not a reason to reach past it.
 | `cancelled` | Withdrawn before or during execution. |
 
 `started_at`/`completed_at` are **never client-settable** — `PATCH
-/api/work-orders/{id}` only accepts `status`, `recommended_next_step`, and
-`missing_context`. `work_order_service.update_work_order()` derives the
-timestamps from the status transition itself (first time the status enters
-`{running, needs_approval, blocked, review_ready, accepted,
-rework_requested}` → set `started_at` if unset; entering `{accepted, failed,
-cancelled}` → set `completed_at`), the same "derive timestamps server-side,
-never trust the client" rule `usage_service.py` already follows for
-`request_date`.
+/api/work-orders/{id}` accepts `status`, `source`, `reason`,
+`recommended_next_step`, and `missing_context`; a `status` value is now
+validated against an authoritative transition graph and routed through the
+`transition_work_order()` Postgres function rather than written directly
+(see §17, CP-OP01, which supersedes the rest of this paragraph as
+originally written — this status/timestamp behavior predates that ticket).
+The function derives the timestamps from the transition itself (first time
+the status enters `{running, needs_approval, blocked, review_ready,
+accepted, rework_requested}` → set `started_at` if unset; entering
+`{accepted, failed, cancelled}` → set `completed_at`), the same "derive
+timestamps server-side, never trust the client" rule `usage_service.py`
+already follows for `request_date` — only the *location* of that logic
+moved (Python service function → SQL function), not the rule itself.
 
 `AgentRunStatus` (`queued → running → completed`, with `blocked`/`failed` as
 off-ramps) is deliberately a separate, smaller enum — a work order's overall
 status is a function of its runs, not identical to any single run's status.
+As of CP-OP02 (§17), a single work order can accumulate multiple
+`agent_runs` rows for what a human experiences as "one run" — see
+`attempt_number`/`retry_reason` in §17.
 
 ## 5. Safety Rules
 
@@ -787,3 +795,189 @@ description, and adapter status table were all updated to reflect
 `--dangerously-skip-permissions` remains never used; no auto-execute
 without explicit cost approval; no silent default budget anywhere in the
 codebase.
+
+## 17. CP-OP01–04 — Operator Automation Loop v1
+
+The first real automation loop closing the gap §11 (Open Risks) called
+out: Work Order → Runner → Result Import → Review → Human Gate, with a
+bounded, harness-only retry step and full visibility, but still zero
+unsupervised execution — every run is still started by a human, on their
+own machine. Split across four tickets:
+
+**CP-OP01 — State Machine & Audit Trail.** Before this ticket, `PATCH
+/api/work-orders/{id}` accepted *any* `status` value with zero transition
+validation — `draft → accepted` in one call was a real, un-rejected bug
+surface, not a hypothetical. `transition_work_order()`
+(`supabase/migrations/010_transition_work_order_function.sql`) is now the
+single authoritative state machine: a `plpgsql` function that, in one
+transaction, `SELECT ... FOR UPDATE`-locks the row, validates the
+requested edge against a hardcoded transition table, re-checks the
+existing `review_ready`-requires-a-review-package precondition, applies
+the status + derives `started_at`/`completed_at`, and inserts exactly one
+`activity_logs` row (`event_type = 'status_transition'`, `metadata =
+{from_status, to_status, actor, source, reason}`) — atomically, so a
+successful transition without its audit entry is not possible (the two
+writes share the function's implicit transaction). The Python service
+layer (`work_order_service.transition_work_order()`) is a thin wrapper
+that calls this via `db.rpc(...)` and translates its failure modes into
+`LookupError`/`ValueError` for the router to turn into 404/400.
+
+New edges added to the graph, all human-only by convention (see the
+"actor/source" limit below): `needs_approval|blocked|failed|rework_requested
+→ queued` (resume after a human resolves whatever paused/failed it), and
+`<any non-terminal status> → cancelled`, including `review_ready →
+cancelled`. Re-requesting the status a work order is already in is a
+defined no-op — no transition, no audit row — which is what makes a
+repeated result import safe (see CP-OP03 below).
+
+**CP-OP02 — Attempts & Bounded Retry.** `scripts/run_work_order.py`'s
+`--mode execute` now retries a single adapter invocation up to 3 times
+total, but *only* for a failure the harness itself detects as technical —
+an exception from `adapter.execute()`, or a call that returns without
+raising but produces no usable result JSON at all (timeout, garbled
+output). A result the runner actually reported — `review_ready`,
+`blocked`, or `failed` — is never retried regardless of which one it is;
+that's the runner telling us something real, and retrying past it would
+be exactly the kind of "pretend it didn't happen" behavior
+`docs/runner-adapter-contract.md` explicitly forbids.
+
+Retrying is deliberately **not** a `work_orders.status` transition — the
+order stays `running` for the whole sequence. Each attempt gets its own
+`agent_runs` row (`attempt_number`, `retry_reason` —
+`supabase/migrations/011_agent_run_attempts.sql`), so the retry history
+stays fully visible instead of one row being silently overwritten.
+Before every attempt (and again before a retry or an import), the harness
+re-fetches the live work order status — if it's `cancelled`, the loop
+stops immediately, and if an `agent_runs` row is already open for that
+attempt, it's closed as `failed` (never left dangling on `running`; see
+"AgentRun left running" below for why `failed`, not `blocked`/`completed`,
+was the right choice here).
+
+**Working-tree safety gate**, added on review before this ticket shipped:
+before and after every attempt, the harness snapshots `git rev-parse HEAD`
++ `git status --porcelain` for the directory the adapter's subprocess
+actually runs in (`Path.cwd()` at harness-invocation time — deliberately
+*not* `REPO_ROOT`, which is fixed to wherever `run_work_order.py` itself
+lives; a cross-repo work order's `claude_code` subprocess inherits the
+harness's cwd, not CommandPilot's own repo root, since it's spawned via
+plain `subprocess.Popen()` with no explicit `cwd=`). If a technical
+failure's before/after snapshots differ — or either snapshot couldn't be
+taken at all, which fails closed as "changed" — auto-retry is refused
+outright: the order goes straight to `failed`
+(`technical_failure_with_worktree_changes`), because retrying against a
+worktree the failed attempt already touched risks compounding a
+half-finished change rather than cleanly re-trying from the same start
+state.
+
+**Cumulative budget.** For adapters with `consumes_paid_credits=True`, the
+harness's total `--max-budget-usd`/`COMMANDPILOT_CLAUDE_MAX_BUDGET_USD`
+value is a ceiling across *all* attempts, not per-attempt — each retry
+gets whatever remains after prior spend. If an attempt doesn't report its
+actual cost (`ExecuteOutcome.cost_usd`, newly threaded through from
+`claude_code`'s `--output-format json` wrapper's `total_cost_usd` field),
+the harness conservatively assumes the *entire* remaining budget was
+spent, so an unreported cost can never let three attempts add up to more
+than the configured total.
+
+**CP-OP03 — Idempotent Result Import.** `scripts/import_work_order_result.py`
+now computes a stable, **position**-based key per `activityLogs`/`artifacts`
+item — `sha256(f"{agent_run_id}|activity_log|{index}")` /
+`sha256(f"{agent_run_id}|artifact|{index}")`, full untruncated hex digest,
+never truncated — and the backend upserts on `(work_order_id, dedup_key)`
+(`supabase/migrations/012_result_import_dedup_keys.sql`, plain — not
+partial — unique indexes, since Postgres never treats two `NULL`s as equal
+for uniqueness, so every non-import caller that never sets `dedup_key`
+is completely unaffected). Deliberately position-based, not content-based:
+hashing the item's full JSON would collapse two genuinely identical
+log/artifact entries at different positions into one row. Position-based
+means: the exact same `result.json` re-imported twice reproduces the same
+keys (safe no-op); a corrected re-import of the *same* `agent_run`'s
+result updates the same positional slots instead of duplicating whatever
+already landed; two different `agent_run_id`s (e.g. two CP-OP02 attempts)
+never collide. **Array order within one `agent_run`'s result is treated as
+canonical** — reordering items across re-imports of the same run's result
+is not supported and will misattribute positions; this is a known,
+accepted v1 limit (see below).
+
+**CP-OP04 — Visibility & Docs.** No new backend/runner logic — this pass
+made the existing loop's state legible: `LifecycleControls` now offers
+every human-only edge CP-OP01 added (`Requeue` from
+`needs_approval`/`blocked`/`failed`/`rework_requested`, `Cancel` from every
+non-terminal status the backend allows), with an inline confirm step
+before `Cancel` fires (no new dialog/modal component — a small
+"really cancel? yes/no" block using the existing Card/Button primitives).
+`WorkOrderDetail`'s Agent Runs section now shows each run's
+`attemptNumber` and, for attempt 2+, a translated `retryReason`, with a
+retried run visually indented/connected to make a technical-retry
+sequence recognizable as one thing; a work order in `failed` status gets a
+dedicated banner translating the harness's reason code
+(`technical_failure_with_worktree_changes` /
+`_retries_exhausted` / `_budget_exhausted`) into a full sentence instead of
+just a status badge. No new data was introduced for any of this — every
+value rendered already existed in `agent_runs`/`activity_logs`.
+
+### AgentRun left `running`: why `failed`, not `blocked`/`completed`
+
+Introduced alongside the cancellation-checks above: if the harness stops
+early (cancelled before attempt 1, cancelled after a valid result but
+before import, or cancelled between retries) while an `agent_runs` row it
+created is still `running`, that row is now explicitly closed as
+**`failed`** rather than left open. Not `completed` — nothing was actually
+applied for this run, even a valid result obtained just before
+cancellation is deliberately never imported. Not `blocked` — `blocked`
+means "paused, this same run can still be resumed"; a cancelled work order
+has nothing left to resume. `failed` is the closest existing terminal
+meaning, and the run's `output_summary` text distinguishes "cancelled" from
+a genuine technical failure for anyone reading the Agent Runs / Activity
+Log UI. No new `AgentRunStatus` value was added.
+
+### Explicit v1 limits (read before trusting this loop unsupervised)
+
+- **Cancel does not stop a running process.** Clicking `Cancel` in the UI
+  (or the harness detecting cancellation mid-sequence) only ever changes
+  `work_orders.status` and, where applicable, closes an `agent_runs` row —
+  it never sends a signal to an already-running `claude` subprocess. If a
+  human cancels while `claude_code.execute()` is mid-flight, that process
+  keeps running to completion (or its own timeout) on the machine it was
+  started on; the harness's *next* status check (before retry, before
+  import) is what notices the cancellation and refuses to act on whatever
+  that process eventually produces. There is currently no process-kill
+  path wired to a UI cancel action.
+- **`actor`/`source` are self-reported, not cryptographically verified.**
+  `transition_work_order()` derives `actor = 'human' if source == 'ui' else
+  'system'` purely from whatever the caller claims — there is no separate
+  authentication channel distinguishing a human UI click from a script
+  claiming to be one. "Human-only" edges are human-only today because
+  `scripts/run_work_order.py`/`import_work_order_result.py` simply contain
+  no code path that calls them with `source='ui'` for those specific
+  edges — a convention enforced by absence of a caller, not a runtime
+  check. Same limitation the keyword-based safety rules (§5) already have.
+- **The Approval Scope is still not an execution sandbox.** Everything in
+  §5/§11 remains true after CP-OP01–04: `allowed_paths`/`blocked_paths`/
+  `max_cost_usd`/`max_runtime_minutes` are declarative fields with no
+  runtime interpreter enforcing them against what a running adapter
+  actually does (`claude_code`'s hard wall-clock timeout is the one
+  runtime enforcement that exists, and it's time-based, not scope-based).
+  A misbehaving or successfully-jailbroken adapter invocation is not
+  mechanically prevented from doing something the scope disallows.
+- **Result deduplication is positional, not content-based** (CP-OP03 —
+  restated here because it's a real constraint, not just an implementation
+  note): the array order of `activityLogs`/`artifacts` within one
+  `agent_run`'s result JSON is canonical. Re-importing the *same*
+  `agent_run_id`'s result with items reordered, inserted, or removed
+  between positions will not cleanly map old rows to new ones — it will
+  either duplicate (new higher indices) or silently update the wrong slot
+  (shifted indices). This is acceptable for today's actual failure mode
+  (a partial import retried with the identical result file) and not
+  designed to tolerate a runner producing a materially different result
+  for the same `agent_run_id` on a second attempt.
+- **Auto-retry is technical-failure-only, capped, and budget-bounded** —
+  restated as a hard summary: max. 3 attempts total per `--mode execute`
+  invocation; retry only on a harness-detected technical failure with an
+  unchanged working tree; never on a runner-reported `blocked`/`failed`/
+  `review_ready`; cumulative budget across all attempts, never per-attempt.
+
+**Out of scope, per these tickets' explicit instructions (unchanged from
+every prior pass):** no queue, no background worker, no execution sandbox,
+no new dependencies, no multi-agent parallel execution, no automatic
+process termination on cancel.
