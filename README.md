@@ -43,6 +43,9 @@ After running `supabase/schema.sql` for the first time, apply any incremental mi
 | --- | --- | --- |
 | `supabase/migrations/001_profiles_language_check.sql` | Normalises `profiles.language` to `'en'` for null/invalid rows, then adds a CHECK constraint | Before deploying i18n / language-selection feature |
 | `supabase/migrations/002_daily_plans_review_context_used.sql` | Adds `daily_plans.review_context_used boolean default false` if the column is missing | Before deploying backend code that writes `review_context_used` |
+| `supabase/migrations/003_daily_plans_unique_constraint.sql` | Adds a UNIQUE constraint on `daily_plans(user_id, plan_date)` to prevent duplicate plans per user per day (CP-202) | Before deploying duplicate-plan-prevention logic |
+| `supabase/migrations/004_ai_usage_log.sql` | Creates `ai_usage_log` table (CP-203) tracking per-call OpenAI token/cost usage for a $0.50/user/UTC-day spending cap; **not fully idempotent** — its `CREATE POLICY` has no `IF NOT EXISTS` guard, run once only | Before deploying the AI spending-cap backend logic |
+| `supabase/migrations/005_projects_extend.sql` | Migrates old `projects.status = 'completed'` rows to `'done'`, replaces the status CHECK constraint with an expanded set (`active, waiting, paused, backlog, done, archived`), adds new columns (`priority`, `next_action`, `risk`, etc.) (CP-206) | Before deploying the extended Projects UI/status model |
 
 Run each file in the Supabase SQL Editor. Migrations are idempotent — safe to re-run.
 

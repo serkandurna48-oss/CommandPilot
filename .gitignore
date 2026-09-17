@@ -61,6 +61,9 @@ coverage.xml
 supabase/.temp/
 supabase/seed.sql
 
+# Claude Code (lokale, maschinenspezifische Einstellungen)
+.claude/settings.local.json
+
 # Misc
 *.bak
 *.tmp
