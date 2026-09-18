@@ -54,7 +54,7 @@ export default function DesignPreviewPage() {
   const [selected, setSelected] = useState<Selected>(null);
 
   return (
-    <div className="flex min-h-screen bg-slate-950 text-slate-100">
+    <div className="flex min-h-screen bg-[var(--bg-app)] text-[var(--text-primary)]">
       <Sidebar />
 
       <div className="flex-1 flex flex-col min-w-0">
@@ -65,8 +65,10 @@ export default function DesignPreviewPage() {
         </div>
 
         <div className="flex-1 flex overflow-hidden">
+          {/* Content-Spalte 768px für Jarvis (docs/referenzen/) — Operator bleibt
+              bewusst breiter, ist hier aber nicht betroffen. */}
           <main className="flex-1 overflow-y-auto px-4 md:px-8 py-6 pb-20 md:pb-6 min-w-0">
-            <div className="max-w-4xl">
+            <div className="max-w-[768px]">
               <Header title="Jarvis" subtitle="Gestaltungsentwurf — JARVIS-D1, Phase 3" />
 
               <DesignTokens />
@@ -77,8 +79,8 @@ export default function DesignPreviewPage() {
 
               <section>
                 <div className="mb-3">
-                  <h2 className="text-xl font-semibold text-slate-100">{t("design_preview.actions_title")}</h2>
-                  <p className="text-xs text-slate-500 mt-0.5">{t("design_preview.actions_hint")}</p>
+                  <h2 className="text-xl font-semibold text-[var(--text-primary)]">{t("design_preview.actions_title")}</h2>
+                  <p className="text-xs text-[var(--text-tertiary)] mt-0.5">{t("design_preview.actions_hint")}</p>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   {SUGGESTED_ACTIONS.map((action, i) => (
@@ -94,17 +96,17 @@ export default function DesignPreviewPage() {
             </div>
           </main>
 
-          <aside className="hidden lg:block w-80 shrink-0 border-l border-slate-800/50 overflow-y-auto p-5">
-            <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-3">{t("design_preview.detail_title")}</p>
-            {!selected && <p className="text-sm text-slate-500">{t("design_preview.detail_empty")}</p>}
+          <aside className="hidden lg:block w-80 shrink-0 border-l border-[var(--border-light)] overflow-y-auto p-5">
+            <p className="text-[11px] uppercase tracking-wide text-[var(--text-tertiary)] mb-3">{t("design_preview.detail_title")}</p>
+            {!selected && <p className="text-sm text-[var(--text-tertiary)]">{t("design_preview.detail_empty")}</p>}
 
             {selected?.type === "source" && (
               <div className="space-y-2">
                 <p className="text-sm font-mono text-brand-300 break-words">{selected.source.source_file}</p>
                 {selected.source.source_heading && (
-                  <p className="text-xs text-slate-400">{selected.source.source_heading}</p>
+                  <p className="text-xs text-[var(--text-secondary)]">{selected.source.source_heading}</p>
                 )}
-                <p className="text-xs text-slate-500 mt-3 border-t border-slate-800 pt-3">
+                <p className="text-xs text-[var(--text-tertiary)] mt-3 border-t border-[var(--border-light)] pt-3">
                   Beispielhafter Kontextausschnitt — zeigt, wie ein aufgeklappter Quellen-Snippet hier Platz hätte, ohne den Hauptverlauf zu verlängern.
                 </p>
               </div>
@@ -112,28 +114,28 @@ export default function DesignPreviewPage() {
 
             {selected?.type === "action" && (
               <div className="space-y-3">
-                <p className="text-sm font-medium text-slate-100">{selected.action.title}</p>
-                <p className="text-xs text-slate-400">{selected.action.description}</p>
-                <dl className="text-xs space-y-1.5 pt-2 border-t border-slate-800">
+                <p className="text-sm font-medium text-[var(--text-primary)]">{selected.action.title}</p>
+                <p className="text-xs text-[var(--text-secondary)]">{selected.action.description}</p>
+                <dl className="text-xs space-y-1.5 pt-2 border-t border-[var(--border-light)]">
                   <div className="flex justify-between gap-2">
-                    <dt className="text-slate-500">Team</dt>
-                    <dd className="text-slate-300 font-mono">{selected.action.team_type}</dd>
+                    <dt className="text-[var(--text-tertiary)]">Team</dt>
+                    <dd className="text-[var(--text-secondary)] font-mono">{selected.action.team_type}</dd>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <dt className="text-slate-500">Repo</dt>
-                    <dd className="text-slate-300 font-mono">{selected.action.target_repo_name ?? "—"}</dd>
+                    <dt className="text-[var(--text-tertiary)]">Repo</dt>
+                    <dd className="text-[var(--text-secondary)] font-mono">{selected.action.target_repo_name ?? "—"}</dd>
                   </div>
                   <div className="flex justify-between gap-2">
-                    <dt className="text-slate-500">{t("design_preview.requires_approval")}</dt>
-                    <dd className="text-slate-300">{selected.action.requires_approval ? "Ja" : "Nein"}</dd>
+                    <dt className="text-[var(--text-tertiary)]">{t("design_preview.requires_approval")}</dt>
+                    <dd className="text-[var(--text-secondary)]">{selected.action.requires_approval ? "Ja" : "Nein"}</dd>
                   </div>
                 </dl>
                 {selected.action.sources.length > 0 && (
-                  <div className="pt-2 border-t border-slate-800">
-                    <p className="text-slate-500 mb-1">Quellen</p>
+                  <div className="pt-2 border-t border-[var(--border-light)]">
+                    <p className="text-[var(--text-tertiary)] mb-1">Quellen</p>
                     <ul className="space-y-0.5">
                       {selected.action.sources.map((s, i) => (
-                        <li key={i} className="font-mono text-slate-400 truncate">
+                        <li key={i} className="font-mono text-[var(--text-secondary)] truncate">
                           {s.source_file}
                           {s.source_heading ? ` — ${s.source_heading}` : ""}
                         </li>

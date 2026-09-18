@@ -29,8 +29,9 @@ export function PreviewActionCard({
     <Card
       variant="default"
       className={cn(
-        "cursor-pointer transition-colors",
-        selected ? "border-brand-500/60 bg-slate-800" : "hover:border-slate-600"
+        "cursor-pointer motion-safe:transition-colors",
+        "focus:outline-none focus-visible:outline focus-visible:outline-[1.5px] focus-visible:outline-offset-[2.5px] focus-visible:outline-[var(--interactive-border-focus)]",
+        selected ? "border-brand-500/60 bg-[var(--bg-secondary)]" : "hover:border-[var(--border-medium)]"
       )}
       onClick={onSelect}
       role="button"
@@ -46,16 +47,16 @@ export function PreviewActionCard({
       <CardContent className="py-3.5">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <p className="text-sm font-medium text-slate-100 truncate">{action.title}</p>
-            <p className="text-xs text-slate-400 mt-0.5 line-clamp-2">{action.description}</p>
+            <p className="text-sm font-medium text-[var(--text-primary)] truncate">{action.title}</p>
+            <p className="text-xs text-[var(--text-secondary)] mt-0.5 line-clamp-2">{action.description}</p>
           </div>
-          <span className="shrink-0 inline-flex items-center gap-1.5 text-[11px] text-slate-400">
+          <span className="shrink-0 inline-flex items-center gap-1.5 text-[11px] text-[var(--text-secondary)]">
             <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", risk.dot)} />
             {t(risk.textKey)}
           </span>
         </div>
 
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-3 text-[11px] text-slate-500">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 mt-3 text-[11px] text-[var(--text-tertiary)]">
           <span className="inline-flex items-center gap-1">
             {action.requires_approval ? (
               <ShieldAlert className="h-3.5 w-3.5 text-status-warning" />
@@ -70,8 +71,8 @@ export function PreviewActionCard({
           <span>{action.sources.length} {action.sources.length === 1 ? "Quelle" : "Quellen"}</span>
         </div>
 
-        <div className="mt-3 pt-3 border-t border-slate-700/50 flex items-center justify-between gap-3">
-          <span className="text-[10px] uppercase tracking-wide text-slate-600">{t("design_preview.badge")}</span>
+        <div className="mt-3 pt-3 border-t border-[var(--border-default)] flex items-center justify-between gap-3">
+          <span className="text-[10px] uppercase tracking-wide text-[var(--text-tertiary)]">{t("design_preview.badge")}</span>
           <Button
             type="button"
             variant="secondary"

@@ -4,6 +4,58 @@
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
 
+/*
+ * Token-Architektur (JARVIS-D1, Ergänzung vor Phase 4): drei Ebenen.
+ * 1. Primitive  — tailwind.config.ts (brand-50..900, status-*)
+ * 2. Semantisch — Flächen/Text/Rahmen unten, benennt eine Rolle, nicht eine Farbe
+ * 3. Interaktiv — pro Variante eigene default/hover/press/selected-Tokens
+ * Struktur und Namen an der ChatGPT-Web-App orientiert (docs/referenzen/),
+ * alle Werte sind unsere eigenen (Steel-Blue-Akzent, eigene Neutralskala) —
+ * kein Theme-Umschalter, dark-only.
+ */
+:root {
+  /* Flächen */
+  --bg-app: #020617;       /* slate-950 */
+  --bg-primary: #0f172a;   /* slate-900 */
+  --bg-secondary: #1e293b; /* slate-800 */
+  --bg-tertiary: #334155;  /* slate-700 */
+  --bg-elevated: #1e293b;  /* slate-800, Popover/Menü — Unterscheidung über Rahmen, nicht Helligkeit */
+
+  /* Text */
+  --text-primary: #f1f5f9;   /* slate-100 */
+  --text-secondary: #94a3b8; /* slate-400 */
+  --text-tertiary: #64748b;  /* slate-500 */
+  --text-placeholder: #64748b;
+  --text-accent: #4f7a9c;    /* brand-500 — ein Wert für alle Akzent-Rollen */
+  --icon-accent: #4f7a9c;
+
+  /* Rahmen — vier Gewichte statt eines */
+  --border-light: rgba(255, 255, 255, 0.05);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-medium: rgba(255, 255, 255, 0.15);
+  --border-heavy: rgba(255, 255, 255, 0.20);
+
+  /* Interaktion — Hover/Press als Alpha-Overlay, nie fixe Grauwerte.
+     primary: Weiß/Schwarz-Overlay auf dem Akzent selbst (ein Wert bleibt ein
+     Wert — kein zweiter Blauton für "Hover"). secondary/tertiary: Weiß-Alpha
+     auf transparent/neutraler Fläche, da dark-only immer aufhellt. */
+  --interactive-bg-primary-default: var(--text-accent);
+  --interactive-bg-primary-hover: color-mix(in srgb, white 12%, var(--text-accent));
+  --interactive-bg-primary-press: color-mix(in srgb, black 14%, var(--text-accent));
+
+  --interactive-bg-secondary-default: transparent;
+  --interactive-bg-secondary-hover: rgba(255, 255, 255, 0.08);
+  --interactive-bg-secondary-press: rgba(255, 255, 255, 0.04);
+  --interactive-bg-secondary-selected: rgba(255, 255, 255, 0.08);
+
+  --interactive-bg-tertiary-hover: rgba(255, 255, 255, 0.04);
+  --interactive-bg-tertiary-press: rgba(255, 255, 255, 0.02);
+
+  /* Fokus: eigener, auf Kontrast optimierter Token — bewusst nicht der Akzent,
+     der bei 1.5px zu wenig Kontrast hätte. Nur :focus-visible verwendet ihn. */
+  --interactive-border-focus: var(--text-primary);
+}
+
 * {
   box-sizing: border-box;
 }
@@ -14,8 +66,17 @@ html {
 }
 
 body {
-  background-color: #020617; /* slate-950 */
-  color: #f1f5f9;            /* slate-100 */
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* scrollbar */

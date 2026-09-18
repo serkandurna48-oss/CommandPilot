@@ -19,6 +19,9 @@ interface PreviewMessage {
   baseSources?: JarvisSourceRef[];
 }
 
+const FOCUS_RING =
+  "focus:outline-none focus-visible:outline focus-visible:outline-[1.5px] focus-visible:outline-offset-[2.5px] focus-visible:outline-[var(--interactive-border-focus)]";
+
 const BASE_SOURCES: JarvisSourceRef[] = [
   { source_file: "00-Index.md", source_heading: "" },
   { source_file: "Projekte/CommandPilot.md", source_heading: "" },
@@ -101,7 +104,7 @@ function SourceList({
 }) {
   return (
     <div>
-      <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">{title}</p>
+      <p className="text-[11px] uppercase tracking-wide text-[var(--text-tertiary)] mb-1">{title}</p>
       <ul className="space-y-1">
         {sources.map((s, i) => (
           <li key={i}>
@@ -109,11 +112,11 @@ function SourceList({
               type="button"
               onClick={() => onSelect(s)}
               className={cn(
-                "w-full text-left text-xs font-mono px-2 py-1 rounded-md transition-colors truncate",
-                "focus:outline-none focus:ring-2 focus:ring-brand-500",
+                "w-full text-left text-xs font-mono px-2 py-1 rounded-md motion-safe:transition-colors truncate",
+                FOCUS_RING,
                 tone === "hit"
                   ? "text-brand-300 bg-brand-600/10 hover:bg-brand-600/20"
-                  : "text-slate-500 hover:bg-slate-800/60"
+                  : "text-[var(--text-tertiary)] hover:bg-[var(--interactive-bg-tertiary-hover)]"
               )}
               title={`${s.source_file}${s.source_heading ? " — " + s.source_heading : ""}`}
             >
@@ -143,7 +146,8 @@ export function PreviewJarvisPanel({
       isFirstRender.current = false;
       return;
     }
-    bottomRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    bottomRef.current?.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
   }, [demoState]);
 
   const messages = demoState === "long" ? LONG_THREAD : demoState === "short" ? SHORT_THREAD : [];
@@ -166,7 +170,7 @@ export function PreviewJarvisPanel({
   return (
     <div className="flex flex-col">
       <div className="flex items-center gap-1.5 mb-3 overflow-x-auto pb-1">
-        <span className="text-[11px] uppercase tracking-wide text-slate-500 shrink-0 mr-1">
+        <span className="text-[11px] uppercase tracking-wide text-[var(--text-tertiary)] shrink-0 mr-1">
           {t("design_preview.state_label")}
         </span>
         {stateOptions.map(({ key, label }) => (
@@ -175,11 +179,11 @@ export function PreviewJarvisPanel({
             type="button"
             onClick={() => setDemoState(key)}
             className={cn(
-              "shrink-0 rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-              "focus:outline-none focus:ring-2 focus:ring-brand-500",
+              "shrink-0 rounded-md px-2.5 py-1 text-xs font-medium motion-safe:transition-colors",
+              FOCUS_RING,
               demoState === key
                 ? "bg-brand-500 text-white"
-                : "bg-slate-800 text-slate-400 hover:text-slate-200"
+                : "bg-[var(--bg-secondary)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
             )}
           >
             {label}
@@ -199,7 +203,10 @@ export function PreviewJarvisPanel({
                     variant={msg.role === "user" ? "elevated" : "default"}
                     className={cn(msg.role === "user" ? "bg-brand-500/15 border-brand-500/30" : undefined)}
                   >
-                    <CardContent className="py-3 text-sm text-slate-100">{msg.content}</CardContent>
+                    {/* Fließtext-Rolle: 16px, nicht der 14px UI-Standard (docs/referenzen/) */}
+                    <CardContent className="py-3 text-base leading-[26px] text-[var(--text-primary)]">
+                      {msg.content}
+                    </CardContent>
                   </Card>
 
                   {msg.role === "assistant" && msg.hitSources && msg.hitSources.length > 0 && (
@@ -212,11 +219,16 @@ export function PreviewJarvisPanel({
                       />
                       {msg.baseSources && msg.baseSources.length > 0 && (
                         <details className="group">
-                          <summary className="flex items-center gap-1 text-[11px] uppercase tracking-wide text-slate-600 cursor-pointer select-none focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-500 rounded">
-                            <ChevronDown className="h-3 w-3 transition-transform group-open:rotate-180" />
+                          <summary
+                            className={cn(
+                              "flex items-center gap-1 text-[11px] uppercase tracking-wide text-[var(--text-tertiary)] cursor-pointer select-none rounded",
+                              FOCUS_RING
+                            )}
+                          >
+                            <ChevronDown className="h-3 w-3 motion-safe:transition-transform group-open:rotate-180" />
                             {t("design_preview.sources_base")} ({msg.baseSources.length})
                           </summary>
-                          <p className="text-[11px] text-slate-600 mt-1 mb-1">{t("design_preview.sources_base_hint")}</p>
+                          <p className="text-[11px] text-[var(--text-tertiary)] mt-1 mb-1">{t("design_preview.sources_base_hint")}</p>
                           <SourceList title="" sources={msg.baseSources} onSelect={onSelectSource} tone="base" />
                         </details>
                       )}
@@ -229,7 +241,7 @@ export function PreviewJarvisPanel({
           {demoState === "loading" && (
             <div className="flex justify-start">
               <Card>
-                <CardContent className="py-3 flex items-center gap-2 text-sm text-slate-400">
+                <CardContent className="py-3 flex items-center gap-2 text-sm text-[var(--text-secondary)]">
                   <div className="h-4 w-4 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
                   {t("jarvis.thinking")}
                 </CardContent>
@@ -241,7 +253,7 @@ export function PreviewJarvisPanel({
         </div>
 
         {demoState === "error" && (
-          <div className="mb-3 rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm flex items-center justify-between gap-3">
+          <div className="mb-3 rounded-lg bg-status-danger/10 border border-status-danger/30 px-4 py-3 text-status-danger text-sm flex items-center justify-between gap-3">
             <p>
               <span className="font-medium">{t("jarvis.error_banner")}</span> Second Brain nicht erreichbar (503).
             </p>

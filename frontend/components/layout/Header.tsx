@@ -17,11 +17,13 @@ export function Header({ title, subtitle }: HeaderProps) {
 
   return (
     <div className="mb-8">
-      <p className="text-xs text-slate-500 uppercase tracking-widest mb-1">
+      <p className="text-xs text-[var(--text-tertiary)] uppercase tracking-widest mb-1">
         {dateLabel}
       </p>
-      <h1 className="text-2xl font-semibold text-slate-100">{title}</h1>
-      {subtitle && <p className="text-slate-400 text-sm mt-1">{subtitle}</p>}
+      {/* Seitentitel 28px — Hierarchie über Gewicht/Farbe, nicht Schriftgröße
+          (JARVIS-D1, docs/referenzen/chatgpt-design-reference.md) */}
+      <h1 className="text-[28px] leading-[34px] font-semibold text-[var(--text-primary)]">{title}</h1>
+      {subtitle && <p className="text-[var(--text-secondary)] text-sm mt-1">{subtitle}</p>}
     </div>
   );
 }

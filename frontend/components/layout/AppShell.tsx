@@ -11,7 +11,7 @@ export function AppShell({
 }) {
   return (
     <ProtectedRoute>
-      <div className="flex min-h-screen bg-slate-950 text-slate-100">
+      <div className="flex min-h-screen bg-[var(--bg-app)] text-[var(--text-primary)]">
         <Sidebar />
         <main className="flex-1 overflow-y-auto pb-16 md:pb-0">
           <div className={

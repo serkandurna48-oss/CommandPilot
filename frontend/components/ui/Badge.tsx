@@ -16,7 +16,7 @@ export function Badge({ label, lifeArea, className }: BadgeProps) {
       style={
         color
           ? { backgroundColor: `${color}25`, color, borderColor: `${color}40`, border: "1px solid" }
-          : { backgroundColor: "#334155", color: "#94a3b8" }
+          : { backgroundColor: "var(--bg-tertiary)", color: "var(--text-secondary)" }
       }
     >
       {label}
