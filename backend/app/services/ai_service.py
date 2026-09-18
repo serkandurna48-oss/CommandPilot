@@ -13,6 +13,7 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.prompts.daily_plan import SYSTEM_PROMPT, JSON_SCHEMA, build_user_prompt
+from app.prompts.jarvis_chat import SYSTEM_PROMPT as JARVIS_SYSTEM_PROMPT, build_chat_prompt
 from app.models.plan import DailyPlanAI
 
 logger = logging.getLogger(__name__)
@@ -217,6 +218,121 @@ async def generate_daily_plan(
         # Catches malformed choices (IndexError, AttributeError, etc.) that
         # escape the specific handlers above. Tokens are known at this point,
         # so we wrap rather than losing them.
+        logger.error(
+            "Unexpected error processing OpenAI response | exc=%s | internal_code=AI_RESPONSE_MALFORMED",
+            type(exc).__name__,
+        )
+        raise AIGenerationError(
+            "AI_RESPONSE_MALFORMED",
+            f"Unexpected error processing OpenAI response: {type(exc).__name__}",
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+        ) from exc
+
+
+async def generate_chat_reply(
+    message: str,
+    history: list[dict],
+    context_block: str,
+) -> tuple[str, int, int]:
+    """
+    Call OpenAI for a Jarvis chat reply. Plain text — no structured-output
+    JSON schema, unlike generate_daily_plan. Returns (reply_text,
+    input_tokens, output_tokens). Raises AIGenerationError with the same
+    error-code taxonomy as generate_daily_plan on any failure.
+    """
+    logger.info("AI chat reply started | model=%s", settings.OPENAI_MODEL)
+
+    user_prompt = build_chat_prompt(message, history, context_block)
+
+    try:
+        response = await client.chat.completions.create(
+            model=settings.OPENAI_MODEL,
+            messages=[
+                {"role": "system", "content": JARVIS_SYSTEM_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0.4,
+            max_tokens=1024,
+        )
+    except AuthenticationError as exc:
+        logger.error(
+            "OpenAI authentication failed | exc=%s | status=%s | model=%s | internal_code=OPENAI_AUTH_FAILED",
+            type(exc).__name__,
+            getattr(exc, "status_code", "unknown"),
+            settings.OPENAI_MODEL,
+        )
+        raise AIGenerationError(
+            "OPENAI_AUTH_FAILED",
+            "OpenAI authentication failed. Check the API key.",
+        ) from exc
+    except RateLimitError as exc:
+        provider_code: str = getattr(exc, "code", None) or ""
+        if "quota" in provider_code:
+            logger.error(
+                "OpenAI quota exceeded | exc=%s | status=%s | provider_code=%s | model=%s | internal_code=OPENAI_QUOTA_EXCEEDED",
+                type(exc).__name__,
+                getattr(exc, "status_code", "unknown"),
+                provider_code,
+                settings.OPENAI_MODEL,
+            )
+            raise AIGenerationError(
+                "OPENAI_QUOTA_EXCEEDED",
+                "OpenAI API quota exceeded.",
+            ) from exc
+        logger.warning(
+            "OpenAI rate limited | exc=%s | status=%s | provider_code=%s | model=%s | internal_code=OPENAI_RATE_LIMITED",
+            type(exc).__name__,
+            getattr(exc, "status_code", "unknown"),
+            provider_code,
+            settings.OPENAI_MODEL,
+        )
+        raise AIGenerationError(
+            "OPENAI_RATE_LIMITED",
+            "OpenAI request rate limited. Please try again shortly.",
+        ) from exc
+    except (APIConnectionError, APITimeoutError) as exc:
+        logger.error(
+            "OpenAI connection/timeout error | exc=%s | model=%s | internal_code=OPENAI_CONNECTION_ERROR",
+            type(exc).__name__,
+            settings.OPENAI_MODEL,
+        )
+        raise AIGenerationError(
+            "OPENAI_CONNECTION_ERROR",
+            "Could not reach OpenAI. Please try again.",
+        ) from exc
+    except Exception as exc:
+        logger.error(
+            "Unexpected OpenAI error | exc=%s | model=%s | internal_code=UNKNOWN_AI_ERROR",
+            type(exc).__name__,
+            settings.OPENAI_MODEL,
+        )
+        raise AIGenerationError(
+            "UNKNOWN_AI_ERROR",
+            "Unexpected error during OpenAI request.",
+        ) from exc
+
+    input_tokens = response.usage.prompt_tokens if response.usage else 0
+    output_tokens = response.usage.completion_tokens if response.usage else 0
+    logger.info(
+        "OpenAI response received | input_tokens=%s | output_tokens=%s",
+        input_tokens, output_tokens,
+    )
+
+    try:
+        reply_text = response.choices[0].message.content
+        if not reply_text:
+            logger.error("OpenAI returned empty response content")
+            raise AIGenerationError(
+                "UNKNOWN_AI_ERROR", "OpenAI returned an empty response.",
+                input_tokens=input_tokens, output_tokens=output_tokens,
+            )
+        logger.info("AI chat reply succeeded")
+        return reply_text, input_tokens, output_tokens
+
+    except AIGenerationError:
+        raise
+    except Exception as exc:
         logger.error(
             "Unexpected error processing OpenAI response | exc=%s | internal_code=AI_RESPONSE_MALFORMED",
             type(exc).__name__,
