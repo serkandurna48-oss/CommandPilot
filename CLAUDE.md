@@ -47,11 +47,13 @@ dupliziert — es wird referenziert, wenn gebraucht, nicht vorab synchronisiert.
 
 Bindende Reihenfolge für die nächsten Ausbaustufen:
 
-1. Second-Brain-Kontext in die Tagesplanung holen.
-2. Text-Chat auf derselben Retrieval-Funktion wie (1) — keine zweite,
-   parallele Kontext-Pipeline.
-3. Aktionen mit Vorschau und Bestätigung — nichts wird ausgeführt, ohne dass der
-   Mensch vorher sieht, was passieren würde.
+1. **Erledigt** — Second-Brain-Kontext in die Tagesplanung holen. Siehe
+   Abschnitt "Jarvis" unten.
+2. **Erledigt** — Text-Chat auf derselben Retrieval-Funktion wie (1) — keine
+   zweite, parallele Kontext-Pipeline. `/jarvis`, siehe Abschnitt "Jarvis".
+3. **Nächster Schritt** — Aktionen mit Vorschau und Bestätigung — nichts wird
+   ausgeführt, ohne dass der Mensch vorher sieht, was passieren würde. Siehe
+   `docs/aufträge/JARVIS-C1 — Command Layer, der nächste sichtbare Ablauf.md`.
 4. Dashboard.
 5. Sprache.
 6. Integrationen.
@@ -64,6 +66,88 @@ das eigentliche Vermögen. Chat, Sprache und Dashboard rufen dieselben
 Kernfunktionen auf — keine oberflächenspezifische Logik-Duplikation. Bei jeder
 neuen Oberfläche zuerst prüfen: ruft sie eine bestehende Kernfunktion auf, oder
 baut sie eine neue, parallele?
+
+---
+
+## Jarvis (Second-Brain Chat + Tagesplan-Kontext)
+
+Setzt Produktrichtung Schritt 1+2 um. Ein Retrieval, zwei Aufrufer — kein
+Duplikat. Entstanden über JARVIS-A1 (`docs/aufträge/`), das u. a. die
+ursprüngliche Version dieses Abschnitts nachgezogen hat.
+
+**Kern**: `backend/app/services/vault_service.py`. Liest den Obsidian-Vault
+unter `VAULT_PATH` (Env-Var; leer/unlesbar → leerer Kontext plus Logeintrag,
+wirft nie eine Exception — auch nicht bei ungültigem UTF-8 in einer
+Vault-Datei, die betroffene Datei wird übersprungen, der Rest weiterverarbeitet).
+Kein Embeddings, keine Vektordatenbank — reines Keyword-Matching, zwei Ebenen:
+
+- **Basiskontext** (immer dabei): `00-Index.md` komplett + eine Zeile pro
+  Entitäts-Notiz (Titel/erste Zeile + Frontmatter `type`/`status`/`priority`/
+  `updated`). **Frontmatter-Vertrag**: Frontmatter erscheint NUR hier als
+  Text — sie fließt nicht ins Scoring der Treffer-Ebene ein. Eine Anfrage,
+  die "aktiv" erwähnt, scored nicht höher gegen eine Notiz mit
+  `status: active` als gegen eine ohne. Kein Frontmatter-Matching, absichtlich
+  (Nicht-Ziel).
+- **Treffer-Ebene**: Keyword-gescorte Abschnitte zur konkreten Anfrage,
+  Überschrift/Dateiname höher gewichtet als Fließtext, Frontmatter spielt hier
+  keine Rolle.
+
+`get_context_for_query(query, user_id, total_token_budget=2200,
+base_token_budget=1200, vault_path=None)` liefert `(block, hit_sources,
+base_sources)`. `block` (Basis- + Treffer-Text kombiniert) geht vollständig
+ins Prompt; von den Quellen wird standardmäßig nur `hit_sources` angezeigt —
+die Treffer, die die Antwort tatsächlich getragen haben. `base_sources` (die
+Landkarten-Einträge) sind separat verfügbar, aber nicht Default-sichtbar,
+weil sie bei jeder Anfrage gleich groß sind und als "Quellen" nur Rauschen
+wären. `base_token_budget` wird intern auf `total_token_budget` gedeckelt;
+budgetiert wird der fertig formatierte Block inklusive der
+`### Quelle: ...`-Label-Zeilen, nicht nur der rohe Treffertext.
+
+**Eigentümer-Bindung**: `VAULT_OWNER_USER_ID` (Env-Var, optional). Gesetzt
+und `user_id` des Requests stimmt nicht überein → leerer Kontext, Logeintrag,
+kein Dateisystemzugriff. Leer/ungesetzt (Default) → kein Gate. Kein
+Pro-Nutzer-Vault-System — ein Vault, ein Eigentümer, keine Migration.
+
+**Zwei Aufrufer, ein Retrieval:**
+- `plan_service.get_vault_context_for_checkin(checkin, user_id)` —
+  Tagesplan-Prompt (`prompts/daily_plan.py`, `vault_context`-Parameter)
+  bekommt den Kontext als abgegrenzten Block mit der Anweisung, ihn als
+  Hintergrund zu nutzen und nichts zu erfinden. Ohne Vault verhält sich die
+  Plan-Generierung exakt wie vorher, Endpunkt-Signatur unverändert.
+- `routers/jarvis.py` — `POST /api/jarvis/chat`, authentifiziert über
+  `get_current_user`, `user_id` nie vom Client. Läuft durch dieselbe
+  Kostenobergrenze (`usage_service`, CP-203) wie die Tagesplan-Generierung —
+  Chat ist beliebig oft aufrufbar, ohne Cap ein offener Geldhahn.
+  Prompt-Konstruktion in `prompts/jarvis_chat.py`: Systemprompt zwingt
+  Deutsch, verbietet Erfindung, verlangt offenes Eingeständnis bei fehlendem
+  Wissen — und verbietet dem Modell explizit, selbst eine "Quellen:"-Zeile in
+  den Antworttext zu schreiben (das übernimmt die UI separat).
+
+**Frontend**: `/jarvis` (`frontend/app/jarvis/page.tsx` +
+`components/jarvis/JarvisChat.tsx`), geschützte Route im bestehenden
+AppShell (`ProtectedRoute`). Eingabefeld, Verlauf, Quellenliste unter jeder
+Antwort (nur `sources`, nicht `base_sources`), sichtbarer Lade-/Fehlerzustand
+mit Retry — nie stiller Mock-Fallback (siehe "Bekannte Risiken").
+
+**Response-Vertrag** (`app/models/jarvis.py`): `JarvisChatResponse` hat
+`suggested_actions: list[SuggestedAction]`, in v1 IMMER leer. `SuggestedAction`
+ist an `work_order.py`s Feldern ausgerichtet (`title`, `team_type`,
+`target_repo_name`, `risk`, `requires_approval`, `sources`) — Vorbereitung
+für Produktrichtung Schritt 3 (Command Layer,
+`docs/aufträge/JARVIS-C1 — Command Layer, der nächste sichtbare Ablauf.md`),
+noch nicht implementiert. Kein Auto-Ausführen von Aktionen aus dem Chat.
+
+**Tests**: `backend/tests/test_vault_service.py`,
+`test_daily_plan_vault_context.py`, `test_jarvis_router.py`,
+`test_jarvis_chat_prompt.py` — vier Dateien, pytest-discoverbar, laufen über
+`scripts/check.ps1` mit.
+
+**Prüfen**: `scripts/check.ps1` — ein Befehl, ohne Argumente, aus dem
+Repo-Root. Läuft nacheinander Backend-Pytest (`backend/tests`),
+Frontend-Type-Check und Frontend-Lint, gibt am Ende eine Zusammenfassung mit
+Exit-Code aus (0 = alles grün). `npm run build` ist bewusst nicht enthalten
+— scheitert ohne `.env` am Prerendering aller geschützten Seiten, das ist
+bekannt und kein Regressionssignal.
 
 ---
 
@@ -84,6 +168,12 @@ baut sie eine neue, parallele?
 ## Wichtige Befehle
 
 ```bash
+# Empfohlen: alles auf einmal prüfen, aus dem Repo-Root, ohne Argumente
+.\scripts\check.ps1
+# Läuft Backend-Pytest + Frontend-Type-Check + Frontend-Lint nacheinander,
+# Zusammenfassung + Exit-Code am Ende. npm run build bewusst nicht enthalten
+# (scheitert ohne .env am Prerendering aller geschützten Seiten).
+
 # Voller lokaler Dev-Start (öffnet 2 Fenster)
 ./start-dev.ps1
 # Backend: & <repo>\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000 (aus backend/)
@@ -96,55 +186,63 @@ npm run build         # Production-Build
 npm run lint          # ESLint (next lint)
 npm run type-check    # tsc --noEmit
 
-# Backend-Tests
+# Backend-Tests einzeln
 pip install -r backend/requirements-dev.txt   # pytest, einmalig
 python -m pytest backend/tests/ -v
 ```
 
 - **Kein Test-Framework im Frontend konfiguriert** (kein Jest/Vitest) — nichts erfinden.
 - **Kein Lint/Format-Tool im Backend** (kein ruff/black) — nichts erfinden.
-- Backend hat eine echte pytest-Suite: `backend/tests/` (2 Dateien, 13 Tests,
-  Setup über `backend/requirements-dev.txt`). `scripts/test_*.py` bleiben
-  separate, absichtlich stdlib-only Standalone-Skripte (`python scripts/
+- Backend hat eine echte pytest-Suite: `backend/tests/` (6 Dateien, davon 4
+  Jarvis-bezogen — siehe Abschnitt "Jarvis" —, Setup über
+  `backend/requirements-dev.txt`). `scripts/test_*.py` bleiben separate,
+  absichtlich stdlib-only Standalone-Skripte (`python scripts/
   test_bounded_retry.py` etc.) — nicht pytest-discoverbar, das ist Design,
   kein Fehlen.
-- Aktuelle Messlatte vor jedem Merge: `npm run lint && npm run type-check`
-  (Frontend) + `python -m pytest backend/tests/` + die drei `scripts/test_*.py`
-  + die beiden Subagents unten.
+- Aktuelle Messlatte vor jedem Merge: `scripts/check.ps1` + die drei
+  `scripts/test_*.py` + manuelle Kernflow-Prüfung im Browser.
 
 ## Projektstruktur
 
 ```
 frontend/
   app/            # dashboard, login, signup, morning, plans/[id], review, rules,
-                  # settings, projects, operator/, operator/new, operator/[id]
+                  # settings, projects, operator/, operator/new, operator/[id], jarvis/
   components/     # dashboard, layout, morning, plans, projects, review, rules, ui,
-                  # components/operator/*
+                  # components/operator/*, components/jarvis/JarvisChat.tsx
   lib/            # api.ts, auth.tsx, i18n.ts, supabase.ts, utils.ts,
                   # generateRunnerPrompt.ts, workOrderMapper.ts, mockWorkOrders.ts,
                   # safetyRules.ts, operatorStyles.ts
 
 backend/
-  app/routers/    # auth, health, checkins, plans, projects, reviews, rules, work_orders
+  app/routers/    # auth, health, checkins, plans, projects, reviews, rules,
+                  # work_orders, jarvis
   app/services/   # ai_service, checkin_service, plan_service, project_service,
-                  # review_service, usage_service, work_order_service
-  app/models/     # checkin, plan, project, review, rules, work_order
+                  # review_service, usage_service, work_order_service, vault_service
+  app/models/     # checkin, plan, project, review, rules, work_order, jarvis
   app/core/       # config.py, safety_rules.py
-  app/prompts/    # daily_plan.py — isolierte AI-Prompt-Konstruktion
+  app/prompts/    # daily_plan.py, jarvis_chat.py — isolierte AI-Prompt-Konstruktion
   app/db/         # client.py — Supabase-Client-Singleton
-  tests/          # pytest-Suite (test_work_order_transitions.py,
-                  # test_result_import_idempotency.py)
+  tests/          # pytest-Suite, 6 Dateien: test_work_order_transitions.py,
+                  # test_result_import_idempotency.py, test_vault_service.py,
+                  # test_daily_plan_vault_context.py, test_jarvis_router.py,
+                  # test_jarvis_chat_prompt.py
   requirements.txt, requirements-dev.txt  # dev-only: pytest
 
 supabase/
   schema.sql
   migrations/     # 001-012, sequenziell, alle auf main
 
-scripts/          # Lokale Runner-Harness: run_work_order.py, import_work_order_result.py,
-                  # runner_adapters/*, plus test_bounded_retry.py, test_import_result_integrity.py,
+scripts/          # check.ps1 — ein-Befehl-Prüfung, siehe "Wichtige Befehle".
+                  # Sonst: lokale Runner-Harness (run_work_order.py,
+                  # import_work_order_result.py, runner_adapters/*), plus
+                  # test_bounded_retry.py, test_import_result_integrity.py,
                   # test_agent_run_session.py (stdlib-only Standalone-Tests)
 
-docs/             # siehe "Docs-Index" unten
+docs/
+  aufträge/       # Auftragsdokumente für KI-Sessions (JARVIS-A1, -Q1, -C1 —
+                  # letztere zwei sind noch nicht bearbeitet)
+  # sonst siehe "Docs-Index" unten
 
 .claude/
   rules/          # frontend.md, backend.md, database.md — pfadspezifische Detailregeln
@@ -207,11 +305,12 @@ Kein automatisches Löschen der anderen ohne explizite Anweisung.
 ## Test-/Review-Regeln
 
 - Automatisierter Test-Stand vorhanden, aber schmal (siehe "Wichtige Befehle"):
-  `backend/tests/` (pytest) + `scripts/test_*.py` (stdlib) decken die
-  Operator-Control-Plane-Kernmechanik ab (State Machine, Bounded Retry,
-  Import-Idempotenz) — kein E2E-, kein Frontend-Test-Framework. Vor einem Merge:
-  `npm run lint && npm run type-check` + `python -m pytest backend/tests/` +
-  `scripts/test_*.py` + manuelle Prüfung der Kernflows.
+  `backend/tests/` (pytest, 6 Dateien) deckt Operator-Control-Plane-Kernmechanik
+  (State Machine, Bounded Retry, Import-Idempotenz) UND die Jarvis-Wissensschicht
+  (Retrieval, Budget, Ownership-Gate, Chat-Endpunkt/-Prompt) ab. `scripts/test_*.py`
+  (stdlib) bleiben separat für die Runner-Harness — kein E2E-, kein
+  Frontend-Test-Framework. Vor einem Merge: `scripts/check.ps1` +
+  `scripts/test_*.py` + manuelle Prüfung der Kernflows im Browser.
 - Für tiefere Prüfungen die beiden Subagents nutzen:
   - `commandpilot-regression-check` — Code-vs-Code (Interfaces, Schichtung, Auth,
     Migrationen, Kernflows).
@@ -230,6 +329,11 @@ Kein automatisches Löschen der anderen ohne explizite Anweisung.
 | `ai-usage-and-cost-audit.md` | Audit der AI-Kosten/-Nutzung |
 | `manual-e2e-checklist.md` | Manuelle Browser-E2E-Checkliste |
 | `background-operator-spike.md` | **Superseded** — nicht als aktuelles Design behandeln |
+
+`docs/aufträge/` (eigener Unterordner, nicht in der Tabelle oben): Auftragsdokumente
+für einzelne KI-Sessions — `JARVIS-A1` (Fundament/Findings, siehe Abschnitt "Jarvis"),
+`JARVIS-Q1` (Qualitätsnetz, zehn Testfälle) und `JARVIS-C1` (Command Layer). Q1 und C1
+sind zum Zeitpunkt dieses CLAUDE.md-Updates noch nicht bearbeitet.
 
 ## Bekannte Risiken
 
