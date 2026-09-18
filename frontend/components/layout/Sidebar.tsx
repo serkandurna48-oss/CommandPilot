@@ -64,15 +64,9 @@ export function Sidebar() {
         })}
       </nav>
 
-      {/* System Status Footer */}
+      {/* Footer */}
       <div className="px-4 py-4 border-t border-slate-800/50">
-        <div className="flex items-center gap-2 mb-1">
-          <div className="w-1.5 h-1.5 rounded-full bg-green-500/60 shrink-0" />
-          <p className="text-[9px] font-mono uppercase tracking-[0.2em] text-slate-600">
-            System Online
-          </p>
-        </div>
-        <p className="text-[9px] text-slate-600 font-mono pl-3.5 tracking-wider">
+        <p className="text-[9px] text-slate-600 font-mono tracking-wider">
           Private OS · v0.1
         </p>
       </div>
