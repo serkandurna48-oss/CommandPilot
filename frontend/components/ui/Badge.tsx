@@ -12,7 +12,7 @@ export function Badge({ label, lifeArea, className }: BadgeProps) {
 
   return (
     <span
-      className={cn("inline-flex items-center px-2 py-0.5 rounded text-xs font-medium", className)}
+      className={cn("inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium", className)}
       style={
         color
           ? { backgroundColor: `${color}25`, color, borderColor: `${color}40`, border: "1px solid" }
