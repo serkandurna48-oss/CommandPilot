@@ -14,6 +14,9 @@ class Settings(BaseSettings):
     # Optional: set a secret value to enable the /api/health/ai?ping=true probe.
     # If empty (default), the ping probe is disabled and returns 403.
     DEBUG_HEALTH_TOKEN: str = ""
+    # Absolute path to the second-brain Obsidian vault (read-only). Empty/unset
+    # or unreadable → vault_service returns empty context, never raises.
+    VAULT_PATH: str = ""
 
 
 settings = Settings()
