@@ -270,14 +270,33 @@ def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: boo
             print(f"FAIL step {step_id}: {exc}", file=sys.stderr)
             step_failures += 1
 
+    # A runner is never told the real AgentRun UUID (build_runner_prompt()
+    # only embeds ticketplan step ids) — so an `agentRunId` the runner fills
+    # in itself is a guess, and in practice that guess is one of these step
+    # ids (same shape as a real id, so parse_and_validate_result() can't
+    # catch it). Sent through unchanged, it fails the activity_log table's
+    # foreign key to agent_runs and the whole entry is silently dropped —
+    # observed for real: an 8/8 loss of a run's narrative on one import.
+    # Collecting the step ids here lets the fallback branch below recognize
+    # exactly this mix-up when there's no harness agent_run_id to prefer.
+    step_ids = {step["id"] for step in result.get("steps", []) if step.get("id")}
+
     for i, entry in enumerate(result.get("activityLogs", [])):
         # Backfill agentRunId so every log from this run hangs off its
         # AgentRun (OP-Runner-Session-001) — a copy, not a mutation, since
         # `result` may still be inspected/re-serialized by the caller after
-        # this function returns. Only fills entries the runner left blank;
-        # an explicit agentRunId the runner set itself is never overwritten.
-        if agent_run_id and not entry.get("agentRunId"):
+        # this function returns. The harness's own agent_run_id is always
+        # authoritative when known: it's a real, harness-created AgentRun
+        # row, whereas anything the runner puts in agentRunId itself is
+        # unverified (see step_ids comment above) — always override rather
+        # than only filling blanks. Only when there is no harness
+        # agent_run_id at all (a standalone/manual import) do we fall back
+        # to the runner-supplied value, and only after checking it isn't
+        # actually one of this result's own step ids.
+        if agent_run_id:
             entry = {**entry, "agentRunId": agent_run_id}
+        elif entry.get("agentRunId") in step_ids:
+            entry = {**entry, "agentRunId": None}
         dedup_key = position_dedup_key(agent_run_id, "activity_log", i)
         try:
             call_api(api_url, token, "POST", f"/api/work-orders/{work_order_id}/activity-log", activity_log_payload(entry, dedup_key), dry_run)

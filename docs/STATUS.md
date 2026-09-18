@@ -6,7 +6,7 @@
 
 ---
 
-## 2026-09-18 — JARVIS-M1 Phase 0: drei Befunde aus dem ersten echten Runner-Lauf
+## 2026-09-18 — JARVIS-M1 Phase 0: fünf Befunde aus den ersten beiden echten Runner-Läufen
 
 Kontext: erster echter `scripts/run_work_order.py --mode execute --adapter
 claude_code`-Lauf gegen ein neues Zielrepo (`C:\Users\serka\dev\cp-e2e-fixture`),
@@ -86,3 +86,68 @@ voneinander.
 
 **Status**: nur festgehalten, kein Fix in diesem Auftrag — eigener Auftrag
 später.
+
+### 4. `activityLogs[].agentRunId` — Runner rät die eigene AgentRun-ID falsch, FK-Verletzung verschluckt 8/8 Einträge — behoben in M1
+
+**Befund**: Der zweite Live-Lauf (`--max-budget-usd 1.50`, Ergebnis
+`blocked`) lieferte ein `result.json` mit 8 `activityLogs`-Einträgen — in
+**allen acht** stand im Feld `agentRunId` die ID des gerade bearbeiteten
+Ticketplan-Steps (z. B. `4ede8ae4-…` für "Product Agent"), nicht die echte
+AgentRun-ID (`46866555-…`). Grund: `build_runner_prompt()` teilt dem
+Runner die echte AgentRun-UUID nirgends mit — der Prompt enthält nur
+Step-IDs. Der Runner hat plausibel geraten und die einzige ID verwendet,
+die er kannte.
+
+`import_work_order_result.py` sendete diesen Wert unverändert weiter
+(`if agent_run_id and not entry.get("agentRunId")` — füllte nur Lücken,
+überschrieb nie einen vom Runner gesetzten Wert). Jeder der acht
+`POST .../activity-log`-Aufrufe verletzte damit die Fremdschlüssel-
+Beziehung `activity_log.agent_run_id → agent_runs.id` (eine Step-ID ist
+keine gültige AgentRun-ID) und scheiterte serverseitig mit HTTP 500. Das
+Skript zählt das nur als `log_failures` (blockiert nicht den
+`finalStatus`-Write), zeigt es aber im Terminal als `FAIL activity log
+entry: ...` — im gespeicherten Activity Log der Work Order fehlte danach
+die komplette Erzähl-Spur des Laufs (repo_inspected, plan_confirmed,
+code_edit ×2, test_run_failed, dependency_install_required,
+static_review_completed, run_completed — alle acht).
+
+**Warum das zählt**: Activity Log ist die einzige nachvollziehbare Spur
+dessen, was ein Agent tatsächlich getan hat — bei einem `blocked`- oder
+`failed`-Lauf oft wichtiger als die finalen Step-Summaries. Ein stiller
+8/8-Verlust untergräbt dieselbe Nachvollziehbarkeits-Eigenschaft wie
+Befund 1 oben, nur auf der Datenebene statt auf der Attributionsebene.
+
+**Fix (dieser Auftrag, JARVIS-M1)**: `import_work_order_result.py` —
+die harness-eigene `agent_run_id` (bekannt, weil `run_work_order.py` das
+AgentRun selbst angelegt hat) überschreibt jetzt IMMER, statt nur Lücken
+zu füllen. Nur wenn keine harness-eigene `agent_run_id` vorliegt (Stand-
+alone-Import), wird der vom Runner gesetzte Wert geprüft: stimmt er mit
+einer der `result.json`-eigenen Step-IDs überein, wird er verworfen
+(`None`) statt durchgereicht. Ein echter, fremder Wert bleibt in diesem
+Fall unangetastet. Drei neue Tests in
+`scripts/test_import_result_integrity.py::ActivityLogAgentRunIdMixupTests`
+pinnen genau diese drei Fälle; ein bestehender Test in
+`scripts/test_agent_run_session.py`, der noch das alte "nie überschreiben"-
+Verhalten erwartete, wurde auf den neuen Vertrag umgestellt.
+
+### 5. Fixture-Repo hat keine eigene Testumgebung — für Phase 2/3 einplanen
+
+**Befund**: Der Runner-Agent fand im Zielrepo `C:\Users\serka\dev\cp-e2e-fixture`
+kein `pytest` (weder venv noch System-Installation) und konnte das
+Akzeptanzkriterium "alle Tests grün" deshalb nicht verifizieren — korrekt
+als `blocked` statt als unverifizierten Erfolg gemeldet (kein Bug, siehe
+Übergabe `docs/übergaben/M1-phase0.md`). Der von der `claude`-CLI genutzte
+Python-Interpreter im Zielverzeichnis ist der System-Python, nicht
+`cp-multiagent\.venv` — jedes neue Zielrepo bringt standardmäßig keine
+lauffähige Testumgebung mit.
+
+**Warum das zählt**: Phase 2 (Isolation über Git-Worktrees) und Phase 3
+(zwei parallele Läufe) erzeugen neue Arbeitsverzeichnisse pro Auftrag. Ohne
+eine Vorkehrung für eine lauffähige Testumgebung pro Worktree landet jeder
+Lauf, der Tests verifizieren soll, standardmäßig auf `blocked` — nicht,
+weil der Agent etwas falsch macht, sondern weil die Umgebung fehlt.
+
+**Status**: nur festgehalten, kein Fix in diesem Auftrag — für Phase 2
+einplanen (z. B. Worktree-Setup inkl. venv/Dependency-Bootstrap, oder ein
+Vorbedingungs-Check, der das fehlende Testtooling schon vor dem Start
+meldet statt es den Agenten in jedem Lauf neu entdecken zu lassen).

@@ -234,13 +234,19 @@ class ImportResultAgentRunTests(unittest.TestCase):
         self.assertEqual(len(log_calls), 1)
         self.assertEqual(log_calls[0].args[4].get("agent_run_id"), "run-1")
 
-    def test_activity_log_explicit_agent_run_id_not_overwritten(self):
+    def test_activity_log_runner_supplied_agent_run_id_is_overridden_by_the_harness_one(self):
+        # A runner is never told the real AgentRun UUID, so an agentRunId
+        # it fills in itself is unverified — the harness's own known
+        # agent_run_id always wins now (see scripts/test_import_result_integrity.py::
+        # ActivityLogAgentRunIdMixupTests for the full rationale/regression
+        # this pins: a step id landing here used to fail a foreign key and
+        # silently drop the log entry).
         result = _valid_result(activityLogs=[
             {"level": "info", "eventType": "run_completed", "message": "ok", "agentRunId": "other-run"},
         ])
         exit_code, mock_call = self._run(result, agent_run_id="run-1")
         log_calls = [c for c in mock_call.call_args_list if c.args[3] == "/api/work-orders/wo-1/activity-log"]
-        self.assertEqual(log_calls[0].args[4].get("agent_run_id"), "other-run")
+        self.assertEqual(log_calls[0].args[4].get("agent_run_id"), "run-1")
 
     def test_agent_run_patch_failure_does_not_crash_or_change_exit_code_meaning(self):
         result = _valid_result()
