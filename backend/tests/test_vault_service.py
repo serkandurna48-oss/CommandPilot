@@ -185,3 +185,40 @@ def test_invalid_utf8_in_base_context_entity_note_is_skipped(tmp_path):
     files = {m.source_file for m in matches}
     assert "Projekte/CommandPilot.md" in files
     assert "Projekte/Broken.md" not in files
+
+
+# ── Budget capping (JARVIS-A1, Aufgabe 4) ────────────────────────────────────────
+def test_base_budget_capped_to_total_budget_codex_repro(tmp_path):
+    # Reproduction from the Codex finding: a 10,000-char 00-Index.md with the
+    # default base_token_budget (1200, i.e. 4800 chars) must not be allowed
+    # to blow past a much smaller total_token_budget. Before the fix,
+    # get_base_context() ignored total_token_budget entirely.
+    (tmp_path / "Projekte").mkdir()
+    (tmp_path / "Menschen").mkdir()
+    (tmp_path / "00-Index.md").write_text("Index " * 1700, encoding="utf-8")  # ~10,200 chars
+
+    total_token_budget = 50  # 200 chars
+    block, _ = vault_service.get_context_for_query(
+        "irrelevant query", total_token_budget=total_token_budget, vault_path=str(tmp_path)
+    )
+    # +len(header) for the "### Quelle: 00-Index.md\n" prefix, +1 for the "…" truncation marker.
+    max_expected = total_token_budget * vault_service._CHARS_PER_TOKEN + len("### Quelle: 00-Index.md\n") + 1
+    assert len(block) <= max_expected
+
+
+def test_formatted_header_counts_against_budget(tmp_path):
+    # A match whose source label is long relative to its budget must not let
+    # the header push the total formatted output over budget — the header
+    # itself has to count, not just the raw match text.
+    (tmp_path / "Projekte").mkdir()
+    (tmp_path / "Menschen").mkdir()
+    (tmp_path / "00-Index.md").write_text("x", encoding="utf-8")
+    long_name = "A" * 100
+    (tmp_path / "Projekte" / f"{long_name}.md").write_text(
+        f"# {long_name}\n\n## Section\n\n{'word ' * 500}", encoding="utf-8"
+    )
+
+    token_budget = 30  # 120 chars — smaller than the header itself would be uncapped
+    matches = vault_service.retrieve_context("word", token_budget=token_budget, vault_path=str(tmp_path))
+    formatted = vault_service.format_context_block(matches)
+    assert len(formatted) <= token_budget * vault_service._CHARS_PER_TOKEN + 1  # +1 for "…"

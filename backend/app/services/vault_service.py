@@ -139,19 +139,36 @@ def _iter_content_files(root: Path):
             yield from sorted(dir_path.glob("*.md"))
 
 
+def _match_header(m: VaultMatch) -> str:
+    """The "### Quelle: ..." line format_context_block prefixes each match with."""
+    label = m.source_file if not m.source_heading else f"{m.source_file} — {m.source_heading}"
+    return f"### Quelle: {label}\n"
+
+
 def _cap_to_budget(matches: list[VaultMatch], token_budget: int) -> list[VaultMatch]:
+    """
+    Cap matches to token_budget, accounting for the fully formatted output —
+    each match's "### Quelle: ..." header (see format_context_block) plus the
+    "\\n\\n" separator between entries — not just the raw match text. Budgets
+    are meant to bound what actually gets sent to the model, not an
+    approximation of it (JARVIS-A1, Aufgabe 4).
+    """
     budget_chars = max(token_budget, 0) * _CHARS_PER_TOKEN
     capped: list[VaultMatch] = []
     used = 0
     for m in matches:
-        remaining = budget_chars - used
+        separator_len = 2 if capped else 0  # "\n\n" between entries, none before the first
+        overhead = separator_len + len(_match_header(m))
+        remaining = budget_chars - used - overhead
         if remaining <= 0:
             break
         if len(m.text) > remaining:
-            capped.append(VaultMatch(m.text[:remaining] + "…", m.source_file, m.source_heading, m.score))
+            truncated = VaultMatch(m.text[:remaining] + "…", m.source_file, m.source_heading, m.score)
+            capped.append(truncated)
+            used += overhead + len(truncated.text)
             break
         capped.append(m)
-        used += len(m.text)
+        used += overhead + len(m.text)
     return capped
 
 
@@ -235,11 +252,7 @@ def format_context_block(matches: list[VaultMatch]) -> str:
     """Render matches as a clearly delimited block, each entry tagged with its source."""
     if not matches:
         return ""
-    parts = []
-    for m in matches:
-        label = m.source_file if not m.source_heading else f"{m.source_file} — {m.source_heading}"
-        parts.append(f"### Quelle: {label}\n{m.text}")
-    return "\n\n".join(parts)
+    return "\n\n".join(f"{_match_header(m)}{m.text}" for m in matches)
 
 
 def get_context_for_query(
@@ -255,6 +268,12 @@ def get_context_for_query(
     ([{"file": ..., "heading": ...}, ...]).
     Empty/unreadable vault → ("", []). Never raises.
 
+    base_token_budget is capped to total_token_budget (JARVIS-A1, Aufgabe 4)
+    — a caller passing a small total_token_budget with the default
+    base_token_budget=1200 gets a context block bounded by total_token_budget,
+    not one that silently balloons to the base default regardless of what was
+    asked for.
+
     Ownership gate (JARVIS-A1, Aufgabe 2): if settings.VAULT_OWNER_USER_ID is
     set and user_id doesn't match it, returns ("", []) without touching the
     filesystem — the caller must pass the requesting user's id through here,
@@ -269,7 +288,8 @@ def get_context_for_query(
         )
         return "", []
 
-    base_matches = get_base_context(base_token_budget, vault_path)
+    effective_base_budget = min(base_token_budget, total_token_budget)
+    base_matches = get_base_context(effective_base_budget, vault_path)
     hits_budget = max(total_token_budget - base_token_budget, 0)
     hit_matches = retrieve_context(query, hits_budget, vault_path)
 
