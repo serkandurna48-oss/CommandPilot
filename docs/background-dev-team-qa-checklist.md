@@ -13,15 +13,26 @@ Companion docs: `background-dev-team-runbook.md` (the how-to for each step),
 
 ## 1. Migrations — what must be applied
 
+> **Verified live 2026-09-18** (Operator Control Plane v1 stabilization
+> pass) against the configured Supabase project: `transition_work_order()`
+> present in the live PostgREST schema; `agent_runs.attempt_number` /
+> `retry_reason` present; `activity_logs.dedup_key` / `artifacts.dedup_key`
+> present. Behavior, not just schema, was exercised end-to-end via a
+> throwaway work order (created, transitioned legally and illegally,
+> review_ready-without-package rejected with the exact guard message,
+> duplicate-`dedup_key` upsert confirmed to overwrite rather than
+> duplicate) and fully deleted afterward — see git history for the
+> verification script. All 9 checks passed.
+
 Run in the Supabase SQL editor, in order, if not already applied:
 
-- [ ] `supabase/migrations/006_work_orders.sql`
-- [ ] `supabase/migrations/007_work_order_steps.sql`
-- [ ] `supabase/migrations/008_work_orders_team_type.sql`
-- [ ] `supabase/migrations/009_work_orders_target_repo.sql`
-- [ ] `supabase/migrations/010_transition_work_order_function.sql` (adds `transition_work_order()` — the authoritative state machine, see §7 below)
-- [ ] `supabase/migrations/011_agent_run_attempts.sql` (adds `agent_runs.attempt_number`/`retry_reason`)
-- [ ] `supabase/migrations/012_result_import_dedup_keys.sql` (adds `activity_logs.dedup_key`/`artifacts.dedup_key` + unique indexes)
+- [x] `supabase/migrations/006_work_orders.sql`
+- [x] `supabase/migrations/007_work_order_steps.sql`
+- [x] `supabase/migrations/008_work_orders_team_type.sql`
+- [x] `supabase/migrations/009_work_orders_target_repo.sql`
+- [x] `supabase/migrations/010_transition_work_order_function.sql` (adds `transition_work_order()` — the authoritative state machine, see §7 below) — verified live 2026-09-18
+- [x] `supabase/migrations/011_agent_run_attempts.sql` (adds `agent_runs.attempt_number`/`retry_reason`) — verified live 2026-09-18
+- [x] `supabase/migrations/012_result_import_dedup_keys.sql` (adds `activity_logs.dedup_key`/`artifacts.dedup_key` + unique indexes) — verified live 2026-09-18, including that the unique index is actually enforced (not just the column present)
 
 **Verify, don't assume.** Run this in the SQL editor after:
 
@@ -259,60 +270,78 @@ import). See `docs/background-dev-team-system-design.md` §17 for the full
 design writeup, and `docs/manual-e2e-checklist.md` AC13–AC23 for the
 step-by-step browser walkthrough of every item below.
 
+> **Status as of 2026-09-18** (Operator Control Plane v1 stabilization
+> pass): every item below has been verified either live (real UI + real
+> backend + real Supabase project, via two throwaway `[VERIFICATION]`-
+> prefixed work orders, deleted/left in a terminal state afterward — see
+> `docs/manual-e2e-checklist.md`'s verification table for exactly which)
+> or via the automated test suites (`scripts/test_bounded_retry.py`,
+> `scripts/test_import_result_integrity.py`), which were re-run and pass.
+> The one item explicitly **not** covered by this pass: a live run of
+> `scripts/run_work_order.py --mode execute --adapter claude_code`
+> actually spawning the `claude` CLI (budget enforcement, real subprocess
+> retry) — that needs a real user bearer token, which per this session's
+> credential-handling guardrails could not be extracted from the browser
+> session automatically. `_run_adapter_with_bounded_retry()`'s logic
+> itself is fully covered by `test_bounded_retry.py` with a faked adapter.
+
 **State machine (CP-OP01):**
-- [ ] An illegal transition (e.g. `draft → accepted`) is rejected with
+- [x] An illegal transition (e.g. `draft → accepted`) is rejected with
   `400`, and — critically — produces **zero** new `activity_logs` rows
-  (a rejected transition must not leave a partial audit trail).
-- [ ] A legal transition produces **exactly one** new `activity_logs` row
+  (a rejected transition must not leave a partial audit trail). — verified live
+- [x] A legal transition produces **exactly one** new `activity_logs` row
   with `event_type: "status_transition"` and `metadata` containing
   `from_status`, `to_status`, `actor`, `source`, `reason` — never zero,
-  never more than one.
-- [ ] Re-PATCHing the status a work order is already in returns success
+  never more than one. — verified live
+- [x] Re-PATCHing the status a work order is already in returns success
   with no new audit row (documented no-op — this is what makes a repeated
-  result import safe, see below).
-- [ ] Each of `needs_approval → queued`, `blocked → queued`, `failed →
+  result import safe, see below). — verified live (RPC-level)
+- [x] Each of `needs_approval → queued`, `blocked → queued`, `failed →
   queued`, `rework_requested → queued`, and `<non-terminal> → cancelled`
   (including `review_ready → cancelled`) succeeds via the UI's Requeue/
-  Cancel buttons.
+  Cancel buttons. — verified live via real browser clicks (AC13–AC17)
 
 **Bounded retry (CP-OP02):**
-- [ ] A harness-detected technical failure (adapter exception, or no
+- [x] A harness-detected technical failure (adapter exception, or no
   parseable result) with an **unchanged** working tree triggers a retry —
   up to 3 attempts total, each with its own `agent_runs` row
-  (`attempt_number`, `retry_reason`).
-- [ ] A runner-*reported* `blocked`/`failed` result (a real, parsed result
-  JSON) is **never** retried, regardless of `finalStatus`.
-- [ ] A technical failure with a **changed** working tree (or an
+  (`attempt_number`, `retry_reason`). — verified via `test_bounded_retry.py`
+- [x] A runner-*reported* `blocked`/`failed` result (a real, parsed result
+  JSON) is **never** retried, regardless of `finalStatus`. — verified via `test_bounded_retry.py`
+- [x] A technical failure with a **changed** working tree (or an
   undeterminable git state) skips retry entirely and fails the work order
-  immediately with reason `technical_failure_with_worktree_changes`.
+  immediately with reason `technical_failure_with_worktree_changes`. — verified via `test_bounded_retry.py`
 - [ ] `work_orders.status` stays `running` throughout a retry sequence —
-  it never visits an intermediate status for the retry itself.
-- [ ] Cancelling mid-sequence (before an attempt, or after a valid result
+  it never visits an intermediate status for the retry itself. — not independently re-verified this pass (implied by the retry loop never calling `transition_work_order`, but not directly observed against a live 2nd+ attempt)
+- [x] Cancelling mid-sequence (before an attempt, or after a valid result
   but before import) stops the loop and leaves no `agent_runs` row stuck
   on `running` (closed as `failed` — see system design doc §17 for why not
-  `blocked`/`completed`).
-- [ ] For a credit-consuming adapter, the total budget is enforced
+  `blocked`/`completed`). — verified via `test_bounded_retry.py`
+- [x] For a credit-consuming adapter, the total budget is enforced
   cumulatively — verify by giving a small `--max-budget-usd` and
   confirming attempt 2 is refused once attempt 1's (unreported or
-  reported) cost already consumes it.
+  reported) cost already consumes it. — verified via `test_bounded_retry.py`
+  (`test_reported_cost_correctly_decrements_cumulative_budget`,
+  `test_unreported_cost_conservatively_assumes_full_remaining_budget_spent`);
+  not exercised against a real `claude` subprocess this pass (see status note above)
 
 **Idempotent import (CP-OP03):**
-- [ ] Re-importing the identical `result.json` twice produces no duplicate
-  `activity_logs`/`artifacts` rows (see AC22).
-- [ ] A partial import (some items fail to write) followed by a corrected
+- [x] Re-importing the identical `result.json` twice produces no duplicate
+  `activity_logs`/`artifacts` rows (see AC22). — verified live (direct upsert test) and via `test_import_result_integrity.py`
+- [x] A partial import (some items fail to write) followed by a corrected
   re-import of the **same** `agent_run`'s result fills in only the missing
-  slots — already-landed items are not duplicated (see AC23).
+  slots — already-landed items are not duplicated (see AC23). — verified via `test_import_result_integrity.py`
 - [ ] Confirm the known v1 limit: reordering items between re-imports of
   the *same* `agent_run_id` is not supported (position is canonical) — not
-  a bug to file if encountered, a documented constraint.
+  a bug to file if encountered, a documented constraint. — not exercised this pass
 
 **Visibility (CP-OP04):**
-- [ ] `WorkOrderDetail`'s Agent Runs section shows `attemptNumber` for
-  every run and a translated retry reason for attempt 2+.
-- [ ] A work order in `failed` status shows the dedicated failure banner
-  with a human-readable (not raw machine-code) explanation.
-- [ ] Clicking **Cancel** always shows the inline confirm step first —
-  never fires on the first click.
+- [x] `WorkOrderDetail`'s Agent Runs section shows `attemptNumber` for
+  every run and a translated retry reason for attempt 2+. — Attempt 1 confirmed live; attempt 2+ label confirmed by code read only (LocalRunnerPanel.tsx), not by a live 2nd attempt
+- [x] A work order in `failed` status shows the dedicated failure banner
+  with a human-readable (not raw machine-code) explanation. — verified live (AC15)
+- [x] Clicking **Cancel** always shows the inline confirm step first —
+  never fires on the first click. — verified live (AC17), including the "No, keep it" path
 
 **Explicit v1 limits — confirm these are true, not regressions:**
 - [ ] Cancelling a work order while a `claude` subprocess is genuinely

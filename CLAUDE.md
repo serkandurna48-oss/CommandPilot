@@ -14,50 +14,56 @@ persönliche Regeln, die die KI berücksichtigt, und schließen den Tag mit eine
 Abendreview ab. Alles wird pro authentifiziertem Nutzer/Workspace in Supabase
 persistiert.
 
-**Zwei Module, beide vollständig in `main`:**
+**Zwei Module, beide vollständig auf `main`** (Operator Control Plane per
+Fast-Forward-Merge nach `77e18cb` am 18.09. auf `main` gemerged und gepusht —
+frühere "[nur auf feat/operator-control-plane]"-Markierungen sind hinfällig):
 
 1. **Daily Planner** — der stabile Kern (Check-ins, AI-Pläne, Reviews, Rules,
    Projects).
 2. **Operator Control Plane / "Background Dev Team"** — Work-Order-gesteuerte
-   Ausführung von Coding-Agents über lokale Runner-Adapter.
-
-Seit dem 18.09.2026 gibt es genau einen Trunk: `feat/operator-control-plane` wurde
-per Fast-Forward nach `main` gemerged und gepusht. Es gibt keine Branch-Gates mehr
-("nur auf …") — alles unten Beschriebene existiert in jedem `main`-Checkout.
+   Ausführung von Coding-Agents über lokale Runner-Adapter (`backend/app/routers/
+   work_orders.py`, `scripts/run_work_order.py`, `docs/`).
 
 ---
 
 ## System-Kontext
 
-CommandPilot ist der Kern eines Systems aus drei Repos:
+CommandPilot ist der Kern, nicht das einzige System:
 
-- **CommandPilot** (dieses Repo) — Daily Planner + Operator Control Plane.
-- **secondbrain** — ein Obsidian-Vault mit dauerhaftem qualitativem Wissen über
-  den Nutzer: Ziele, Projekte, Menschen, Entscheidungen, Gesundheit, Tools.
-  Vertrag laut dessen eigener CLAUDE.md: **CommandPilot liest das Vault als
-  Kontextquelle, niemals umgekehrt.**
-- **CampPilot / Sommercamps** — eigenständiges Kundenprodukt, kein Teil von
-  Jarvis, aber der erste echte Auftraggeber für Operator-Automatisierung.
+- **CommandPilot** (dieses Repo) — Tagesplanung + Operator Control Plane, der
+  aktive Arbeitsraum.
+- **secondbrain-Vault** — die Wissensschicht. Vertrag: **CommandPilot liest das
+  Vault, nie umgekehrt.** Das Vault ist keine Datenbank, die CommandPilot
+  beschreibt.
+- **CampPilot** — eigenständiges Kundenprodukt, kein Modul von CommandPilot.
+  Nicht mit CommandPilots Operator Control Plane verwechseln, auch wenn
+  Work Orders CampPilot als Target-Repo referenzieren können.
 
-Source of Truth bleibt außerhalb dieses Systems: Notion (Aufgaben, Status),
-GitHub (Code), Google Calendar (Termine), Mail (Korrespondenz). Nichts davon
-wird gespiegelt, nur referenziert.
+Source of Truth für externe Information bleibt außerhalb dieses Systems: Notion,
+GitHub, Kalender, Mail. Nichts davon wird nach CommandPilot gespiegelt oder
+dupliziert — es wird referenziert, wenn gebraucht, nicht vorab synchronisiert.
 
 ## Produktrichtung
 
-Reihenfolge ist bindend — nicht vorgreifen, nicht überspringen:
+Bindende Reihenfolge für die nächsten Ausbaustufen:
 
-1. Text-Chat mit Second-Brain-Kontext und Quellenangaben
-2. Aktionssystem mit Vorschau und expliziter Bestätigung
-3. gemeinsames Dashboard
-4. Spracheingabe/-ausgabe auf denselben Assistenten
-5. Integrationen (Notion, Kalender, GitHub, Mail) und proaktive Automationen
-6. Hintergrundagenten innerhalb der bestehenden Safety Rules
+1. Second-Brain-Kontext in die Tagesplanung holen.
+2. Text-Chat auf derselben Retrieval-Funktion wie (1) — keine zweite,
+   parallele Kontext-Pipeline.
+3. Aktionen mit Vorschau und Bestätigung — nichts wird ausgeführt, ohne dass der
+   Mensch vorher sieht, was passieren würde.
+4. Dashboard.
+5. Sprache.
+6. Integrationen.
+7. Hintergrundagenten — innerhalb der bestehenden Safety Rules
+   (`backend/app/core/safety_rules.py`, Approval Scopes), nicht als
+   Erweiterung, die sie umgeht.
 
-**Architekturprinzip:** Oberflächen sind austauschbar, Tools und Retrieval sind
-das Vermögen. Retrieval- und Kernlogik dürfen keine Oberfläche kennen — Chat,
-Sprache und Dashboard rufen dieselben Funktionen auf. Wer das bricht, baut
-zweimal.
+**Architekturprinzip:** Oberflächen sind austauschbar, Retrieval und Kern sind
+das eigentliche Vermögen. Chat, Sprache und Dashboard rufen dieselben
+Kernfunktionen auf — keine oberflächenspezifische Logik-Duplikation. Bei jeder
+neuen Oberfläche zuerst prüfen: ruft sie eine bestehende Kernfunktion auf, oder
+baut sie eine neue, parallele?
 
 ---
 
@@ -80,7 +86,7 @@ zweimal.
 ```bash
 # Voller lokaler Dev-Start (öffnet 2 Fenster)
 ./start-dev.ps1
-# Backend: <repo>\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000 (aus backend/)
+# Backend: & <repo>\.venv\Scripts\python.exe -m uvicorn app.main:app --reload --port 8000 (aus backend/)
 # Frontend: npm run dev (aus frontend/)
 
 # Frontend einzeln
@@ -91,25 +97,20 @@ npm run lint          # ESLint (next lint)
 npm run type-check    # tsc --noEmit
 
 # Backend-Tests
-cd backend
-pip install -r requirements-dev.txt   # zieht pytest==8.3.4
-python -m pytest tests/               # backend/tests/ — pytest-Suite
+pip install -r backend/requirements-dev.txt   # pytest, einmalig
+python -m pytest backend/tests/ -v
 ```
 
 - **Kein Test-Framework im Frontend konfiguriert** (kein Jest/Vitest) — nichts erfinden.
 - **Kein Lint/Format-Tool im Backend** (kein ruff/black) — nichts erfinden.
-- Backend hat seit Kurzem eine **pytest-Suite unter `backend/tests/`**
-  (`test_work_order_transitions.py`, `test_result_import_idempotency.py`) —
-  stdlib-only (`unittest`/`unittest.mock`), aber pytest-discoverbar; dafür
-  existiert `backend/requirements-dev.txt`. Diese Tests faken den
-  Supabase-Client komplett — sie ersetzen keine manuelle Prüfung gegen ein
-  echtes Supabase-Projekt.
-- `scripts/test_*.py` (`test_agent_run_session.py`, `test_bounded_retry.py`,
-  `test_import_result_integrity.py`) sind weiterhin manuelle
-  Standalone-Skripte der Runner-Harness (`python scripts/test_*.py`), bewusst
-  getrennt von der pytest-Suite in `backend/tests/`.
-- Messlatte vor jedem Merge: `npm run lint && npm run type-check` (Frontend) +
-  `python -m pytest tests/` (Backend) + manuelle Endpoint-Prüfung.
+- Backend hat eine echte pytest-Suite: `backend/tests/` (2 Dateien, 13 Tests,
+  Setup über `backend/requirements-dev.txt`). `scripts/test_*.py` bleiben
+  separate, absichtlich stdlib-only Standalone-Skripte (`python scripts/
+  test_bounded_retry.py` etc.) — nicht pytest-discoverbar, das ist Design,
+  kein Fehlen.
+- Aktuelle Messlatte vor jedem Merge: `npm run lint && npm run type-check`
+  (Frontend) + `python -m pytest backend/tests/` + die drei `scripts/test_*.py`
+  + die beiden Subagents unten.
 
 ## Projektstruktur
 
@@ -118,31 +119,43 @@ frontend/
   app/            # dashboard, login, signup, morning, plans/[id], review, rules,
                   # settings, projects, operator/, operator/new, operator/[id]
   components/     # dashboard, layout, morning, plans, projects, review, rules, ui,
-                  # operator/*
+                  # components/operator/*
   lib/            # api.ts, auth.tsx, i18n.ts, supabase.ts, utils.ts,
                   # generateRunnerPrompt.ts, workOrderMapper.ts, mockWorkOrders.ts,
                   # safetyRules.ts, operatorStyles.ts
 
-backend/app/
-  routers/        # auth, health, checkins, plans, projects, reviews, rules,
-                  # work_orders
-  services/       # ai_service, checkin_service, plan_service, project_service,
+backend/
+  app/routers/    # auth, health, checkins, plans, projects, reviews, rules, work_orders
+  app/services/   # ai_service, checkin_service, plan_service, project_service,
                   # review_service, usage_service, work_order_service
-  models/         # checkin, plan, project, review, rules, work_order
-  core/           # config.py, safety_rules.py
-  prompts/        # daily_plan.py — isolierte AI-Prompt-Konstruktion
-  db/             # client.py — Supabase-Client-Singleton
-backend/tests/    # pytest-Suite (siehe "Wichtige Befehle")
+  app/models/     # checkin, plan, project, review, rules, work_order
+  app/core/       # config.py, safety_rules.py
+  app/prompts/    # daily_plan.py — isolierte AI-Prompt-Konstruktion
+  app/db/         # client.py — Supabase-Client-Singleton
+  tests/          # pytest-Suite (test_work_order_transitions.py,
+                  # test_result_import_idempotency.py)
+  requirements.txt, requirements-dev.txt  # dev-only: pytest
 
 supabase/
   schema.sql
-  migrations/     # 001–012, fortlaufend
+  migrations/     # 001-012, sequenziell, alle auf main
 
-scripts/          # Lokale Runner-Harness (run_work_order.py,
-                  # import_work_order_result.py, runner_adapters/*, test_*.py)
+scripts/          # Lokale Runner-Harness: run_work_order.py, import_work_order_result.py,
+                  # runner_adapters/*, plus test_bounded_retry.py, test_import_result_integrity.py,
+                  # test_agent_run_session.py (stdlib-only Standalone-Tests)
 
 docs/             # siehe "Docs-Index" unten
+
+.claude/
+  rules/          # frontend.md, backend.md, database.md — pfadspezifische Detailregeln
+  agents/         # commandpilot-regression-check.md, architecture-consistency-check.md
+
+AGENTS.md         # Agent-Konventionen für dieses Repo (Codex/generisches Format)
 ```
+
+Vor jeder Annahme über einen Pfad oben: prüfen, ob er im aktuellen Checkout wirklich
+existiert (`git worktree list` / `git branch -vv`) — dieses Repo wird häufig über
+mehrere Git-Worktrees/Branches parallel bearbeitet.
 
 ## Auth-/Security-Grundregeln
 
@@ -159,13 +172,13 @@ docs/             # siehe "Docs-Index" unten
 
 ## DB-/Migration-Regeln
 
-- `supabase/migrations/NNN_beschreibung.sql`, sequenziell nummeriert (aktuell
-  001–012), manuell in der Supabase SQL Editor ausgeführt.
+- `supabase/migrations/NNN_beschreibung.sql`, sequenziell nummeriert, manuell in der
+  Supabase SQL Editor ausgeführt. Aktueller Stand: 001–012, alle auf `main`.
 - Standard: idempotent (`IF NOT EXISTS`-Guards). Bekannte Ausnahmen:
-  `004_ai_usage_log.sql` und `006_work_orders.sql` (`CREATE POLICY` ohne Guard,
-  pre-PG15) — beide nur einmal ausführen.
-- Detaillierte Regeln (RLS-Pattern, README-Sync-Pflicht): siehe README.md
-  (`.claude/rules/database.md` existiert in diesem Checkout nicht).
+  `004_ai_usage_log.sql` und `006_work_orders.sql` (beide CREATE POLICY ohne Guard)
+  — beide nur einmal ausführen.
+- Detaillierte Regeln (RLS-Pattern, README-Sync-Pflicht): siehe
+  `.claude/rules/database.md`.
 
 ## Python-Environment (venv)
 
@@ -178,15 +191,14 @@ Kein automatisches Löschen der anderen ohne explizite Anweisung.
 
 ## Git-/Branch-Regeln
 
-- **`main` ist der einzige Trunk** und enthält Daily Planner + Operator Control
-  Plane vollständig. `feat/operator-control-plane` wurde am 18.09.2026 per
-  Fast-Forward gemergt und gepusht.
-- Es existiert daneben ein alter, **nicht gemergter** Branch
-  `origin/chore/commandpilot-ai-setup` (zweigt vor dem Operator-Control-Plane-
-  Merge ab). Er enthält eine ältere Fassung dieser Datei sowie
-  `.claude/agents/*.md`, `.claude/rules/*.md` und `AGENTS.md` — keines davon
-  ist aktuell in `main`. Vor einer Übernahme dieser Dateien nach `main`
-  gegen den jetzigen Stand prüfen, nicht blind mergen.
+- `main` = vollständiger Stand (Daily Planner + Operator Control Plane), seit dem
+  Fast-Forward-Merge von `feat/operator-control-plane` nach `77e18cb` (18.09.,
+  gepusht). `feat/operator-control-plane` existiert als Branch weiter, ist aber
+  vollständig in `main` enthalten — nicht mehr die "fortgeschrittenere" Quelle.
+- `chore/commandpilot-ai-setup` ist als eigener Worktree unter
+  `Projekte/commandpilot-ai-setup` ausgecheckt — Quelle für `.claude/`, `AGENTS.md`,
+  `CLAUDE.md` (dieses Dokument), bis diese Dateien vollständig auf `main` gepflegt
+  werden.
 - Dieses Repo wird häufig in mehreren Git-Worktrees parallel ausgecheckt — vor
   Annahmen über vorhandene Dateien `git worktree list` prüfen.
 - Nie ungefragt mergen, rebasen oder pushen. Ein Thema, ein Commit. Nichts committen
@@ -194,21 +206,19 @@ Kein automatisches Löschen der anderen ohne explizite Anweisung.
 
 ## Test-/Review-Regeln
 
-- Backend hat eine kleine pytest-Suite (`backend/tests/`, siehe "Wichtige
-  Befehle") plus manuelle Standalone-Skripte (`scripts/test_*.py`). Frontend
-  hat weiterhin keinen automatisierten Test-Stand.
-- Vor einem Merge: `npm run lint && npm run type-check` + `python -m pytest
-  tests/` (Backend) + manuelle Prüfung der Kernflows.
-- Die frühere Doku verwies hier auf zwei Subagents
-  (`commandpilot-regression-check`, `architecture-consistency-check`) unter
-  `.claude/agents/`. Diese existieren in diesem `main`-Checkout **nicht** —
-  sie liegen nur auf dem unmerged Branch `chore/commandpilot-ai-setup` (siehe
-  "Git-/Branch-Regeln"). Nicht referenzieren, bis geklärt ist, ob sie
-  übernommen werden.
+- Automatisierter Test-Stand vorhanden, aber schmal (siehe "Wichtige Befehle"):
+  `backend/tests/` (pytest) + `scripts/test_*.py` (stdlib) decken die
+  Operator-Control-Plane-Kernmechanik ab (State Machine, Bounded Retry,
+  Import-Idempotenz) — kein E2E-, kein Frontend-Test-Framework. Vor einem Merge:
+  `npm run lint && npm run type-check` + `python -m pytest backend/tests/` +
+  `scripts/test_*.py` + manuelle Prüfung der Kernflows.
+- Für tiefere Prüfungen die beiden Subagents nutzen:
+  - `commandpilot-regression-check` — Code-vs-Code (Interfaces, Schichtung, Auth,
+    Migrationen, Kernflows).
+  - `architecture-consistency-check` — Doku-vs-Code (README/docs vs. echte
+    Struktur, Mock-Fallback-Risiken, veraltete Annahmen).
 
 ## Docs-Index
-
-`docs/` existiert in `main`:
 
 | Datei | Inhalt |
 |---|---|
@@ -223,12 +233,23 @@ Kein automatisches Löschen der anderen ohne explizite Anweisung.
 
 ## Bekannte Risiken
 
-- **Safety-Rules dreifach dupliziert**: `frontend/lib/safetyRules.ts` (nur
-  Anzeige) vs. `backend/app/core/safety_rules.py` (echte Enforcement) vs.
-  Runner-Prompt-Text — Drift-Risiko. Bei Änderungen an Approval-Scopes zuerst
-  `safety_rules.py` ändern, dann synchronisieren.
-- **Mock-Fallback-Risiko**: `frontend/lib/mockWorkOrders.ts` kann bei
-  API-Fehlern still auf Mock-Daten zurückfallen und echte Fehler verdecken —
-  nie ohne sichtbaren Fehlerzustand.
+- **Safety-Rules dreifach dupliziert**: `frontend/lib/safetyRules.ts` (nur Anzeige)
+  vs. `backend/app/core/safety_rules.py` (echte Enforcement) vs. Runner-Prompt-Text
+  — Drift-Risiko. Bei Änderungen an Approval-Scopes zuerst `safety_rules.py`
+  ändern, dann synchronisieren.
+- **Mock-Fallback-Risiko**: `frontend/lib/mockWorkOrders.ts` kann bei API-Fehlern
+  still auf Mock-Daten zurückfallen und echte Fehler verdecken — nie ohne
+  sichtbaren Fehlerzustand.
+- **CLI-Runner-Pfad nicht live gegen `claude` getestet**: `scripts/run_work_order.py
+  --mode execute --adapter claude_code` (echter Subprocess, echtes Budget-Limit)
+  wurde bisher nur über Unit-Tests mit gefaktem Adapter verifiziert
+  (`scripts/test_bounded_retry.py`), nicht als echter CLI-Lauf mit einem
+  User-Bearer-Token — siehe `docs/manual-e2e-checklist.md`, Abschnitt
+  "Verifizierungsstatus".
 - Details und vollständige Risikoliste: siehe
   `docs/commandpilot-current-state-and-business-roadmap.md`.
+
+---
+
+Pfad-spezifische Detailregeln: `.claude/rules/frontend.md`,
+`.claude/rules/backend.md`, `.claude/rules/database.md`.
