@@ -17,6 +17,12 @@ class Settings(BaseSettings):
     # Absolute path to the second-brain Obsidian vault (read-only). Empty/unset
     # or unreadable → vault_service returns empty context, never raises.
     VAULT_PATH: str = ""
+    # Single-tenant ownership gate (JARVIS-A1, Aufgabe 2): if set, the vault
+    # is only readable for requests where CurrentUser.id equals this value —
+    # a request from any other user_id gets an empty context, not the vault
+    # owner's notes. Empty/unset (default) → no gate, behaves as before this
+    # was introduced. Not a per-user vault system — one vault, one owner.
+    VAULT_OWNER_USER_ID: str = ""
 
 
 settings = Settings()

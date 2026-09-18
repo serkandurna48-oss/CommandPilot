@@ -129,3 +129,34 @@ def test_get_context_for_query_always_includes_base_context(tmp_path):
     assert "00-Index.md" in {s["file"] for s in sources}
     assert "Projekte/CommandPilot.md" in {s["file"] for s in sources}
     assert "active" in block  # frontmatter status surfaced via base context
+
+
+# ── Ownership gate (JARVIS-A1, Aufgabe 2) ────────────────────────────────────────
+def test_mismatched_user_id_returns_empty_context(tmp_path, monkeypatch):
+    _make_vault(tmp_path)
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "owner-1")
+    block, sources = vault_service.get_context_for_query(
+        "Was ist die Next Action für CommandPilot?", user_id="someone-else", vault_path=str(tmp_path)
+    )
+    assert block == ""
+    assert sources == []
+
+
+def test_matching_user_id_returns_normal_context(tmp_path, monkeypatch):
+    _make_vault(tmp_path)
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "owner-1")
+    block, sources = vault_service.get_context_for_query(
+        "Was ist die Next Action für CommandPilot?", user_id="owner-1", vault_path=str(tmp_path)
+    )
+    assert block != ""
+    assert sources != []
+
+
+def test_empty_vault_owner_user_id_behaves_as_before(tmp_path, monkeypatch):
+    _make_vault(tmp_path)
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "")
+    block, sources = vault_service.get_context_for_query(
+        "Was ist die Next Action für CommandPilot?", user_id="anyone-at-all", vault_path=str(tmp_path)
+    )
+    assert block != ""
+    assert sources != []

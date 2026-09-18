@@ -82,7 +82,7 @@ async def chat(
     context_block = ""
     vault_sources: list[dict] = []
     try:
-        context_block, vault_sources = vault_service.get_context_for_query(req.message)
+        context_block, vault_sources = vault_service.get_context_for_query(req.message, user.id)
         logger.info("Vault context retrieved | sources=%d", len(vault_sources))
     except Exception as exc:
         logger.warning(

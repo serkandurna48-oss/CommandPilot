@@ -196,7 +196,7 @@ async def generate_plan(
     # ── Step 3.7: Retrieve second-brain vault context (non-fatal) ────────────
     vault_context = ""
     try:
-        vault_context, vault_sources = get_vault_context_for_checkin(checkin)
+        vault_context, vault_sources = get_vault_context_for_checkin(checkin, user.id)
         logger.info("Vault context retrieved | sources=%d", len(vault_sources))
     except Exception as exc:
         logger.warning(

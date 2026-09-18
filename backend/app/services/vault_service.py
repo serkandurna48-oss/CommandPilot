@@ -244,6 +244,7 @@ def format_context_block(matches: list[VaultMatch]) -> str:
 
 def get_context_for_query(
     query: str,
+    user_id: str | None = None,
     total_token_budget: int = 2200,
     base_token_budget: int = 1200,
     vault_path: str | None = None,
@@ -253,7 +254,21 @@ def get_context_for_query(
     into one formatted block plus a deduplicated source list
     ([{"file": ..., "heading": ...}, ...]).
     Empty/unreadable vault → ("", []). Never raises.
+
+    Ownership gate (JARVIS-A1, Aufgabe 2): if settings.VAULT_OWNER_USER_ID is
+    set and user_id doesn't match it, returns ("", []) without touching the
+    filesystem — the caller must pass the requesting user's id through here,
+    not assume the vault is theirs. An empty/unset VAULT_OWNER_USER_ID
+    disables the gate entirely (pre-existing behavior).
     """
+    owner_id = settings.VAULT_OWNER_USER_ID
+    if owner_id and user_id != owner_id:
+        logger.warning(
+            "vault_service: user_id does not match VAULT_OWNER_USER_ID — returning empty context | user_id=%r",
+            user_id,
+        )
+        return "", []
+
     base_matches = get_base_context(base_token_budget, vault_path)
     hits_budget = max(total_token_budget - base_token_budget, 0)
     hit_matches = retrieve_context(query, hits_budget, vault_path)
