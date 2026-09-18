@@ -18,7 +18,7 @@ Write-Host ""
 Start-Process powershell -ArgumentList @(
     "-NoExit",
     "-Command",
-    "cd '$root\backend'; `$Host.UI.RawUI.WindowTitle = 'CP Backend :8000'; Write-Host 'Backend starting...' -ForegroundColor Cyan; '$root\.venv\Scripts\uvicorn.exe' app.main:app --reload --port 8000"
+    "cd '$root\backend'; `$Host.UI.RawUI.WindowTitle = 'CP Backend :8000'; Write-Host 'Backend starting...' -ForegroundColor Cyan; & '$root\.venv\Scripts\python.exe' -m uvicorn app.main:app --reload --port 8000"
 )
 
 Start-Sleep -Seconds 1

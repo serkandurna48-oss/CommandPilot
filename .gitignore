@@ -64,6 +64,9 @@ supabase/seed.sql
 # Local runner harness session folders (scripts/run_work_order.py)
 tmp/work-order-runs/
 
+# Claude Code local settings (per-machine permission allowlist, not shared config)
+.claude/settings.local.json
+
 # Misc
 *.bak
 *.tmp
