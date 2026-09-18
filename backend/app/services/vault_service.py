@@ -173,7 +173,7 @@ def get_base_context(token_budget: int, vault_path: str | None = None) -> list[V
             text = index_path.read_text(encoding="utf-8").strip()
             if text:
                 matches.append(VaultMatch(text, _BASE_INDEX_FILE, "", score=0))
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             logger.warning("vault_service: could not read %s | %s", index_path, exc)
 
     for dirname in _ENTITY_DIRS:
@@ -183,7 +183,7 @@ def get_base_context(token_budget: int, vault_path: str | None = None) -> list[V
         for file_path in sorted(dir_path.glob("*.md")):
             try:
                 content = file_path.read_text(encoding="utf-8")
-            except OSError as exc:
+            except (OSError, UnicodeDecodeError) as exc:
                 logger.warning("vault_service: could not read %s | %s", file_path, exc)
                 continue
             frontmatter, rest = _parse_frontmatter(content)
@@ -217,7 +217,7 @@ def retrieve_context(
     for file_path in _iter_content_files(root):
         try:
             content = file_path.read_text(encoding="utf-8")
-        except OSError as exc:
+        except (OSError, UnicodeDecodeError) as exc:
             logger.warning("vault_service: could not read %s | %s", file_path, exc)
             continue
         _, body = _parse_frontmatter(content)

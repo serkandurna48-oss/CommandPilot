@@ -160,3 +160,28 @@ def test_empty_vault_owner_user_id_behaves_as_before(tmp_path, monkeypatch):
     )
     assert block != ""
     assert sources != []
+
+
+# ── Invalid UTF-8 handling (JARVIS-A1, Aufgabe 3) ────────────────────────────────
+def test_invalid_utf8_file_is_skipped_other_files_still_found(tmp_path):
+    _make_vault(tmp_path)
+    # Invalid UTF-8 byte sequence (a lone continuation byte) — read_text(encoding="utf-8")
+    # raises UnicodeDecodeError, not OSError, on this.
+    (tmp_path / "Projekte" / "Broken.md").write_bytes(b"# Broken\n\xff\xfe invalid utf-8 bytes here")
+
+    matches = vault_service.retrieve_context(
+        "Was ist die Next Action für CommandPilot?", token_budget=1000, vault_path=str(tmp_path)
+    )
+    files = {m.source_file for m in matches}
+    assert "Projekte/CommandPilot.md" in files
+    assert "Projekte/Broken.md" not in files
+
+
+def test_invalid_utf8_in_base_context_entity_note_is_skipped(tmp_path):
+    _make_vault(tmp_path)
+    (tmp_path / "Projekte" / "Broken.md").write_bytes(b"# Broken\n\xff\xfe invalid utf-8 bytes here")
+
+    matches = vault_service.get_base_context(token_budget=1000, vault_path=str(tmp_path))
+    files = {m.source_file for m in matches}
+    assert "Projekte/CommandPilot.md" in files
+    assert "Projekte/Broken.md" not in files
