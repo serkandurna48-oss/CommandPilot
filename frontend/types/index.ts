@@ -337,6 +337,40 @@ export interface WorkOrder {
   targetRepoPath?: string;
 }
 
+// ─── Jarvis (second-brain chat) ──────────────────────────────────────────────────
+export interface JarvisSourceRef {
+  source_file: string;
+  source_heading: string;
+}
+
+// Shaped to eventually seed a WorkOrderCreate (see WorkOrder above) — v1 never
+// populates this, suggested_actions is always []. See backend/app/models/jarvis.py.
+export interface JarvisSuggestedAction {
+  title: string;
+  description: string;
+  team_type: string;
+  target_repo_name?: string | null;
+  risk: "low" | "medium" | "high";
+  requires_approval: boolean;
+  sources: JarvisSourceRef[];
+}
+
+export interface JarvisChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface JarvisChatRequest {
+  message: string;
+  history: JarvisChatMessage[];
+}
+
+export interface JarvisChatResponse {
+  reply: string;
+  sources: JarvisSourceRef[];
+  suggested_actions: JarvisSuggestedAction[];
+}
+
 // ─── API responses ─────────────────────────────────────────────────────────────
 export interface ApiError {
   detail: string;

@@ -12,6 +12,7 @@ import {
   Sliders,
   Settings,
   Bot,
+  Sparkles,
 } from "lucide-react";
 
 export function Sidebar() {
@@ -20,6 +21,7 @@ export function Sidebar() {
 
   const navItems = [
     { href: "/dashboard", label: t("nav.dashboard"), icon: LayoutDashboard },
+    { href: "/jarvis",    label: t("nav.jarvis"),    icon: Sparkles },
     { href: "/morning",   label: t("nav.morning"),   icon: Sunrise },
     { href: "/review",    label: t("nav.review"),    icon: Moon },
     { href: "/projects",  label: t("nav.projects"),  icon: FolderOpen },

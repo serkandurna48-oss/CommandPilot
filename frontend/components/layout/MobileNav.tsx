@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { useT } from "@/lib/i18n";
-import { LayoutDashboard, Sunrise, Moon, FolderOpen, Sliders, Settings, Bot } from "lucide-react";
+import { LayoutDashboard, Sunrise, Moon, FolderOpen, Sliders, Settings, Bot, Sparkles } from "lucide-react";
 
 export function MobileNav() {
   const pathname = usePathname();
@@ -12,6 +12,7 @@ export function MobileNav() {
 
   const navItems = [
     { href: "/dashboard", label: t("nav.dashboard"), icon: LayoutDashboard },
+    { href: "/jarvis",    label: t("nav.jarvis"),    icon: Sparkles },
     { href: "/morning",   label: t("nav.morning"),   icon: Sunrise },
     { href: "/review",    label: t("nav.review"),    icon: Moon },
     { href: "/projects",  label: t("nav.projects"),  icon: FolderOpen },

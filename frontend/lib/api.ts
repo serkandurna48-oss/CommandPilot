@@ -10,6 +10,8 @@ import type {
   Project,
   ProjectCreate,
   ProjectUpdate,
+  JarvisChatRequest,
+  JarvisChatResponse,
 } from "@/types";
 import { supabase } from "@/lib/supabase";
 import type {
@@ -174,6 +176,12 @@ export const api = {
 
     update: (id: string, data: ProjectUpdate) =>
       request<Project>(`/api/projects/${id}`, { method: "PATCH", body: JSON.stringify(data) }),
+  },
+
+  // ─── Jarvis (second-brain chat) ────────────────────────────────────────────────
+  jarvis: {
+    chat: (data: JarvisChatRequest) =>
+      request<JarvisChatResponse>("/api/jarvis/chat", { method: "POST", body: JSON.stringify(data) }),
   },
 
   // ─── Work Orders (Background Dev Team control plane) ───────────────────────────

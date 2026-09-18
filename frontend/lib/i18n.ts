@@ -37,6 +37,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "nav.rules":                { en: "Rules",              de: "Regeln" },
   "nav.projects":             { en: "Projects",           de: "Projekte" },
   "nav.operator":             { en: "Operator",           de: "Operator" },
+  "nav.jarvis":               { en: "Jarvis",             de: "Jarvis" },
   "nav.settings":             { en: "Settings",           de: "Einstellungen" },
 
   // ── Dashboard ──────────────────────────────────────────────────────────────
@@ -133,6 +134,17 @@ const dict: Record<string, Record<Lang, string>> = {
   // ── Rules ──────────────────────────────────────────────────────────────────
   "rules.title":              { en: "Personal Rules",     de: "Regeln" },
   "rules.subtitle":           { en: "Your operating principles. The AI uses these to personalize every plan.", de: "Deine Regeln fließen in jeden Tagesplan ein." },
+
+  // ── Jarvis (second-brain chat) ────────────────────────────────────────────────
+  "jarvis.title":             { en: "Jarvis",             de: "Jarvis" },
+  "jarvis.subtitle":          { en: "Ask anything grounded in your second brain.", de: "Frag, was du willst — die Antwort stützt sich auf dein Second Brain." },
+  "jarvis.placeholder":       { en: "Ask Jarvis anything...", de: "Frag Jarvis etwas..." },
+  "jarvis.send":              { en: "Send",               de: "Senden" },
+  "jarvis.thinking":          { en: "Thinking...",        de: "Denkt nach..." },
+  "jarvis.sources":           { en: "Sources",            de: "Quellen" },
+  "jarvis.empty_state":       { en: "Ask a question to get started.", de: "Stell eine Frage, um loszulegen." },
+  "jarvis.error_banner":      { en: "Jarvis could not answer:", de: "Jarvis konnte nicht antworten:" },
+  "jarvis.retry":             { en: "Retry",              de: "Nochmal versuchen" },
 
   // ── Settings ───────────────────────────────────────────────────────────────
   "settings.title":           { en: "Settings",           de: "Einstellungen" },
