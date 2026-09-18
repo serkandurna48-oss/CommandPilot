@@ -295,11 +295,15 @@ def build_user_prompt(
     language: str = "en",
     review: dict | None = None,
     projects: list[dict] | None = None,
+    vault_context: str = "",
 ) -> tuple[str, bool]:
     """
     Build the user prompt for the AI.
     Returns (prompt_str, review_context_used).
     review_context_used is True only when non-empty review context was injected.
+    vault_context is a pre-formatted, pre-budgeted block from vault_service
+    (empty string if the vault is unavailable or nothing matched) — the plan
+    generation behaves exactly as before when it's empty.
     """
     lang_instruction = (
         "Respond entirely in German." if language == "de" else "Respond entirely in English."
@@ -354,6 +358,15 @@ def build_user_prompt(
             )
             review_context_used = True
 
+    vault_block = ""
+    if vault_context:
+        vault_block = (
+            "\nSECOND-BRAIN CONTEXT — background only, from the user's personal"
+            " knowledge vault. Use it to inform the plan where relevant. Do not"
+            " invent anything beyond it, and do not quote it verbatim:\n"
+            + vault_context
+        )
+
     prompt = f"""{lang_instruction}
 
 MORNING CHECK-IN:
@@ -365,7 +378,7 @@ MORNING CHECK-IN:
 - Mood: {checkin.get('mood', 'not specified')}
 - Available hours: {checkin.get('available_hours', 'not specified')}
 - Day constraints: {checkin.get('day_constraints', 'none')}
-{fixed_events_text}{tasks_text}{rules_block}{projects_block}{raw_block}{review_block}
+{fixed_events_text}{tasks_text}{rules_block}{projects_block}{raw_block}{review_block}{vault_block}
 
 Generate the daily command center plan as a JSON object matching the schema exactly.
 """

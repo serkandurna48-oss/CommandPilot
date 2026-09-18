@@ -14,6 +14,7 @@ from app.services.plan_service import (
     get_latest_plan_for_user,
     get_plan_for_date,
     get_plans_for_user,
+    get_vault_context_for_checkin,
     normalize_plan_date,
     save_plan,
 )
@@ -192,11 +193,25 @@ async def generate_plan(
             str(exc)[:100],
         )
 
+    # ── Step 3.7: Retrieve second-brain vault context (non-fatal) ────────────
+    vault_context = ""
+    try:
+        vault_context, vault_sources = get_vault_context_for_checkin(checkin)
+        logger.info("Vault context retrieved | sources=%d", len(vault_sources))
+    except Exception as exc:
+        logger.warning(
+            "Vault context fetch failed | %s: %s — continuing without vault context",
+            type(exc).__name__,
+            str(exc)[:100],
+        )
+
     # ── Step 4: Generate plan via AI ─────────────────────────────────────────
     logger.info("Calling AI service | language=%s", effective_language)
     try:
         plan, raw_json, review_context_used, input_tokens, output_tokens = (
-            await generate_daily_plan(checkin, rules, effective_language, recent_review, active_projects)
+            await generate_daily_plan(
+                checkin, rules, effective_language, recent_review, active_projects, vault_context
+            )
         )
     except AIGenerationError as exc:
         logger.error("AI generation failed | code=%s | %s", exc.code, str(exc))

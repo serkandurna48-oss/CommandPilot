@@ -56,19 +56,24 @@ async def generate_daily_plan(
     language: str = "en",
     review: dict | None = None,
     projects: list[dict] | None = None,
+    vault_context: str = "",
 ) -> tuple[DailyPlanAI, str, bool, int, int]:
     """
     Call OpenAI and return (parsed plan, raw JSON string, review_context_used,
     input_tokens, output_tokens).
     Uses structured outputs (strict JSON schema) to guarantee valid output.
     review_context_used reflects whether non-empty review context was injected.
+    vault_context is passed straight through to build_user_prompt — empty
+    string means the plan generates exactly as it did before the vault layer.
     input_tokens / output_tokens are 0 if response.usage is unavailable.
     Raises AIGenerationError with a specific code on any failure.
     """
     logger.info("AI plan generation started | model=%s", settings.OPENAI_MODEL)
 
     # ── Step 1: Build prompt ─────────────────────────────────────────────────
-    user_prompt, review_context_used = build_user_prompt(checkin, rules, language, review, projects)
+    user_prompt, review_context_used = build_user_prompt(
+        checkin, rules, language, review, projects, vault_context
+    )
 
     if settings.DEBUG_AI_PROMPT:
         review_date = review.get("review_date") if review else None

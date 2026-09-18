@@ -5,6 +5,7 @@ from postgrest.exceptions import APIError
 from app.db.client import get_db
 from app.models.plan import DailyPlanAI
 from app.core.config import settings
+from app.services import vault_service
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +36,32 @@ def normalize_plan_date(value) -> str:
     if isinstance(value, str):
         return date.fromisoformat(value).isoformat()  # raises ValueError on bad input
     raise TypeError(f"Unsupported plan_date type: {type(value).__name__}")
+
+
+def build_vault_query(checkin: dict) -> str:
+    """
+    Build the second-brain retrieval query from a checkin: raw morning input
+    plus the titles of important tasks. Empty checkin fields → empty query
+    (get_vault_context_for_checkin still returns base context in that case).
+    """
+    parts: list[str] = []
+    raw_input = (checkin.get("raw_input") or "").strip()
+    if raw_input:
+        parts.append(raw_input)
+    tasks = checkin.get("important_tasks") or []
+    if isinstance(tasks, list) and tasks:
+        parts.append(" ".join(str(t) for t in tasks))
+    return " ".join(parts)
+
+
+def get_vault_context_for_checkin(checkin: dict) -> tuple[str, list[dict]]:
+    """
+    Retrieve second-brain context relevant to a checkin, for injection into
+    the daily-plan prompt. Never raises — vault_service guarantees an empty
+    result on a missing/unreadable vault.
+    """
+    query = build_vault_query(checkin)
+    return vault_service.get_context_for_query(query)
 
 
 def get_plan_for_date(user_id: str, plan_date: str) -> dict | None:
