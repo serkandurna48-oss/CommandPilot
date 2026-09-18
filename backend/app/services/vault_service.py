@@ -6,15 +6,23 @@ entity notes) and surfaces the sections most relevant to a query, each tagged
 with its source. Surface-agnostic: no knowledge of chat vs. daily-plan
 callers. Read-only — never writes to the vault.
 
-Keyword/frontmatter matching, no embeddings, no vector DB. Token counts are
-estimated as len(text) // 4 — no tiktoken dependency.
+Keyword matching only, no embeddings, no vector DB. Frontmatter contract
+(JARVIS-A1, Aufgabe 6 — precise on purpose, this was previously ambiguous):
+frontmatter (type, status, priority, updated) is surfaced as plain text in
+the base layer's per-entity summary line (see get_base_context) — it is NOT
+a signal in hit-context scoring. retrieve_context/_score_section never reads
+frontmatter; a query mentioning "active" scores no higher against a note
+with status: active than against one without. Token counts are estimated as
+len(text) // 4 — no tiktoken dependency.
 
 Two layers, combined by get_context_for_query():
   - base context:  00-Index.md in full, plus title/frontmatter/first-line for
                     every entity note. Always included so open-ended queries
                     that share no vocabulary with the vault still get the
                     map of the user's projects/goals/people.
-  - hit context:    keyword-scored section matches for the specific query.
+  - hit context:    keyword-scored section matches for the specific query,
+                    scored on heading/filename/body tokens only (see
+                    _score_section) — frontmatter plays no role here.
 """
 from __future__ import annotations
 
@@ -217,8 +225,11 @@ def retrieve_context(
     query: str, token_budget: int, vault_path: str | None = None
 ) -> list[VaultMatch]:
     """
-    Keyword/frontmatter-weighted section matches for query, capped to
-    token_budget. Headings and filenames are weighted higher than body text.
+    Keyword-scored section matches for query, capped to token_budget.
+    Headings and filenames are weighted higher than body text (see
+    _score_section). Frontmatter is stripped before scoring and plays no
+    role in the score — it is not a query-weighting signal, only a
+    base-context display field (see module docstring, JARVIS-A1, Aufgabe 6).
     Zero-score sections are excluded. Missing vault or empty query → [].
     Never raises.
     """
