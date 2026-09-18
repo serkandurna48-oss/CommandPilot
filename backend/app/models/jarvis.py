@@ -36,5 +36,12 @@ class JarvisChatRequest(BaseModel):
 
 class JarvisChatResponse(BaseModel):
     reply: str
+    # Only the vault sections that actually carried the answer (JARVIS-A1,
+    # Aufgabe 5) — this is what a UI should show by default.
     sources: list[SourceRef] = []
+    # The always-present map-of-the-vault entries (00-Index.md + one line per
+    # entity note) that were sent to the model alongside `sources` but did
+    # not themselves feed the answer. Not shown by default — present for
+    # transparency/debugging and for a future "show more" affordance.
+    base_sources: list[SourceRef] = []
     suggested_actions: list[SuggestedAction] = []

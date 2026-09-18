@@ -63,7 +63,11 @@ class JarvisChatEndpointTests(unittest.TestCase):
              patch.object(jarvis_router, "check_daily_cap", return_value=None), \
              patch.object(
                  jarvis_router.vault_service, "get_context_for_query",
-                 return_value=("### Quelle: Projekte/CommandPilot.md\nStatus: active", [{"file": "Projekte/CommandPilot.md", "heading": ""}]),
+                 return_value=(
+                     "### Quelle: Projekte/CommandPilot.md — Status\nStatus: active\n\n### Quelle: 00-Index.md\n...",
+                     [{"file": "Projekte/CommandPilot.md", "heading": "Status"}],
+                     [{"file": "00-Index.md", "heading": ""}],
+                 ),
              ), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
@@ -78,7 +82,10 @@ class JarvisChatEndpointTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
         self.assertIn("CommandPilot", body["reply"])
-        self.assertEqual(body["sources"], [{"source_file": "Projekte/CommandPilot.md", "source_heading": ""}])
+        # Only the hit source is in `sources` (visible by default) — the base
+        # context entry lands in the separate base_sources field, not here.
+        self.assertEqual(body["sources"], [{"source_file": "Projekte/CommandPilot.md", "source_heading": "Status"}])
+        self.assertEqual(body["base_sources"], [{"source_file": "00-Index.md", "source_heading": ""}])
         self.assertEqual(body["suggested_actions"], [])
         # user_id must never be taken from the client — only from get_current_user
         mock_generate.assert_called_once()

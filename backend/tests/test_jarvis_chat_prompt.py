@@ -22,10 +22,24 @@ sys.path.insert(0, str(BACKEND_ROOT))
 from app.prompts.jarvis_chat import SYSTEM_PROMPT, build_chat_prompt  # noqa: E402
 
 
-def test_system_prompt_instructs_no_hallucination_and_source_citation():
+def test_system_prompt_instructs_no_hallucination():
     assert "Erfinde nichts" in SYSTEM_PROMPT
-    assert "Quellen" in SYSTEM_PROMPT
     assert "Deutsch" in SYSTEM_PROMPT
+
+
+def test_system_prompt_forbids_inline_source_list():
+    # JARVIS-A1, Aufgabe 5: the UI renders sources separately now — the model
+    # must not also write a "Quellen:" line into the reply text itself.
+    assert "KEINE" in SYSTEM_PROMPT or "keine" in SYSTEM_PROMPT
+    assert "Quellen:" in SYSTEM_PROMPT  # named as the thing to avoid writing
+    assert "Oberfläche zeigt die Quellen bereits separat" in SYSTEM_PROMPT
+
+
+def test_trailing_instruction_does_not_ask_for_a_sources_line():
+    prompt = build_chat_prompt("Was ist mein Reha-Stand?", [], "### Quelle: 40-Gesundheit.md\nRuhephase.")
+    trailing = prompt.rsplit("AKTUELLE FRAGE:", 1)[1]
+    assert "Nenne am Ende deiner Antwort die Quellen" not in trailing
+    assert "keine eigene Quellenliste" in trailing
 
 
 def test_empty_context_block_produces_explicit_empty_marker():

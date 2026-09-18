@@ -255,18 +255,43 @@ def format_context_block(matches: list[VaultMatch]) -> str:
     return "\n\n".join(f"{_match_header(m)}{m.text}" for m in matches)
 
 
+def _dedupe_sources(matches: list[VaultMatch]) -> list[dict]:
+    seen: set[tuple[str, str]] = set()
+    sources: list[dict] = []
+    for m in matches:
+        key = (m.source_file, m.source_heading)
+        if key in seen:
+            continue
+        seen.add(key)
+        sources.append({"file": m.source_file, "heading": m.source_heading})
+    return sources
+
+
 def get_context_for_query(
     query: str,
     user_id: str | None = None,
     total_token_budget: int = 2200,
     base_token_budget: int = 1200,
     vault_path: str | None = None,
-) -> tuple[str, list[dict]]:
+) -> tuple[str, list[dict], list[dict]]:
     """
     Combine base context (always present) with hit context (query-specific)
-    into one formatted block plus a deduplicated source list
-    ([{"file": ..., "heading": ...}, ...]).
-    Empty/unreadable vault → ("", []). Never raises.
+    into one formatted block sent to the model, plus two separate,
+    deduplicated source lists: (hit_sources, base_sources), each shaped
+    [{"file": ..., "heading": ...}, ...].
+
+    hit_sources are the query-scored sections that actually carried the
+    answer; base_sources are the always-present map-of-the-vault entries
+    (00-Index.md + one line per entity note). Kept apart (JARVIS-A1,
+    Aufgabe 5) because base context is large by design (14+ entries in a
+    typical vault) and showing all of it as "sources" alongside the handful
+    of sections that actually fed the answer is noise, not provenance — a
+    caller building a user-facing sources list should default to showing
+    only hit_sources. Both are still folded into the single formatted block,
+    since the model needs the map-of-the-vault context regardless of what
+    the UI chooses to surface.
+
+    Empty/unreadable vault → ("", [], []). Never raises.
 
     base_token_budget is capped to total_token_budget (JARVIS-A1, Aufgabe 4)
     — a caller passing a small total_token_budget with the default
@@ -275,9 +300,9 @@ def get_context_for_query(
     asked for.
 
     Ownership gate (JARVIS-A1, Aufgabe 2): if settings.VAULT_OWNER_USER_ID is
-    set and user_id doesn't match it, returns ("", []) without touching the
-    filesystem — the caller must pass the requesting user's id through here,
-    not assume the vault is theirs. An empty/unset VAULT_OWNER_USER_ID
+    set and user_id doesn't match it, returns ("", [], []) without touching
+    the filesystem — the caller must pass the requesting user's id through
+    here, not assume the vault is theirs. An empty/unset VAULT_OWNER_USER_ID
     disables the gate entirely (pre-existing behavior).
     """
     owner_id = settings.VAULT_OWNER_USER_ID
@@ -286,23 +311,13 @@ def get_context_for_query(
             "vault_service: user_id does not match VAULT_OWNER_USER_ID — returning empty context | user_id=%r",
             user_id,
         )
-        return "", []
+        return "", [], []
 
     effective_base_budget = min(base_token_budget, total_token_budget)
     base_matches = get_base_context(effective_base_budget, vault_path)
     hits_budget = max(total_token_budget - base_token_budget, 0)
     hit_matches = retrieve_context(query, hits_budget, vault_path)
 
-    all_matches = base_matches + hit_matches
-    block = format_context_block(all_matches)
+    block = format_context_block(base_matches + hit_matches)
 
-    seen: set[tuple[str, str]] = set()
-    sources: list[dict] = []
-    for m in all_matches:
-        key = (m.source_file, m.source_heading)
-        if key in seen:
-            continue
-        seen.add(key)
-        sources.append({"file": m.source_file, "heading": m.source_heading})
-
-    return block, sources
+    return block, _dedupe_sources(hit_matches), _dedupe_sources(base_matches)

@@ -94,9 +94,10 @@ def test_missing_vault_path_returns_empty(tmp_path):
     missing = tmp_path / "does-not-exist"
     assert vault_service.retrieve_context("irgendwas", token_budget=1000, vault_path=str(missing)) == []
     assert vault_service.get_base_context(token_budget=500, vault_path=str(missing)) == []
-    block, sources = vault_service.get_context_for_query("irgendwas", vault_path=str(missing))
+    block, hit_sources, base_sources = vault_service.get_context_for_query("irgendwas", vault_path=str(missing))
     assert block == ""
-    assert sources == []
+    assert hit_sources == []
+    assert base_sources == []
 
 
 def test_empty_vault_path_returns_empty():
@@ -122,44 +123,67 @@ def test_token_budget_is_respected(tmp_path):
 
 def test_get_context_for_query_always_includes_base_context(tmp_path):
     _make_vault(tmp_path)
-    # Query shares no vocabulary with any note body — only base context should surface.
-    block, sources = vault_service.get_context_for_query(
+    # Query shares no vocabulary with any note body — only base context should surface,
+    # and it must show up as base_sources, not hit_sources (nothing actually matched).
+    block, hit_sources, base_sources = vault_service.get_context_for_query(
         "Woran sollte ich diese Woche arbeiten und warum?", vault_path=str(tmp_path)
     )
-    assert "00-Index.md" in {s["file"] for s in sources}
-    assert "Projekte/CommandPilot.md" in {s["file"] for s in sources}
+    assert hit_sources == []
+    assert "00-Index.md" in {s["file"] for s in base_sources}
+    assert "Projekte/CommandPilot.md" in {s["file"] for s in base_sources}
     assert "active" in block  # frontmatter status surfaced via base context
+
+
+# ── Sources noise reduction (JARVIS-A1, Aufgabe 5) ───────────────────────────────
+def test_hit_sources_and_base_sources_are_kept_separate(tmp_path):
+    _make_vault(tmp_path)
+    block, hit_sources, base_sources = vault_service.get_context_for_query(
+        "Was ist die Next Action für CommandPilot?", vault_path=str(tmp_path)
+    )
+    # base_sources: always-present map-of-the-vault entries, one per file, no heading.
+    assert {s["file"] for s in base_sources} == {"00-Index.md", "Projekte/CommandPilot.md", "Menschen/Volkan.md"}
+    assert all(s["heading"] == "" for s in base_sources)
+
+    # hit_sources: files whose content actually matched the query keywords, with real
+    # section headings. Volkan.md shares no vocabulary with the query and must not
+    # show up here, even though it's present in base_sources.
+    assert hit_sources
+    hit_files = {s["file"] for s in hit_sources}
+    assert "Projekte/CommandPilot.md" in hit_files
+    assert "Menschen/Volkan.md" not in hit_files
+    assert all(s["heading"] != "" for s in hit_sources)
 
 
 # ── Ownership gate (JARVIS-A1, Aufgabe 2) ────────────────────────────────────────
 def test_mismatched_user_id_returns_empty_context(tmp_path, monkeypatch):
     _make_vault(tmp_path)
     monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "owner-1")
-    block, sources = vault_service.get_context_for_query(
+    block, hit_sources, base_sources = vault_service.get_context_for_query(
         "Was ist die Next Action für CommandPilot?", user_id="someone-else", vault_path=str(tmp_path)
     )
     assert block == ""
-    assert sources == []
+    assert hit_sources == []
+    assert base_sources == []
 
 
 def test_matching_user_id_returns_normal_context(tmp_path, monkeypatch):
     _make_vault(tmp_path)
     monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "owner-1")
-    block, sources = vault_service.get_context_for_query(
+    block, hit_sources, base_sources = vault_service.get_context_for_query(
         "Was ist die Next Action für CommandPilot?", user_id="owner-1", vault_path=str(tmp_path)
     )
     assert block != ""
-    assert sources != []
+    assert hit_sources != []
 
 
 def test_empty_vault_owner_user_id_behaves_as_before(tmp_path, monkeypatch):
     _make_vault(tmp_path)
     monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "")
-    block, sources = vault_service.get_context_for_query(
+    block, hit_sources, base_sources = vault_service.get_context_for_query(
         "Was ist die Next Action für CommandPilot?", user_id="anyone-at-all", vault_path=str(tmp_path)
     )
     assert block != ""
-    assert sources != []
+    assert hit_sources != []
 
 
 # ── Invalid UTF-8 handling (JARVIS-A1, Aufgabe 3) ────────────────────────────────
@@ -198,7 +222,7 @@ def test_base_budget_capped_to_total_budget_codex_repro(tmp_path):
     (tmp_path / "00-Index.md").write_text("Index " * 1700, encoding="utf-8")  # ~10,200 chars
 
     total_token_budget = 50  # 200 chars
-    block, _ = vault_service.get_context_for_query(
+    block, _, _ = vault_service.get_context_for_query(
         "irrelevant query", total_token_budget=total_token_budget, vault_path=str(tmp_path)
     )
     # +len(header) for the "### Quelle: 00-Index.md\n" prefix, +1 for the "…" truncation marker.

@@ -196,8 +196,11 @@ async def generate_plan(
     # ── Step 3.7: Retrieve second-brain vault context (non-fatal) ────────────
     vault_context = ""
     try:
-        vault_context, vault_sources = get_vault_context_for_checkin(checkin, user.id)
-        logger.info("Vault context retrieved | sources=%d", len(vault_sources))
+        vault_context, vault_hit_sources, vault_base_sources = get_vault_context_for_checkin(checkin, user.id)
+        logger.info(
+            "Vault context retrieved | hit_sources=%d | base_sources=%d",
+            len(vault_hit_sources), len(vault_base_sources),
+        )
     except Exception as exc:
         logger.warning(
             "Vault context fetch failed | %s: %s — continuing without vault context",

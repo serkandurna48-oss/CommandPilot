@@ -54,10 +54,15 @@ def build_vault_query(checkin: dict) -> str:
     return " ".join(parts)
 
 
-def get_vault_context_for_checkin(checkin: dict, user_id: str | None = None) -> tuple[str, list[dict]]:
+def get_vault_context_for_checkin(
+    checkin: dict, user_id: str | None = None
+) -> tuple[str, list[dict], list[dict]]:
     """
     Retrieve second-brain context relevant to a checkin, for injection into
-    the daily-plan prompt. Never raises — vault_service guarantees an empty
+    the daily-plan prompt. Returns (block, hit_sources, base_sources) — see
+    vault_service.get_context_for_query for what the split means; the daily
+    plan only uses block today, the source lists exist for logging/parity
+    with the chat path. Never raises — vault_service guarantees an empty
     result on a missing/unreadable vault. user_id is passed straight through
     to vault_service's ownership gate (JARVIS-A1, Aufgabe 2) — the caller
     must supply the requesting CurrentUser.id, never assume the vault

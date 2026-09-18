@@ -367,7 +367,13 @@ export interface JarvisChatRequest {
 
 export interface JarvisChatResponse {
   reply: string;
+  // Only the vault sections that actually carried the answer (JARVIS-A1,
+  // Aufgabe 5) — this is what the UI renders by default.
   sources: JarvisSourceRef[];
+  // The always-present map-of-the-vault entries sent to the model alongside
+  // `sources` but not themselves the basis for the answer. Not rendered by
+  // default — present for transparency/debugging.
+  base_sources: JarvisSourceRef[];
   suggested_actions: JarvisSuggestedAction[];
 }
 

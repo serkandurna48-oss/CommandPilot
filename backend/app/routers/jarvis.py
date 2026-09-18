@@ -80,10 +80,14 @@ async def chat(
 
     # ── Retrieve second-brain context (non-fatal) ────────────────────────────
     context_block = ""
-    vault_sources: list[dict] = []
+    hit_sources: list[dict] = []
+    base_sources: list[dict] = []
     try:
-        context_block, vault_sources = vault_service.get_context_for_query(req.message, user.id)
-        logger.info("Vault context retrieved | sources=%d", len(vault_sources))
+        context_block, hit_sources, base_sources = vault_service.get_context_for_query(req.message, user.id)
+        logger.info(
+            "Vault context retrieved | hit_sources=%d | base_sources=%d",
+            len(hit_sources), len(base_sources),
+        )
     except Exception as exc:
         logger.warning(
             "Vault context fetch failed | %s: %s — continuing without vault context",
@@ -170,6 +174,7 @@ async def chat(
 
     return JarvisChatResponse(
         reply=reply_text,
-        sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in vault_sources],
+        sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in hit_sources],
+        base_sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in base_sources],
         suggested_actions=[],  # v1: always empty — see app/models/jarvis.py
     )
