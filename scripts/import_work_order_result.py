@@ -345,7 +345,7 @@ def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: boo
         total_failures += 1
     elif requested_final_status:
         try:
-            call_api(api_url, token, "PATCH", f"/api/work-orders/{work_order_id}", {"status": requested_final_status}, dry_run)
+            call_api(api_url, token, "PATCH", f"/api/work-orders/{work_order_id}", {"status": requested_final_status, "source": "import_script"}, dry_run)
             print(f"OK   work order final status -> {requested_final_status}")
             successes += 1
         except ImportError_ as exc:

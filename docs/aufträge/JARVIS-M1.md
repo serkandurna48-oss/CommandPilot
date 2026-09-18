@@ -19,7 +19,10 @@ a) Prüfe am Code, wie run_work_order.py sein Arbeitsverzeichnis bestimmt:
    nutzt es work_orders.target_repo_path, oder immer das cwd? Davon hängt
    Phase 2 ab. Melde die Antwort, bevor du weiterbaust.
 b) Lass EINE Work Order vollständig durchlaufen, gegen
-   Projekte\commandpilot-e2e-fixture als Zielrepo:
+   C:\Users\serka\dev\cp-e2e-fixture als Zielrepo (bewusst nicht unter
+   Projekte\, das liegt in iCloud — Git-Repos in einem Cloud-Sync erzeugen
+   Phantom-Löschungen, und aus diesem Repo werden in Phase 2 zwei Worktrees
+   erzeugt):
    --mode prompt-file → --mode execute --adapter claude_code
    --max-budget-usd 0.20 → --mode import-result.
    Bekannte Stolpersteine, die kein Grund zum Umbauen sind: Status muss

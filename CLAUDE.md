@@ -328,6 +328,7 @@ Kein automatisches Löschen der anderen ohne explizite Anweisung.
 | `runner-adapter-contract.md` | Interface-Vertrag für Runner-Adapter |
 | `ai-usage-and-cost-audit.md` | Audit der AI-Kosten/-Nutzung |
 | `manual-e2e-checklist.md` | Manuelle Browser-E2E-Checkliste |
+| `STATUS.md` | Laufende Befunde aus Live-Läufen (chronologisch, neueste zuerst) — kein Soll-Zustand, siehe Datei selbst |
 | `background-operator-spike.md` | **Superseded** — nicht als aktuelles Design behandeln |
 
 `docs/aufträge/` (eigener Unterordner, nicht in der Tabelle oben): Auftragsdokumente

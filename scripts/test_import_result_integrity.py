@@ -377,7 +377,7 @@ class ResultImportDedupKeyTests(unittest.TestCase):
             c for c in mock_call.call_args_list
             if c.args[2] == "PATCH" and c.args[3] == f"/api/work-orders/{result['workOrderId']}"
         ]
-        self.assertEqual(final_status_calls[0].args[4], {"status": "review_ready"})
+        self.assertEqual(final_status_calls[0].args[4], {"status": "review_ready", "source": "import_script"})
 
 
 if __name__ == "__main__":
