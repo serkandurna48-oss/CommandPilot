@@ -1,6 +1,6 @@
 # STATUS — CommandPilot / Jarvis
 
-Letzte Aktualisierung: 20.09.2026.
+Letzte Aktualisierung: 20.09.2026 (Focus Deck Slice 2 Stand).
 Diese Datei ist der Einstieg. Wer hier anfängt, weiß, wo alles steht.
 
 ## Wo die Stränge stehen
@@ -10,7 +10,7 @@ Diese Datei ist der Einstieg. Wer hier anfängt, weiß, wo alles steht.
 | main | dev/commandpilot | main | A1 fertig, 39 Tests grün | unverändert, Basis für Focus Deck |
 | Design D1 (Steel-Blue) | dev/cp-design | feat/design-system | Phase 4 implementiert, danach von Serkan **verworfen** — nicht committen/mergen | ersetzt durch Focus Deck |
 | Multiagent M1 | dev/cp-multiagent | feat/multiagent | Phase 0 BESTANDEN | Activity-Log-Bug fixen, dann Phase 1 |
-| **Focus Deck (Bronze)** | dev/cp-focus-deck | feat/focus-deck-v2 | Design vollständig LOCKED, **Implementierung Slice 1 läuft gerade** | siehe unten |
+| **Focus Deck (Bronze)** | dev/cp-focus-deck | feat/focus-deck-v2 | Design vollständig LOCKED, **Slice 1 fertig (committet), Slice 2 (globale Shell-Migration) implementiert und QA-geprüft, noch nicht committet** | siehe unten |
 
 **Zielrichtung**: "Focus Deck" (Graphit + Bronze/Copper, permanente
 Jarvis-Spalte, fünf-teilige Icon-Navigation) ersetzt die verworfene
@@ -19,12 +19,23 @@ Git-Repos unter `C:\Users\serka\dev\commandpilot-design-v2\` — nie
 committen. Vollständiger Implementierungsplan:
 `docs/design/commandpilot-focus-deck-implementation-plan.md`.
 
-**Implementierungsstand (ehrlich, kein "done"-Claim)**: Slice 1
-(Design-Foundation-Tokens + neue Shell-Komponente + Settings als erste
-migrierte Route) ist in Arbeit im Worktree `cp-focus-deck`. Noch nicht
-committet, noch nicht gepusht, noch nicht gemerged. Alle anderen Routen
-(Home, Jarvis, Projects, Operator) laufen unverändert auf der alten
-AppShell weiter, bis sie in späteren Slices migriert werden.
+**Implementierungsstand (ehrlich, kein "done"-Claim über Serkans Freigabe
+hinaus)**:
+
+- **Slice 1** (Design-Foundation-Tokens + `FocusDeckShell` + Settings als
+  erste migrierte Route) ist fertig, von Serkan abgenommen und committet
+  (`76881a8`, "feat: introduce focus deck foundation and settings shell").
+- **Slice 2** (globale Shell-Migration: alle authentifizierten Routen —
+  Dashboard, Jarvis, Projects, Morning, Daily Plan, Daily Review, Operator/
+  Work Orders, Rules, Settings — laufen jetzt unter einem gemeinsamen
+  `app/(app)/layout.tsx`, das genau eine `FocusDeckShell`-Instanz über
+  Routenwechsel hinweg hält) ist implementiert und QA-geprüft (Desktop +
+  Mobile, Jarvis-State-Persistenz über Routenwechsel bestätigt), aber noch
+  **nicht committet, nicht gepusht, nicht gemerged** — wartet auf Serkans
+  Freigabe. Kein Redesign der Page-Inhalte in diesem Slice, nur
+  Shell-Migration. `AppShell.tsx`/`Sidebar.tsx`/`MobileNav.tsx` existieren
+  im Repo weiter (bewusst nicht gelöscht), werden aber inzwischen von
+  keiner Route mehr importiert.
 
 ## Was heute erreicht wurde
 

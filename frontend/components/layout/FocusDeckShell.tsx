@@ -1,9 +1,12 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { Sparkles } from "lucide-react";
 import { ProtectedRoute } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
+import { cn } from "@/lib/utils";
+import { isWideWorkspaceRoute } from "@/lib/focusDeckNav";
 import { IconRail } from "@/components/layout/IconRail";
 import { JarvisRail, type JarvisRailState } from "@/components/layout/JarvisRail";
 import { FocusDeckMobileNav } from "@/components/layout/FocusDeckMobileNav";
@@ -19,14 +22,38 @@ const JARVIS_RAIL_WIDTH: Record<JarvisRailState, string> = {
   expanded: "640px",
 };
 
-// Neue, parallel zur bestehenden AppShell existierende Shell (kontrollierter
-// Migrationszustand, Slice 1 nutzt sie ausschließlich für /settings).
-// [Icon Rail] [Jarvis Rail] [Workspace] auf Desktop, Workspace-Vollbild +
-// Bottom-Nav + Jarvis-Fullscreen-Overlay auf Mobile.
+// Globale, authentifizierte Shell (Slice 2: jetzt von einem einzigen
+// gemeinsamen Layout — app/(app)/layout.tsx — für ALLE App-Routen genutzt,
+// nicht mehr nur /settings). Genau EINE FocusDeckShell-Instanz bleibt über
+// Routenwechsel hinweg gemountet, weil Next.js Layouts bei
+// Geschwister-Routen nicht neu mountet — das ist der ganze Mechanismus
+// hinter "Jarvis wird nicht unnötig remounted", kein Extra-State-Manager
+// nötig. State-Ownership (siehe auch Implementierungsplan):
+//   - Jarvis-Konversation: lebt in JarvisChat selbst, bleibt erhalten, weil
+//     JarvisChat hier nie unmountet (nur CSS "hidden" im collapsed-State).
+//   - Jarvis Layout-State (collapsed/normal/expanded): lebt HIER, einmalig,
+//     nicht pro Route.
+//   - Mobile-Jarvis-Overlay offen/zu: lebt HIER, einmalig.
+//   - Aktiver Navigationsbereich: wird NICHT als State gehalten, sondern
+//     direkt aus der URL (usePathname) abgeleitet — siehe lib/focusDeckNav.
 export function FocusDeckShell({ children }: { children: React.ReactNode }) {
   const t = useT();
+  const pathname = usePathname();
   const [jarvisState, setJarvisState] = useState<JarvisRailState>("normal");
   const [mobileJarvisOpen, setMobileJarvisOpen] = useState(false);
+  const wide = isWideWorkspaceRoute(pathname);
+
+  // Auf /jarvis darf der Bereich sinnvoll expanded sein (eigener Auftrag) —
+  // ein Default beim ANKOMMEN auf der Route, keine erzwungene Sperre.
+  // Danach bleibt es normaler State: der Mensch darf jederzeit wieder
+  // verkleinern, ohne dass ein erneuter Render das zurücksetzt.
+  const lastAutoExpandedFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (pathname.startsWith("/jarvis") && lastAutoExpandedFor.current !== pathname) {
+      lastAutoExpandedFor.current = pathname;
+      setJarvisState("expanded");
+    }
+  }, [pathname]);
 
   return (
     <ProtectedRoute>
@@ -34,7 +61,8 @@ export function FocusDeckShell({ children }: { children: React.ReactNode }) {
         {/* Desktop: echter Grid-Layout-State, kein Overlay. Icon Rail und
             Jarvis Rail bleiben immer gemountet — nur die mittlere
             Spaltenbreite ändert sich, Workspace verliert nie seinen
-            Zustand (kein Unmount irgendeiner Spalte). */}
+            Zustand (kein Unmount irgendeiner Spalte, keine Remounts beim
+            Routenwechsel innerhalb dieser Shell). */}
         <div
           className="hidden md:grid min-h-screen motion-safe:transition-[grid-template-columns] duration-200 ease-out"
           style={{ gridTemplateColumns: `64px ${JARVIS_RAIL_WIDTH[jarvisState]} 1fr` }}
@@ -44,9 +72,9 @@ export function FocusDeckShell({ children }: { children: React.ReactNode }) {
           <main className="min-w-0 overflow-y-auto">
             {/* Links am Workspace-Gutter ausgerichtet, nicht zentriert —
                 Jarvis Rail und Workspace sollen wie ein zusammenhängendes
-                System wirken, nicht wie zwei getrennte Blöcke. Max-width
-                bleibt als Lesebreiten-Grenze, aber ohne mx-auto. */}
-            <div className="max-w-2xl px-8 py-8">{children}</div>
+                System wirken. "wide" (Dashboard, Work-Order-Detail) nutzt
+                die volle Breite wie zuvor unter der alten AppShell. */}
+            <div className={cn("px-8 py-8", wide ? "w-full" : "max-w-4xl")}>{children}</div>
           </main>
         </div>
 

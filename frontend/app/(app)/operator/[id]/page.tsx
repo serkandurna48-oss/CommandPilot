@@ -2,7 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { AppShell } from "@/components/layout/AppShell";
 import { Button } from "@/components/ui/Button";
 import { PageLoader } from "@/components/ui/Spinner";
 import { WorkOrderDetail } from "@/components/operator/WorkOrderDetail";
@@ -76,7 +75,7 @@ export default function WorkOrderPage({ params }: Props) {
   }
 
   return (
-    <AppShell wide>
+    <>
       <div className="mb-6">
         <Link href="/operator">
           <Button variant="ghost" size="sm">
@@ -92,6 +91,6 @@ export default function WorkOrderPage({ params }: Props) {
       ) : (
         <WorkOrderDetail {...bundle} isLive={isLive} onStatusChange={handleStatusChange} />
       )}
-    </AppShell>
+    </>
   );
 }

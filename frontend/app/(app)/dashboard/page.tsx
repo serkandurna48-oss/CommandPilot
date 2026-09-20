@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { AppShell } from "@/components/layout/AppShell";
 import { PageLoader } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import { CommandHero } from "@/components/dashboard/CommandHero";
@@ -89,7 +88,7 @@ export default function DashboardPage() {
   const hasProjects = sorted.length > 0;
 
   return (
-    <AppShell wide>
+    <>
       {loading ? (
         <PageLoader />
       ) : (
@@ -155,6 +154,6 @@ export default function DashboardPage() {
 
         </div>
       )}
-    </AppShell>
+    </>
   );
 }

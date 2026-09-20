@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { FocusDeckShell } from "@/components/layout/FocusDeckShell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/lib/auth";
@@ -32,7 +31,11 @@ export default function SettingsPage() {
   }
 
   return (
-    <FocusDeckShell>
+    // Shell (Icon Rail/Jarvis Rail/Workspace-Rahmen) kommt jetzt aus
+    // app/(app)/layout.tsx — pro Route nicht mehr einzeln einbinden.
+    // Settings behält bewusst eine engere Lesebreite als der Shell-Default
+    // (max-w-2xl statt max-w-4xl), wie im letzten Review festgelegt.
+    <div className="max-w-2xl">
       {/* Seitentitel: die eine erlaubte Serif-Headline pro View (Design-
           System-Board, Typography-Blatt) — lokal hier, nicht über die
           geteilte Header.tsx, damit unmigrierte Routen (die Header.tsx
@@ -94,6 +97,6 @@ export default function SettingsPage() {
           </CardContent>
         </Card>
       </div>
-    </FocusDeckShell>
+    </div>
   );
 }

@@ -2,7 +2,6 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { AppShell } from "@/components/layout/AppShell";
 import { PlanView } from "@/components/plans/PlanView";
 import { PageLoader } from "@/components/ui/Spinner";
 import { Button } from "@/components/ui/Button";
@@ -30,7 +29,7 @@ export default function PlanPage({ params }: Props) {
   }, [id]);
 
   return (
-    <AppShell>
+    <>
       <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
         <Link href="/dashboard">
           <Button variant="ghost" size="sm">
@@ -56,6 +55,6 @@ export default function PlanPage({ params }: Props) {
       )}
 
       {plan && <PlanView plan={plan} />}
-    </AppShell>
+    </>
   );
 }
