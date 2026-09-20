@@ -11,6 +11,7 @@ Diese Datei ist der Einstieg. Wer hier anfängt, weiß, wo alles steht.
 | Design D1 (Steel-Blue) | dev/cp-design | feat/design-system | Phase 4 implementiert, danach von Serkan **verworfen** — nicht committen/mergen | ersetzt durch Focus Deck |
 | Multiagent M1 | dev/cp-multiagent | feat/multiagent | Phase 0 BESTANDEN | Activity-Log-Bug fixen, dann Phase 1 |
 | **Focus Deck (Bronze)** | dev/cp-focus-deck | feat/focus-deck-v2 | Design vollständig LOCKED, **Slice 1 fertig (committet), Slice 2 (globale Shell-Migration) implementiert und QA-geprüft, noch nicht committet** | siehe unten |
+| Jarvis Q1 (Qualitätsnetz) | dev/cp-command-layer | feat/jarvis-command-layer | done — alle 10 Fälle in `test_jarvis_quality.py` laufen gegen den echten `VAULT_PATH`, `.claude/skills/abnahme/SKILL.md` implementiert, noch nicht committet | Abnahme durch Serkan, dann C1 |
 
 **Zielrichtung**: "Focus Deck" (Graphit + Bronze/Copper, permanente
 Jarvis-Spalte, fünf-teilige Icon-Navigation) ersetzt die verworfene

@@ -48,9 +48,21 @@ _STOPWORDS = {
     "which", "it", "you", "your",
     "der", "die", "das", "und", "oder", "von", "zu", "in", "auf", "für",
     "ist", "sind", "war", "waren", "sein", "dieser", "diese", "dieses",
-    "mit", "mein", "meine", "ich", "was", "wie", "welche", "es", "ein",
-    "eine", "einen",
+    "mit", "mein", "meine", "meinem", "ich", "was", "wie", "welche", "es",
+    "ein", "eine", "einen",
+    # "im" = "in dem" (JARVIS-Q1, Fall 7/8 finding): as common as "in", which
+    # is already listed above — omitting it let it collide with nearly every
+    # section in a real vault, drowning out genuine matches with noise.
+    "im",
 }
+
+# A single incidental body-token match (score 1 — one shared word, no
+# heading/filename hit, no repetition) is coincidence, not a real hit — a
+# generic word like "hoch" or "Konto" appearing once in an unrelated note
+# must not surface that note as if it answered the query (JARVIS-Q1, Fall
+# 7/8). Genuine matches observed against the real vault score >= 2 (either a
+# heading/filename hit, worth 3, or >= 2 body occurrences/tokens).
+_MIN_HIT_SCORE = 2
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.*)$", re.MULTILINE)
 _FRONTMATTER_RE = re.compile(r"^---\n(.*?)\n---\n?", re.DOTALL)
@@ -230,7 +242,9 @@ def retrieve_context(
     _score_section). Frontmatter is stripped before scoring and plays no
     role in the score — it is not a query-weighting signal, only a
     base-context display field (see module docstring, JARVIS-A1, Aufgabe 6).
-    Zero-score sections are excluded. Missing vault or empty query → [].
+    Sections scoring below _MIN_HIT_SCORE are excluded — a lone incidental
+    body-word match is coincidence, not a hit (JARVIS-Q1, Fall 7/8). Missing
+    vault or empty query → [].
     Never raises.
     """
     root = _vault_root(vault_path)
@@ -252,7 +266,7 @@ def retrieve_context(
         rel_name = file_path.relative_to(root).as_posix()
         for heading, section_text in _split_sections(body):
             score = _score_section(query_tokens, heading, file_path.stem, section_text)
-            if score > 0:
+            if score >= _MIN_HIT_SCORE:
                 scored.append(VaultMatch(section_text, rel_name, heading, score))
 
     scored.sort(key=lambda m: m.score, reverse=True)
