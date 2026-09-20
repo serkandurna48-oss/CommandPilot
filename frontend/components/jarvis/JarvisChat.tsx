@@ -17,7 +17,7 @@ import type {
 } from "@/types";
 import { Sparkles, ArrowRight, Check, X } from "lucide-react";
 
-// Mirrors components/dashboard/CommandHero.tsx's getGreetingKey() — small
+// Mirrors components/dashboard/HomeBriefing.tsx's getGreetingKey() — small
 // enough (and presentational-only, Visual Fidelity Sprint) that a shared
 // util would be more ceremony than the duplication it avoids.
 function getGreetingKey(): string {

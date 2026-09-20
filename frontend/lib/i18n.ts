@@ -24,7 +24,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "rules":                    { en: "Rules",              de: "Regeln" },
   "settings":                 { en: "Settings",           de: "Einstellungen" },
 
-  // ── Greeting (time-aware, used in CommandHero) ───────────────────────────────
+  // ── Greeting (time-aware, used in HomeBriefing + JarvisChat) ─────────────────
   "greeting.morning":          { en: "Good morning.",        de: "Guten Morgen." },
   "greeting.afternoon":        { en: "Good afternoon.",      de: "Guten Nachmittag." },
   "greeting.evening":          { en: "Good evening.",        de: "Guten Abend." },
@@ -45,24 +45,34 @@ const dict: Record<string, Record<Lang, string>> = {
   "nav.home":                 { en: "Home",               de: "Home" },
   "nav.activity":             { en: "Activity",           de: "Aktivität" },
 
-  // ── Dashboard ──────────────────────────────────────────────────────────────
+  // ── Dashboard / Home briefing (Focus Deck Home Fidelity Sprint) ─────────────
+  // Replaces the earlier "Command Hero / Signal-Noise / Project Radar" concept
+  // (see phase6-review.md §9) with four briefing sections: Today, Needs Your
+  // Decision, In Progress, Recent Activity — all backed by real plan/work-order
+  // data, no fabricated metrics.
   "dashboard.title":          { en: "Dashboard",          de: "Cockpit" },
   "dashboard.subtitle":       { en: "Your personal command center.", de: "Behalte deine Tagespläne, offenen Schritte und letzten Entscheidungen im Blick." },
   "dashboard.hero.standby":   { en: "Awaiting mission brief.", de: "Kein Tagesplan bisher." },
-  "dashboard.signal.main":    { en: "Signal Locked",        de: "Signal Locked" },
-  "dashboard.signal.secondary": { en: "Secondary Targets", de: "Secondary Targets" },
-  "dashboard.signal.noise":   { en: "Noise Suppressed",    de: "Noise Suppressed" },
-  "dashboard.radar.title":    { en: "Project Radar",       de: "Projekt-Radar" },
-  "dashboard.timeline.title": { en: "Mission Log",          de: "Mission Log" },
-  "dashboard.momentum.title": { en: "Recent Missions",     de: "Letzte Tagespläne" },
-  "dashboard.no_plan":        { en: "No plan for today yet.", de: "Noch kein Tagesplan für heute." },
   "dashboard.no_plan_sub":    { en: "Start your morning check-in and get your AI-generated daily strategy in under 30 seconds.", de: "Starte deinen Tagesstart und erhalte in wenigen Sekunden einen klaren Tagesplan." },
   "dashboard.start_checkin":  { en: "Start Morning Check-in", de: "Tagesstart beginnen" },
-  "dashboard.today_plan":     { en: "Today's Plan",       de: "Heutiger Tagesplan" },
   "dashboard.view_plan":      { en: "View full plan",     de: "Tagesplan öffnen" },
   "dashboard.new_checkin":    { en: "New Check-in",       de: "Neuer Tagesstart" },
-  "dashboard.eve_review":     { en: "Evening Review",     de: "Abend-Reflexion" },
-  "dashboard.recent_plans":   { en: "Recent Plans",       de: "Letzte Tagespläne" },
+  "dashboard.view_all":       { en: "View all",           de: "Alle anzeigen" },
+  "dashboard.open":           { en: "Open",               de: "Öffnen" },
+  "dashboard.section.today":           { en: "Today",                  de: "Heute" },
+  "dashboard.section.needs_decision":  { en: "Needs Your Decision",    de: "Braucht deine Entscheidung" },
+  "dashboard.section.in_progress":     { en: "In Progress",            de: "In Arbeit" },
+  "dashboard.section.recent_activity": { en: "Recent Activity",        de: "Letzte Aktivität" },
+  "dashboard.today.priority_label":    { en: "Priority",               de: "Priorität" },
+  "dashboard.decision.empty_title":    { en: "Nothing needs your decision.", de: "Nichts wartet auf deine Entscheidung." },
+  "dashboard.decision.empty_desc":     { en: "Work orders waiting for your approval will show up here.", de: "Arbeitsaufträge, die auf deine Freigabe warten, erscheinen hier." },
+  "dashboard.progress.empty_title":    { en: "Nothing in progress.",   de: "Nichts läuft gerade." },
+  "dashboard.progress.empty_desc":     { en: "Running and queued work orders will show up here.", de: "Laufende und eingereihte Arbeitsaufträge erscheinen hier." },
+  "dashboard.activity.empty_title":    { en: "No recent activity.",    de: "Keine aktuelle Aktivität." },
+  "dashboard.activity.empty_desc":     { en: "Activity from your work orders will show up here.", de: "Aktivität aus deinen Arbeitsaufträgen erscheint hier." },
+  "dashboard.activity.created":        { en: "Created",                de: "Erstellt" },
+  "dashboard.activity.started":        { en: "Started",                de: "Gestartet" },
+  "dashboard.activity.completed":      { en: "Completed",              de: "Abgeschlossen" },
 
   // ── Morning check-in ───────────────────────────────────────────────────────
   "morning.title":            { en: "Morning Check-in",   de: "Tagesstart" },
