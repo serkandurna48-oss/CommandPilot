@@ -39,7 +39,14 @@ const config: Config = {
         // Nur für die eine große persönliche/briefingartige Headline pro
         // View (Design-System-Board, Typography-Blatt) — nie für
         // Navigation, Wortmarken oder UI-Standardtext.
-        serif: ["Source Serif 4", "Georgia", "serif"],
+        // Quoted: "Source Serif 4" ends in a bare digit, which is not a
+        // valid unquoted CSS identifier token. Left unquoted, Tailwind
+        // emits `font-family: Source Serif 4, Georgia, serif` — invalid
+        // CSS that Chrome silently drops in full, falling back to Inter.
+        // Pre-existing bug from Focus Deck Slice 1 (the serif headline
+        // never actually rendered as serif in any browser); found and
+        // fixed during the Visual Fidelity Sprint.
+        serif: ['"Source Serif 4"', "Georgia", "serif"],
       },
     },
   },

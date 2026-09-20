@@ -2,7 +2,7 @@ import { cn } from "@/lib/utils";
 import { ButtonHTMLAttributes, forwardRef } from "react";
 
 interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: "primary" | "secondary" | "ghost" | "danger";
+  variant?: "primary" | "secondary" | "ghost" | "danger" | "outline-accent";
   size?: "sm" | "md" | "lg";
   loading?: boolean;
 }
@@ -15,6 +15,12 @@ const variants = {
   ghost:
     "bg-transparent hover:bg-[var(--interactive-bg-secondary-hover)] text-[var(--text-secondary)] border-transparent",
   danger: "bg-status-danger hover:brightness-110 active:brightness-90 text-white border-transparent",
+  // Transparent fill, accent-colored border+text (Visual Fidelity Sprint —
+  // Higgsfield Focus-Deck-Referenz, e.g. Settings "Sign out"). Its own
+  // dedicated entry rather than overriding "secondary" via className, so it
+  // can't collide with Tailwind's utility source-order for other callers.
+  "outline-accent":
+    "bg-transparent hover:bg-[var(--interactive-bg-secondary-hover)] text-[var(--text-accent)] border-[var(--text-accent)]",
 };
 
 const sizes = {

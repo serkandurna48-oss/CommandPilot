@@ -40,5 +40,9 @@ export function getActiveSection(pathname: string): FocusDeckSection {
 export function isWideWorkspaceRoute(pathname: string): boolean {
   if (pathname === "/dashboard") return true;
   if (pathname.startsWith("/operator/") && pathname !== "/operator/new") return true;
+  // Visual Fidelity Sprint (Higgsfield Focus-Deck-Referenz): Settings nutzt
+  // dort die volle Workspace-Breite statt der ~896px-Lesebreite — die Seite
+  // setzt selbst noch ein eigenes, etwas engeres max-w auf ihren Karten.
+  if (pathname === "/settings") return true;
   return false;
 }

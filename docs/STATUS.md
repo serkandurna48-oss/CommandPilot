@@ -13,6 +13,7 @@ Diese Datei ist der Einstieg. Wer hier anfängt, weiß, wo alles steht.
 | **Focus Deck (Bronze)** | dev/cp-focus-deck | feat/focus-deck-v2 | Design vollständig LOCKED, **Slice 1 fertig (committet), Slice 2 (globale Shell-Migration) implementiert und QA-geprüft, noch nicht committet** | siehe unten |
 | Jarvis Q1 (Qualitätsnetz) | dev/cp-command-layer | feat/jarvis-command-layer | done, committet (`8afeb9e`) | — |
 | Jarvis C1 (Command Layer) | dev/cp-command-layer | feat/jarvis-command-layer | **done** — echte Browser-Abnahme (Flow A/B/C + Idempotenz) bestanden, `scripts/check.ps1` grün (61 Backend-Tests inkl. Q1), noch nicht committet | Abnahme durch Serkan, dann committen |
+| Settings (Visual Fidelity) | dev/cp-command-layer | feat/jarvis-command-layer | **visually locked** — Fidelity-Pass gegen Higgsfield-Referenz + Kompositions-Vereinfachung abgenommen | Keine weitere Design-Exploration für diese Route |
 
 **Zielrichtung**: "Focus Deck" (Graphit + Bronze/Copper, permanente
 Jarvis-Spalte, fünf-teilige Icon-Navigation) ersetzt die verworfene
@@ -40,8 +41,8 @@ der Abnahme erzeugt (17→22), alle nachvollziehbar. Q1-Fall-10 angepasst:
 Vorschläge dürfen entstehen, der Chat-Endpunkt selbst schreibt aber nie eine
 Work Order. `scripts/check.ps1` grün, Q1 (10/10) weiterhin grün.
 
-**Implementierungsstand (ehrlich, kein "done"-Claim über Serkans Freigabe
-hinaus)**:
+**Focus Deck — Implementierungsstand (ehrlich, kein "done"-Claim über Serkans
+Freigabe hinaus)**:
 
 - **Slice 1** (Design-Foundation-Tokens + `FocusDeckShell` + Settings als
   erste migrierte Route) ist fertig, von Serkan abgenommen und committet
@@ -89,6 +90,7 @@ hinaus)**:
 | /operator/new verliert Formularzustand | UI | offen |
 | A1-Browsertest nie durchgeführt | — | offen, 5 Minuten |
 | Notion sagt CommandPilot "Wartet"/P3, Vault sagt active | Notion | klein |
+| Browser-Automatisierung in dieser Umgebung: `resize_window` ohne Wirkung, Sessions laufen bei Dev-Server-Neustart ab | dev/cp-command-layer | klein, betrifft nur Tooling |
 
 ## Wie man morgen einsteigt
 

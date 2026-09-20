@@ -156,6 +156,13 @@ const dict: Record<string, Record<Lang, string>> = {
   "jarvis.restore":           { en: "Restore Jarvis size", de: "Jarvis auf Normalgröße" },
   "jarvis.open_mobile":       { en: "Open Jarvis",        de: "Jarvis öffnen" },
   "jarvis.close":             { en: "Close",              de: "Schließen" },
+  // Empty-state welcome block (Visual Fidelity Sprint — Higgsfield
+  // Focus-Deck-Referenz): static hint text, not clickable — no new
+  // send-on-click behavior was added along with the visual polish.
+  "jarvis.suggestion.try":    { en: "Try:",               de: "Versuch's mit:" },
+  "jarvis.suggestion.1":      { en: "Review my project status", de: "Meinen Projektstatus prüfen" },
+  "jarvis.suggestion.2":      { en: "Find a document",    de: "Ein Dokument finden" },
+  "jarvis.suggestion.3":      { en: "Plan my day",        de: "Meinen Tag planen" },
 
   // ── Jarvis suggested actions (JARVIS-C1 — Command Layer) ────────────────────
   "jarvis.suggested_action.heading":       { en: "Proposal",          de: "Vorschlag" },
@@ -175,16 +182,21 @@ const dict: Record<string, Record<Lang, string>> = {
   "jarvis.suggested_action.view_work_order": { en: "View work order", de: "Work Order ansehen" },
   "jarvis.suggested_action.error_retry":   { en: "Failed — try again:", de: "Fehlgeschlagen — nochmal versuchen:" },
 
-  // ── Settings ───────────────────────────────────────────────────────────────
+  // ── Settings (Visual Fidelity Sprint — Higgsfield Focus-Deck-Referenz) ──────
   "settings.title":           { en: "Settings",           de: "Einstellungen" },
-  "settings.subtitle":        { en: "Account and preferences.", de: "Konto und Einstellungen." },
+  "settings.subtitle":        { en: "Manage your account, language and AI settings.", de: "Verwalte dein Konto, deine Sprache und KI-Einstellungen." },
   "settings.account":         { en: "Account",            de: "Konto" },
-  "settings.signed_in_as":    { en: "Signed in as",       de: "Angemeldet als" },
+  "settings.account_desc":    { en: "Your sign-in details and session controls.", de: "Deine Anmeldedaten und Sitzungsverwaltung." },
+  "settings.signed_in":       { en: "Signed in",          de: "Angemeldet" },
   "settings.sign_out":        { en: "Sign out",           de: "Abmelden" },
-  "settings.preferences":     { en: "Preferences",        de: "Einstellungen" },
   "settings.language":        { en: "Language",           de: "Sprache" },
+  "settings.language_desc":   { en: "Choose your preferred language for the interface.", de: "Wähle deine bevorzugte Sprache für die Oberfläche." },
   "settings.language_saved":  { en: "Language updated.",  de: "Sprache aktualisiert." },
   "settings.ai_model":        { en: "AI Model",           de: "KI-Modell" },
+  "settings.ai_model_desc":   { en: "The AI model used by CommandPilot.", de: "Das von CommandPilot verwendete KI-Modell." },
+  // No internal/dev-facing detail (".env") shown to the user — just the
+  // model name and that it's the active one.
+  "settings.ai_model_active": { en: "Active AI model", de: "Aktives KI-Modell" },
 
   // ── Login ──────────────────────────────────────────────────────────────────
   "login.title":              { en: "Log in to CommandPilot", de: "Bei CommandPilot anmelden" },

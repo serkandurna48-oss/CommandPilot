@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/Card";
-import { EmptyState } from "@/components/ui/Spinner";
 import { ApiError, api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
@@ -16,7 +15,18 @@ import type {
   JarvisSuggestedAction,
   JarvisSuggestedActionDecisionRequest,
 } from "@/types";
-import { Send, Check, X } from "lucide-react";
+import { Sparkles, ArrowRight, Check, X } from "lucide-react";
+
+// Mirrors components/dashboard/CommandHero.tsx's getGreetingKey() — small
+// enough (and presentational-only, Visual Fidelity Sprint) that a shared
+// util would be more ceremony than the duplication it avoids.
+function getGreetingKey(): string {
+  const h = new Date().getHours();
+  if (h >= 5 && h < 12) return "greeting.morning";
+  if (h >= 12 && h < 17) return "greeting.afternoon";
+  if (h >= 17 && h < 22) return "greeting.evening";
+  return "greeting.night";
+}
 
 // One suggested_action as shown in the UI, tagged with a stable client-side
 // idempotency token (JARVIS-C1, Phase 6) generated once when the proposal
@@ -240,7 +250,22 @@ export function JarvisChat() {
     <div className="flex flex-col h-[calc(100vh-14rem)] md:h-[calc(100vh-12rem)]">
       <div className="flex-1 overflow-y-auto space-y-4 pb-4">
         {messages.length === 0 && !loading && (
-          <EmptyState title={t("jarvis.empty_state")} />
+          // Bespoke welcome block, not the shared EmptyState (that one is
+          // reused across many unrelated empty states app-wide — this is
+          // Jarvis-specific presentation, Visual Fidelity Sprint).
+          <div className="py-6 space-y-4">
+            <Sparkles className="h-6 w-6 text-[var(--text-accent)]" />
+            <div>
+              <p className="font-serif text-xl text-[var(--text-primary)]">{t(getGreetingKey())}</p>
+              <p className="text-[var(--text-secondary)] text-sm mt-1">{t("jarvis.subtitle")}</p>
+            </div>
+            <p className="text-[var(--text-tertiary)] text-xs">
+              {t("jarvis.suggestion.try")}{" "}
+              <span className="italic">&ldquo;{t("jarvis.suggestion.1")}&rdquo;</span> ·{" "}
+              <span className="italic">&ldquo;{t("jarvis.suggestion.2")}&rdquo;</span> ·{" "}
+              <span className="italic">&ldquo;{t("jarvis.suggestion.3")}&rdquo;</span>
+            </p>
+          </div>
         )}
 
         {messages.map((msg, i) => (
@@ -300,32 +325,58 @@ export function JarvisChat() {
         <div ref={bottomRef} />
       </div>
 
-      {error && (
-        <div className="mb-3 rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm flex items-center justify-between gap-3">
-          <p>
-            <span className="font-medium">{t("jarvis.error_banner")}</span> {error}
-          </p>
-          <Button type="button" variant="secondary" size="sm" onClick={() => send(input)}>
-            {t("jarvis.retry")}
-          </Button>
-        </div>
-      )}
+      {/* Composer-Footer (Focus-Deck-Kompositions-Pass): eigene, oben
+          abgegrenzte Zone statt einer frei schwebenden Pille im leeren Raum
+          — dieselbe horizontale Einfassung wie der Rest der Rail (kommt von
+          JarvisRail/MobileJarvisOverlay's Padding), ein Top-Border als
+          eindeutige visuelle Verbindung zur Rail, kein zusätzlicher
+          Kartenrahmen um den Composer selbst. */}
+      <div className="pt-3 border-t border-[var(--border-light)] shrink-0">
+        {error && (
+          <div className="mb-3 rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm flex items-center justify-between gap-3">
+            <p>
+              <span className="font-medium">{t("jarvis.error_banner")}</span> {error}
+            </p>
+            <Button type="button" variant="secondary" size="sm" onClick={() => send(input)}>
+              {t("jarvis.retry")}
+            </Button>
+          </div>
+        )}
 
-      <form onSubmit={handleSubmit} className="flex items-end gap-2">
-        <Textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={t("jarvis.placeholder")}
-          rows={2}
-          className="flex-1 resize-none"
-          disabled={loading}
-        />
-        <Button type="submit" disabled={loading || !input.trim()} loading={loading}>
-          <Send className="h-4 w-4" />
-          {t("jarvis.send")}
-        </Button>
-      </form>
+        <form onSubmit={handleSubmit}>
+          <div
+            className={cn(
+              "flex items-center gap-2 w-full rounded-full border bg-[var(--bg-surface)] pl-4 pr-1.5 py-1.5",
+              "motion-safe:transition-colors",
+              "border-brand-500/40 focus-within:border-brand-500"
+            )}
+          >
+            <Sparkles className="h-4 w-4 text-[var(--text-accent)] shrink-0" />
+            <Textarea
+              bare
+              value={input}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder={t("jarvis.placeholder")}
+              rows={1}
+              className="flex-1 py-1.5 text-sm min-h-0"
+              disabled={loading}
+            />
+            <button
+              type="submit"
+              disabled={loading || !input.trim()}
+              aria-label={t("jarvis.send")}
+              className="flex items-center justify-center h-9 w-9 rounded-full shrink-0 bg-[var(--interactive-bg-primary-default)] hover:bg-[var(--interactive-bg-primary-hover)] text-white disabled:opacity-50 motion-safe:transition-colors focus:outline-none focus-visible:outline focus-visible:outline-[1.5px] focus-visible:outline-offset-2 focus-visible:outline-[var(--interactive-border-focus)]"
+            >
+              {loading ? (
+                <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />
+              ) : (
+                <ArrowRight className="h-4 w-4" />
+              )}
+            </button>
+          </div>
+        </form>
+      </div>
     </div>
   );
 }

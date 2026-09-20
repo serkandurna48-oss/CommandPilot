@@ -23,13 +23,24 @@ Input.displayName = "Input";
 interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   label?: string;
   error?: string;
+  // Skips the default bordered/surfaced chrome — for composers that supply
+  // their own pill/card wrapper instead (Visual Fidelity Sprint). Default
+  // false keeps every existing call site's rendering unchanged.
+  bare?: boolean;
 }
 
+const bareTextareaBase =
+  "w-full bg-transparent text-[var(--text-primary)] placeholder-[var(--text-placeholder)] resize-none focus:outline-none disabled:opacity-50";
+
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className, label, error, ...props }, ref) => (
+  ({ className, label, error, bare, ...props }, ref) => (
     <div className="flex flex-col gap-1.5">
       {label && <label className="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide">{label}</label>}
-      <textarea ref={ref} className={cn(inputBase, "resize-none", error && "border-status-danger", className)} {...props} />
+      <textarea
+        ref={ref}
+        className={cn(bare ? bareTextareaBase : cn(inputBase, "resize-none"), error && "border-status-danger", className)}
+        {...props}
+      />
       {error && <p className="text-xs text-status-danger">{error}</p>}
     </div>
   )
