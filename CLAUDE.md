@@ -293,10 +293,10 @@ Kein automatisches Löschen der anderen ohne explizite Anweisung.
   Fast-Forward-Merge von `feat/operator-control-plane` nach `77e18cb` (18.09.,
   gepusht). `feat/operator-control-plane` existiert als Branch weiter, ist aber
   vollständig in `main` enthalten — nicht mehr die "fortgeschrittenere" Quelle.
-- `chore/commandpilot-ai-setup` ist als eigener Worktree unter
-  `Projekte/commandpilot-ai-setup` ausgecheckt — Quelle für `.claude/`, `AGENTS.md`,
-  `CLAUDE.md` (dieses Dokument), bis diese Dateien vollständig auf `main` gepflegt
-  werden.
+- `chore/commandpilot-ai-setup` ist überholt: `.claude/` und `AGENTS.md` sind
+  inzwischen deckungsgleich auf `main`, `CLAUDE.md` ist auf `main` weiter
+  gepflegt worden und dort aktueller als auf diesem Branch. Kein aktiver
+  Quell-Branch mehr für diese Dateien.
 - Dieses Repo wird häufig in mehreren Git-Worktrees parallel ausgecheckt — vor
   Annahmen über vorhandene Dateien `git worktree list` prüfen.
 - Nie ungefragt mergen, rebasen oder pushen. Ein Thema, ein Commit. Nichts committen

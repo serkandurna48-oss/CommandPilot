@@ -19,8 +19,10 @@ Ergänzt `CLAUDE.md` — hier stehen nur backend-spezifische, aktionable Details
 - **Fehlerbehandlung**: `json.JSONDecodeError` und `pydantic.ValidationError`
   getrennt fangen und als beschreibende `ValueError`s re-raisen (bestehende
   Konvention in `ai_service.py`).
-- **Kein Lint-/Test-Tool konfiguriert** (kein ruff/black/pytest) — keins erfinden;
-  falls eines sinnvoll wäre, explizit vorschlagen statt stillschweigend anzunehmen.
+- **Kein Lint-Tool konfiguriert** (kein ruff/black) — keins erfinden; falls eines
+  sinnvoll wäre, explizit vorschlagen statt stillschweigend anzunehmen. pytest
+  **ist** konfiguriert (`backend/tests/`, `requirements-dev.txt`, läuft über
+  `scripts/check.ps1` mit) — siehe `CLAUDE.md` § Wichtige Befehle.
 - **Falls `core/safety_rules.py` in deinem Checkout existiert**
   [nur auf `feat/operator-control-plane`]: das ist die **echte
   Enforcement-Schicht** für Work-Order-Approval-Scopes.
