@@ -578,7 +578,7 @@ def cmd_prompt_file(args: argparse.Namespace, adapter: RunnerAdapter) -> int:
     if order["status"] != "running":
         try:
             call_api(args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}",
-                      {"status": "running"}, dry_run=args.dry_run)
+                      {"status": "running", "source": "harness"}, dry_run=args.dry_run)
             log_line(session_path, "Work Order Status -> running")
         except ImportError_ as exc:
             log_line(session_path, f"FEHLER beim Setzen von Status running: {exc}")

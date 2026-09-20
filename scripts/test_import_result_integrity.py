@@ -377,7 +377,59 @@ class ResultImportDedupKeyTests(unittest.TestCase):
             c for c in mock_call.call_args_list
             if c.args[2] == "PATCH" and c.args[3] == f"/api/work-orders/{result['workOrderId']}"
         ]
-        self.assertEqual(final_status_calls[0].args[4], {"status": "review_ready"})
+        self.assertEqual(final_status_calls[0].args[4], {"status": "review_ready", "source": "import_script"})
+
+
+class ActivityLogAgentRunIdMixupTests(unittest.TestCase):
+    """A runner is never told the real AgentRun UUID (build_runner_prompt()
+    only embeds ticketplan step ids), so an `agentRunId` it fills in itself
+    tends to be one of those step ids instead — observed for real: 8/8
+    activityLogs entries from one live run all carried a step id there,
+    and every one of them silently failed the activity_log table's foreign
+    key to agent_runs. These tests pin the fix: the harness's own known
+    agent_run_id always wins, and a step-id-shaped value is never sent
+    through when there's no harness agent_run_id to prefer instead."""
+
+    @staticmethod
+    def _payloads_for(mock_call, path_substring):
+        return [c.args[4] for c in mock_call.call_args_list if path_substring in c.args[3]]
+
+    def _result_with_step_id_as_agent_run_id(self):
+        return _valid_result(
+            steps=[{"id": "s1", "status": "completed", "outputSummary": "done", "blockedReason": None}],
+            activityLogs=[{"level": "info", "eventType": "code_edit", "message": "did the thing", "agentRunId": "s1"}],
+        )
+
+    def test_harness_agent_run_id_overrides_a_runner_supplied_step_id(self):
+        result = self._result_with_step_id_as_agent_run_id()
+        with patch.object(importer, "fetch_work_order", return_value=_order_for(result)), \
+             patch.object(importer, "call_api", side_effect=lambda *a, **k: {}) as mock_call:
+            importer.import_result(result, "http://localhost:8000", "fake-token", dry_run=False, agent_run_id="run-real")
+        payloads = self._payloads_for(mock_call, "/activity-log")
+        self.assertEqual(len(payloads), 1)
+        self.assertEqual(payloads[0]["agent_run_id"], "run-real")
+
+    def test_step_id_masquerading_as_agent_run_id_is_dropped_with_no_harness_agent_run_id(self):
+        result = self._result_with_step_id_as_agent_run_id()
+        with patch.object(importer, "fetch_work_order", return_value=_order_for(result)), \
+             patch.object(importer, "call_api", side_effect=lambda *a, **k: {}) as mock_call:
+            importer.import_result(result, "http://localhost:8000", "fake-token", dry_run=False, agent_run_id=None)
+        payloads = self._payloads_for(mock_call, "/activity-log")
+        self.assertEqual(len(payloads), 1)
+        self.assertNotIn("agent_run_id", payloads[0])
+
+    def test_a_genuine_agent_run_id_survives_with_no_harness_agent_run_id(self):
+        # Not every standalone import is a mix-up — a value that ISN'T one
+        # of this result's own step ids must still pass through unchanged.
+        result = _valid_result(
+            steps=[{"id": "s1", "status": "completed", "outputSummary": "done", "blockedReason": None}],
+            activityLogs=[{"level": "info", "eventType": "code_edit", "message": "did the thing", "agentRunId": "some-other-real-run-id"}],
+        )
+        with patch.object(importer, "fetch_work_order", return_value=_order_for(result)), \
+             patch.object(importer, "call_api", side_effect=lambda *a, **k: {}) as mock_call:
+            importer.import_result(result, "http://localhost:8000", "fake-token", dry_run=False, agent_run_id=None)
+        payloads = self._payloads_for(mock_call, "/activity-log")
+        self.assertEqual(payloads[0]["agent_run_id"], "some-other-real-run-id")
 
 
 if __name__ == "__main__":
