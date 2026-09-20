@@ -52,3 +52,11 @@ export const VERDICT_COLORS: Record<ReviewVerdict, string> = {
   blocked:          "bg-slate-800 border border-amber-800/40 text-amber-400/80",
   unsafe:           "bg-slate-800 border border-rose-800/40 text-rose-400/80",
 };
+
+// Jarvis suggested-action risk badge (JARVIS-C1) — same low/medium/high
+// traffic-light convention as the rest of this file.
+export const RISK_COLORS: Record<"low" | "medium" | "high", string> = {
+  low:    "bg-slate-800 border border-green-800/40 text-green-400/80",
+  medium: "bg-slate-800 border border-amber-800/40 text-amber-400/80",
+  high:   "bg-slate-800 border border-rose-800/40 text-rose-400/80",
+};

@@ -3,7 +3,9 @@
 - no bearer token -> 401 (before any DB/AI call)
 - valid token -> 200, response includes sources from vault_service
 - daily spend cap reached -> 429, no AI call made
-- suggested_actions is always [] in v1
+- suggested_actions passes through whatever generate_chat_reply returned (as
+  of JARVIS-C1 — see test_jarvis_quality.py and test_suggested_action_service.py
+  for confirm/reject and the two-or-none/no-write-on-chat invariants)
 
 Uses FastAPI's TestClient with get_current_user overridden via
 app.dependency_overrides (same object app.routers.jarvis imports), and
@@ -35,6 +37,7 @@ from fastapi.testclient import TestClient  # noqa: E402
 
 from app.main import app  # noqa: E402
 from app.auth import CurrentUser, get_current_user  # noqa: E402
+from app.models.jarvis import JarvisChatAI  # noqa: E402
 from app.services.usage_service import DailyCapExceededError  # noqa: E402
 import app.routers.jarvis as jarvis_router  # noqa: E402
 
@@ -71,7 +74,10 @@ class JarvisChatEndpointTests(unittest.TestCase):
              ), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
-                 return_value=("Laut deinem Second Brain ist CommandPilot aktiv.", 100, 50),
+                 return_value=(
+                     JarvisChatAI(reply="Laut deinem Second Brain ist CommandPilot aktiv.", suggested_actions=[]),
+                     100, 50,
+                 ),
              ) as mock_generate, \
              patch.object(jarvis_router, "log_ai_usage", return_value=None):
             resp = self.client.post(
@@ -107,6 +113,91 @@ class JarvisChatEndpointTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 429)
         self.assertEqual(resp.json()["detail"]["code"], "DAILY_SPEND_CAP_REACHED")
         mock_generate.assert_not_called()
+
+
+class SuggestedActionEndpointTests(unittest.TestCase):
+    """
+    POST /api/jarvis/suggested-actions/{confirm,reject} (JARVIS-C1, Phase 5).
+    Business logic (idempotency, work-order creation) is covered in
+    test_suggested_action_service.py — this file only checks the HTTP
+    boundary: auth, ownership sourcing, and status code mapping.
+    """
+
+    _ACTION_PAYLOAD = {
+        "title": "CampPilot Onboarding für JK vorbereiten",
+        "description": "Onboarding-Schritte dokumentieren und in CampPilot abbilden.",
+        "team_type": "development",
+        "target_repo_name": "camppilot",
+        "risk": "medium",
+        "requires_approval": False,
+        "sources": [],
+    }
+
+    def setUp(self):
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        app.dependency_overrides.pop(get_current_user, None)
+
+    def test_confirm_without_token_returns_401(self):
+        resp = self.client.post(
+            "/api/jarvis/suggested-actions/confirm",
+            json={"action": self._ACTION_PAYLOAD, "request_id": "req-1"},
+        )
+        self.assertEqual(resp.status_code, 401)
+
+    def test_confirm_success_never_takes_user_id_from_the_request(self):
+        app.dependency_overrides[get_current_user] = _override_get_current_user
+
+        with patch.object(jarvis_router, "ensure_user_workspace", return_value={"workspace_id": "ws-1", "profile": {}}), \
+             patch.object(
+                 jarvis_router.suggested_action_service, "confirm_suggested_action",
+                 return_value={"decision": "confirmed", "work_order_id": "wo-1", "already_decided": False},
+             ) as mock_confirm:
+            resp = self.client.post(
+                "/api/jarvis/suggested-actions/confirm",
+                json={"action": self._ACTION_PAYLOAD, "request_id": "req-1"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"decision": "confirmed", "work_order_id": "wo-1", "already_decided": False})
+        # First positional arg is user_id — must be the authenticated user's
+        # id (from get_current_user), never anything the client could set.
+        self.assertEqual(mock_confirm.call_args.args[0], _FAKE_USER.id)
+
+    def test_reject_success(self):
+        app.dependency_overrides[get_current_user] = _override_get_current_user
+
+        with patch.object(jarvis_router, "ensure_user_workspace", return_value={"workspace_id": "ws-1", "profile": {}}), \
+             patch.object(
+                 jarvis_router.suggested_action_service, "reject_suggested_action",
+                 return_value={"decision": "rejected", "work_order_id": None, "already_decided": False},
+             ) as mock_reject:
+            resp = self.client.post(
+                "/api/jarvis/suggested-actions/reject",
+                json={"action": self._ACTION_PAYLOAD, "request_id": "req-2"},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"decision": "rejected", "work_order_id": None, "already_decided": False})
+        self.assertEqual(mock_reject.call_args.args[0], _FAKE_USER.id)
+
+    def test_confirm_conflict_maps_to_409(self):
+        app.dependency_overrides[get_current_user] = _override_get_current_user
+
+        with patch.object(jarvis_router, "ensure_user_workspace", return_value={"workspace_id": "ws-1", "profile": {}}), \
+             patch.object(
+                 jarvis_router.suggested_action_service, "confirm_suggested_action",
+                 side_effect=jarvis_router.AlreadyDecidedError("rejected", None),
+             ):
+            resp = self.client.post(
+                "/api/jarvis/suggested-actions/confirm",
+                json={"action": self._ACTION_PAYLOAD, "request_id": "req-3"},
+            )
+
+        self.assertEqual(resp.status_code, 409)
+        self.assertEqual(resp.json()["detail"]["code"], "ALREADY_DECIDED")
+        self.assertEqual(resp.json()["detail"]["decision"], "rejected")
 
 
 if __name__ == "__main__":

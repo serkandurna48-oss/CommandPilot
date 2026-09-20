@@ -343,8 +343,9 @@ export interface JarvisSourceRef {
   source_heading: string;
 }
 
-// Shaped to eventually seed a WorkOrderCreate (see WorkOrder above) — v1 never
-// populates this, suggested_actions is always []. See backend/app/models/jarvis.py.
+// Shaped to seed a WorkOrderCreate (see WorkOrder above) once confirmed — see
+// backend/app/models/jarvis.py and app/services/suggested_action_service.py.
+// A proposal only; it is never itself persisted (JARVIS-C1).
 export interface JarvisSuggestedAction {
   title: string;
   description: string;
@@ -375,6 +376,20 @@ export interface JarvisChatResponse {
   // default — present for transparency/debugging.
   base_sources: JarvisSourceRef[];
   suggested_actions: JarvisSuggestedAction[];
+}
+
+// ─── Suggested action confirm/reject (JARVIS-C1) ─────────────────────────────────
+export interface JarvisSuggestedActionDecisionRequest {
+  action: JarvisSuggestedAction;
+  // Client-generated idempotency token, one per suggested-action card, reused
+  // across retries of the same click — see supabase/migrations/013_suggested_action_decisions.sql.
+  request_id: string;
+}
+
+export interface JarvisSuggestedActionDecisionResponse {
+  decision: "confirmed" | "rejected";
+  work_order_id?: string | null;
+  already_decided: boolean;
 }
 
 // ─── API responses ─────────────────────────────────────────────────────────────

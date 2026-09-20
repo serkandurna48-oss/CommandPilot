@@ -347,6 +347,33 @@ create table if not exists work_order_steps (
 );
 
 -- ---------------------------------------------------------------------------
+-- Suggested action decisions (JARVIS-C1) — the audit trail + idempotency
+-- guard for confirming/rejecting a Jarvis chat proposal. See
+-- supabase/migrations/013_suggested_action_decisions.sql for the full
+-- rationale (why this can't just be an activity_logs row, and why the
+-- unique (user_id, request_id) index is load-bearing, not decorative).
+-- ---------------------------------------------------------------------------
+create table if not exists suggested_action_decisions (
+  id                  uuid primary key default uuid_generate_v4(),
+  user_id             uuid not null references profiles(id) on delete cascade,
+  workspace_id        uuid references workspaces(id),
+  request_id          text not null,
+  decision            text not null
+                        check (decision in ('confirmed', 'rejected')),
+  title               text not null,
+  team_type           text,
+  target_repo_name    text,
+  risk                text,
+  requires_approval   boolean,
+  sources             jsonb not null default '[]',
+  work_order_id       uuid references work_orders(id) on delete set null,
+  created_at          timestamptz not null default now()
+);
+
+create unique index if not exists idx_suggested_action_decisions_request
+  on suggested_action_decisions(user_id, request_id);
+
+-- ---------------------------------------------------------------------------
 -- Referential integrity: workspaces.owner_id → profiles(id)
 -- Added after profiles table creation to avoid circular dependency
 -- ---------------------------------------------------------------------------
@@ -420,6 +447,7 @@ alter table activity_logs    enable row level security;
 alter table artifacts        enable row level security;
 alter table review_packages  enable row level security;
 alter table work_order_steps enable row level security;
+alter table suggested_action_decisions enable row level security;
 
 -- profiles
 create policy "Users can view own profile"
@@ -534,6 +562,10 @@ create policy "Users own work_order_steps via work order"
         and wo.user_id = auth.uid()
     )
   );
+
+-- suggested_action_decisions (JARVIS-C1)
+create policy "Users own suggested_action_decisions"
+  on suggested_action_decisions for all using (auth.uid() = user_id);
 
 -- ---------------------------------------------------------------------------
 -- transition_work_order(): atomic status transition + audit log (CP-OP01)

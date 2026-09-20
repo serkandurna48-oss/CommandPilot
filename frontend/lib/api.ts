@@ -12,6 +12,8 @@ import type {
   ProjectUpdate,
   JarvisChatRequest,
   JarvisChatResponse,
+  JarvisSuggestedActionDecisionRequest,
+  JarvisSuggestedActionDecisionResponse,
 } from "@/types";
 import { supabase } from "@/lib/supabase";
 import type {
@@ -182,6 +184,19 @@ export const api = {
   jarvis: {
     chat: (data: JarvisChatRequest) =>
       request<JarvisChatResponse>("/api/jarvis/chat", { method: "POST", body: JSON.stringify(data) }),
+
+    // JARVIS-C1: a suggested_action from a chat reply is only a proposal —
+    // these are the only two calls that can turn one into (or explicitly
+    // not into) a real work order.
+    confirmSuggestedAction: (data: JarvisSuggestedActionDecisionRequest) =>
+      request<JarvisSuggestedActionDecisionResponse>("/api/jarvis/suggested-actions/confirm", {
+        method: "POST", body: JSON.stringify(data),
+      }),
+
+    rejectSuggestedAction: (data: JarvisSuggestedActionDecisionRequest) =>
+      request<JarvisSuggestedActionDecisionResponse>("/api/jarvis/suggested-actions/reject", {
+        method: "POST", body: JSON.stringify(data),
+      }),
   },
 
   // ─── Work Orders (Background Dev Team control plane) ───────────────────────────

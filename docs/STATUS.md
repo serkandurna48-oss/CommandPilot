@@ -11,7 +11,8 @@ Diese Datei ist der Einstieg. Wer hier anfängt, weiß, wo alles steht.
 | Design D1 (Steel-Blue) | dev/cp-design | feat/design-system | Phase 4 implementiert, danach von Serkan **verworfen** — nicht committen/mergen | ersetzt durch Focus Deck |
 | Multiagent M1 | dev/cp-multiagent | feat/multiagent | Phase 0 BESTANDEN | Activity-Log-Bug fixen, dann Phase 1 |
 | **Focus Deck (Bronze)** | dev/cp-focus-deck | feat/focus-deck-v2 | Design vollständig LOCKED, **Slice 1 fertig (committet), Slice 2 (globale Shell-Migration) implementiert und QA-geprüft, noch nicht committet** | siehe unten |
-| Jarvis Q1 (Qualitätsnetz) | dev/cp-command-layer | feat/jarvis-command-layer | done — alle 10 Fälle in `test_jarvis_quality.py` laufen gegen den echten `VAULT_PATH`, `.claude/skills/abnahme/SKILL.md` implementiert, noch nicht committet | Abnahme durch Serkan, dann C1 |
+| Jarvis Q1 (Qualitätsnetz) | dev/cp-command-layer | feat/jarvis-command-layer | done, committet (`8afeb9e`) | — |
+| Jarvis C1 (Command Layer) | dev/cp-command-layer | feat/jarvis-command-layer | **done** — echte Browser-Abnahme (Flow A/B/C + Idempotenz) bestanden, `scripts/check.ps1` grün (61 Backend-Tests inkl. Q1), noch nicht committet | Abnahme durch Serkan, dann committen |
 
 **Zielrichtung**: "Focus Deck" (Graphit + Bronze/Copper, permanente
 Jarvis-Spalte, fünf-teilige Icon-Navigation) ersetzt die verworfene
@@ -19,6 +20,25 @@ Steel-Blue-Richtung aus JARVIS-D1. Design-Referenzen liegen außerhalb des
 Git-Repos unter `C:\Users\serka\dev\commandpilot-design-v2\` — nie
 committen. Vollständiger Implementierungsplan:
 `docs/design/commandpilot-focus-deck-implementation-plan.md`.
+
+**Jarvis C1 — done, echte Browser-Abnahme bestanden** (2026-09-20, echtes
+Backend/Auth/Supabase/OpenAI, kein Mock): Ziel im Chat → genau zwei
+`suggested_actions` (strukturiertes JSON aus einem OpenAI-Call, reply +
+suggested_actions, gleiches Strict-Schema-Muster wie `daily_plan.py`) →
+Karten mit Bestätigen/Ablehnen im Chat-UI → Bestätigen legt über
+`work_order_service` eine echte Work Order + Approval Scope + Activity-Log an,
+Ablehnen legt nichts an, aber einen Audit-Eintrag in der Tabelle
+`suggested_action_decisions` (Migration `013`, in Supabase ausgeführt und
+verifiziert). Idempotenz nicht nur clientseitig, sondern serverseitig mit
+zwei echten gleichzeitigen Confirm-Requests (identisches `request_id`, via
+`Promise.all`) geprüft — genau eine Work Order, kein Duplikat. Drei echte
+Chat-Durchläufe im Browser: Flow A (Vorschlag ablehnen → keine Work Order,
+Reject-Audit vorhanden), Flow B (Vorschlag bestätigen → Work Order + Scope +
+Activity-Log, sichtbar im Operator), Flow C (neuer Chat, beide Vorschläge
+bestätigen → zwei neue Work Orders). Insgesamt 5 echte Work Orders während
+der Abnahme erzeugt (17→22), alle nachvollziehbar. Q1-Fall-10 angepasst:
+Vorschläge dürfen entstehen, der Chat-Endpunkt selbst schreibt aber nie eine
+Work Order. `scripts/check.ps1` grün, Q1 (10/10) weiterhin grün.
 
 **Implementierungsstand (ehrlich, kein "done"-Claim über Serkans Freigabe
 hinaus)**:

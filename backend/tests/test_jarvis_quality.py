@@ -2,9 +2,9 @@
 JARVIS-Q1 — Jarvis answer-quality safety net.
 
 Ten deterministic cases guarding retrieval, the built context block, sources,
-prompt instructions, user separation and the current no-action behavior —
-this is the safety net for the Command Layer (C1), not a model-output test.
-Real model behavior is flaky and is checked manually in the browser (see
+prompt instructions, user separation and the proposal/write boundary — this
+is the safety net for the Command Layer, not a model-output test. Real model
+behavior is flaky and is checked manually in the browser (see
 docs/manual-e2e-checklist.md), never asserted here — no OpenAI call is made.
 
 Cases 1-8 are bound to the real vault configured via VAULT_PATH (the user's
@@ -12,8 +12,16 @@ actual Obsidian vault — 40-Gesundheit.md, Menschen/Enis.md,
 Projekte/CampPilot.md, 20-Ziele.md, 80-Begriffe.md must exist with real
 content for them to mean anything). If VAULT_PATH is unset or unreadable,
 they SKIP, not fail. Cases 9-10 exercise mechanics that don't depend on real
-vault content (the ownership gate, the router's no-action behavior) and
-always run.
+vault content (the ownership gate, the proposal/write boundary) and always
+run.
+
+Fall 10 (JARVIS-C1, Phase 7): updated from its original Q1 shape. Before C1,
+a goal-oriented message could never produce suggested_actions at all. Since
+C1, it may — but the chat endpoint itself must still never write a work
+order; that only happens via the explicit POST .../suggested-actions/confirm
+endpoint (see test_suggested_action_service.py for confirm/reject/idempotency
+coverage). The invariant this guards is PROPOSAL != EXECUTION, not "no
+suggestions ever."
 
 Run:
     python -m pytest backend/tests/test_jarvis_quality.py -v
@@ -158,14 +166,15 @@ def test_case_09_user_id_mismatch_returns_empty_context(tmp_path, monkeypatch):
 _FAKE_USER_ID = "user-1"
 
 
-class Case10NoActionWithoutConfirmation(unittest.TestCase):
+class Case10ProposalNeverWritesWithoutConfirmation(unittest.TestCase):
     """
-    "Leg mir dafür zwei Work Orders an" must NOT produce suggested_actions,
-    nor trigger a work_orders write, in the current (pre-C1) state. This is
-    the deliberate regression baseline C1 will change later — do not loosen
-    it to accommodate a C1 implementation without an explicit decision to do
-    so (see docs/aufträge/JARVIS-C1 — Command Layer, der nächste sichtbare
-    Ablauf.md).
+    "Leg mir dafür zwei Work Orders an" — JARVIS-C1, Phase 7 update: the
+    message MAY now produce suggested_actions (Phase 2 explicitly allows
+    exactly two for a goal-oriented message). What Fall 10 actually guards,
+    both before and after C1, is that the chat endpoint itself never writes
+    a work order — confirmation is a separate, explicit call
+    (POST /suggested-actions/confirm, see test_suggested_action_service.py).
+    PROPOSAL != EXECUTION.
     """
 
     def setUp(self):
@@ -183,19 +192,39 @@ class Case10NoActionWithoutConfirmation(unittest.TestCase):
     def tearDown(self):
         self.app.dependency_overrides.pop(self.get_current_user, None)
 
-    def test_no_suggested_actions_and_no_work_order_write(self):
+    def test_chat_may_suggest_actions_but_never_writes_a_work_order(self):
         import app.routers.jarvis as jarvis_router
+        from app.models.jarvis import JarvisChatAI, SuggestedAction
         from app.services import work_order_service
+
+        two_suggestions = [
+            SuggestedAction(
+                title="CampPilot Onboarding-Flow für JK vorbereiten",
+                description="Onboarding-Schritte für den Kunden JK dokumentieren und in CampPilot abbilden.",
+                risk="medium",
+                requires_approval=True,
+            ),
+            SuggestedAction(
+                title="CampPilot Demo-Daten für JK anlegen",
+                description="Beispieldaten für eine JK-Demo in CampPilot vorbereiten.",
+                risk="low",
+                requires_approval=False,
+            ),
+        ]
 
         with patch.object(jarvis_router, "ensure_user_workspace", return_value={"workspace_id": "ws-1", "profile": {}}), \
              patch.object(jarvis_router, "check_daily_cap", return_value=None), \
              patch.object(jarvis_router.vault_service, "get_context_for_query", return_value=("", [], [])), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
-                 return_value=("Ich kann aktuell keine Work Orders für dich anlegen.", 50, 20),
+                 return_value=(
+                     JarvisChatAI(reply="Hier zwei Vorschläge zur Bestätigung.", suggested_actions=two_suggestions),
+                     50, 20,
+                 ),
              ), \
              patch.object(jarvis_router, "log_ai_usage", return_value=None), \
-             patch.object(work_order_service, "create_work_order") as mock_create_work_order:
+             patch.object(work_order_service, "create_work_order") as mock_create_work_order, \
+             patch.object(work_order_service, "append_activity_log") as mock_append_activity_log:
             resp = self.client.post(
                 "/api/jarvis/chat",
                 json={"message": "Leg mir dafür zwei Work Orders an", "history": []},
@@ -203,8 +232,11 @@ class Case10NoActionWithoutConfirmation(unittest.TestCase):
 
         self.assertEqual(resp.status_code, 200)
         body = resp.json()
-        self.assertEqual(body["suggested_actions"], [])
+        self.assertEqual(len(body["suggested_actions"]), 2)
+        # The chat response can carry proposals — it must never itself be
+        # the thing that creates a work order or logs its activity.
         mock_create_work_order.assert_not_called()
+        mock_append_activity_log.assert_not_called()
 
 
 if __name__ == "__main__":

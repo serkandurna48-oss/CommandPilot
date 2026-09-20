@@ -13,8 +13,13 @@ from pydantic import ValidationError
 
 from app.core.config import settings
 from app.prompts.daily_plan import SYSTEM_PROMPT, JSON_SCHEMA, build_user_prompt
-from app.prompts.jarvis_chat import SYSTEM_PROMPT as JARVIS_SYSTEM_PROMPT, build_chat_prompt
+from app.prompts.jarvis_chat import (
+    SYSTEM_PROMPT as JARVIS_SYSTEM_PROMPT,
+    JSON_SCHEMA as JARVIS_JSON_SCHEMA,
+    build_chat_prompt,
+)
 from app.models.plan import DailyPlanAI
+from app.models.jarvis import JarvisChatAI
 
 logger = logging.getLogger(__name__)
 
@@ -234,12 +239,15 @@ async def generate_chat_reply(
     message: str,
     history: list[dict],
     context_block: str,
-) -> tuple[str, int, int]:
+) -> tuple[JarvisChatAI, int, int]:
     """
-    Call OpenAI for a Jarvis chat reply. Plain text — no structured-output
-    JSON schema, unlike generate_daily_plan. Returns (reply_text,
-    input_tokens, output_tokens). Raises AIGenerationError with the same
-    error-code taxonomy as generate_daily_plan on any failure.
+    Call OpenAI for a Jarvis chat reply. Structured JSON output (reply +
+    suggested_actions) via the same strict json_schema pattern as
+    generate_daily_plan (JARVIS-C1, Phase 3) — not a second AI pipeline, the
+    existing one extended. Returns (parsed response, input_tokens,
+    output_tokens). Raises AIGenerationError with the same error-code
+    taxonomy as generate_daily_plan on any failure, including the JSON-parse
+    and schema-validation failure modes structured output can newly produce.
     """
     logger.info("AI chat reply started | model=%s", settings.OPENAI_MODEL)
 
@@ -248,12 +256,20 @@ async def generate_chat_reply(
     try:
         response = await client.chat.completions.create(
             model=settings.OPENAI_MODEL,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "jarvis_chat_reply",
+                    "strict": True,
+                    "schema": JARVIS_JSON_SCHEMA,
+                },
+            },
             messages=[
                 {"role": "system", "content": JARVIS_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.4,
-            max_tokens=1024,
+            max_tokens=1536,
         )
     except AuthenticationError as exc:
         logger.error(
@@ -320,15 +336,36 @@ async def generate_chat_reply(
     )
 
     try:
-        reply_text = response.choices[0].message.content
-        if not reply_text:
+        raw_json = response.choices[0].message.content
+        if not raw_json:
             logger.error("OpenAI returned empty response content")
             raise AIGenerationError(
                 "UNKNOWN_AI_ERROR", "OpenAI returned an empty response.",
                 input_tokens=input_tokens, output_tokens=output_tokens,
             )
-        logger.info("AI chat reply succeeded")
-        return reply_text, input_tokens, output_tokens
+
+        try:
+            data = json.loads(raw_json)
+        except json.JSONDecodeError as exc:
+            logger.error("AI JSON parse failed | exc=%s | internal_code=AI_JSON_INVALID", type(exc).__name__)
+            raise AIGenerationError(
+                "AI_JSON_INVALID", "OpenAI returned invalid JSON.",
+                input_tokens=input_tokens, output_tokens=output_tokens,
+            ) from exc
+
+        try:
+            chat_ai = JarvisChatAI(**data)
+        except ValidationError as exc:
+            error_summary = [(e["loc"], e["type"]) for e in exc.errors()]
+            logger.error("AI schema validation failed | field_errors=%s", error_summary)
+            raise AIGenerationError(
+                "AI_SCHEMA_INVALID",
+                "AI response did not match the expected schema.",
+                input_tokens=input_tokens, output_tokens=output_tokens,
+            ) from exc
+
+        logger.info("AI chat reply succeeded | suggested_actions=%d", len(chat_ai.suggested_actions))
+        return chat_ai, input_tokens, output_tokens
 
     except AIGenerationError:
         raise

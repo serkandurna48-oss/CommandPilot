@@ -5,9 +5,16 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth import CurrentUser, ensure_user_workspace, get_current_user
 from app.core.config import settings
-from app.models.jarvis import JarvisChatRequest, JarvisChatResponse, SourceRef
-from app.services import vault_service
+from app.models.jarvis import (
+    JarvisChatRequest,
+    JarvisChatResponse,
+    SourceRef,
+    SuggestedActionDecisionRequest,
+    SuggestedActionDecisionResponse,
+)
+from app.services import suggested_action_service, vault_service
 from app.services.ai_service import AIGenerationError, generate_chat_reply
+from app.services.suggested_action_service import AlreadyDecidedError
 from app.services.usage_service import (
     DailyCapExceededError,
     calculate_cost_usd,
@@ -98,7 +105,7 @@ async def chat(
     # ── Generate reply via AI ─────────────────────────────────────────────────
     history = [turn.model_dump() for turn in req.history]
     try:
-        reply_text, input_tokens, output_tokens = await generate_chat_reply(
+        chat_ai, input_tokens, output_tokens = await generate_chat_reply(
             req.message, history, context_block
         )
     except AIGenerationError as exc:
@@ -173,8 +180,121 @@ async def chat(
     )
 
     return JarvisChatResponse(
-        reply=reply_text,
+        reply=chat_ai.reply,
         sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in hit_sources],
         base_sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in base_sources],
-        suggested_actions=[],  # v1: always empty — see app/models/jarvis.py
+        # Proposals only — nothing is written here. See suggested_action_service
+        # and the confirm/reject endpoints below for the only place a
+        # suggestion can become a real work order (JARVIS-C1).
+        suggested_actions=chat_ai.suggested_actions,
     )
+
+
+@router.post("/suggested-actions/confirm", response_model=SuggestedActionDecisionResponse)
+async def confirm_suggested_action(
+    req: SuggestedActionDecisionRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    try:
+        setup = ensure_user_workspace(user)
+        effective_workspace_id = setup.get("workspace_id")
+        profile = setup.get("profile") or {}
+        created_by = profile.get("display_name") or user.email or user.id
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "ensure_user_workspace failed unexpectedly | %s: %s",
+            type(exc).__name__,
+            str(exc)[:200],
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "USER_SETUP_FAILED",
+                "message": "Account setup ist unvollständig. Bitte Seite neu laden und nochmal versuchen.",
+            },
+        )
+
+    try:
+        result = suggested_action_service.confirm_suggested_action(
+            user.id, effective_workspace_id, created_by, req.action, req.request_id
+        )
+    except AlreadyDecidedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "ALREADY_DECIDED",
+                "message": "Dieser Vorschlag wurde bereits entschieden.",
+                "decision": exc.existing_decision,
+                "work_order_id": exc.work_order_id,
+            },
+        )
+    except Exception as exc:
+        logger.error(
+            "Confirm suggested action failed | %s: %s",
+            type(exc).__name__, str(exc)[:200],
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "CONFIRM_FAILED",
+                "message": "Bestätigen fehlgeschlagen. Bitte nochmal versuchen.",
+            },
+        )
+
+    return SuggestedActionDecisionResponse(**result)
+
+
+@router.post("/suggested-actions/reject", response_model=SuggestedActionDecisionResponse)
+async def reject_suggested_action(
+    req: SuggestedActionDecisionRequest,
+    user: CurrentUser = Depends(get_current_user),
+):
+    try:
+        setup = ensure_user_workspace(user)
+        effective_workspace_id = setup.get("workspace_id")
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "ensure_user_workspace failed unexpectedly | %s: %s",
+            type(exc).__name__,
+            str(exc)[:200],
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "USER_SETUP_FAILED",
+                "message": "Account setup ist unvollständig. Bitte Seite neu laden und nochmal versuchen.",
+            },
+        )
+
+    try:
+        result = suggested_action_service.reject_suggested_action(
+            user.id, effective_workspace_id, req.action, req.request_id
+        )
+    except AlreadyDecidedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "ALREADY_DECIDED",
+                "message": "Dieser Vorschlag wurde bereits entschieden.",
+                "decision": exc.existing_decision,
+                "work_order_id": exc.work_order_id,
+            },
+        )
+    except Exception as exc:
+        logger.error(
+            "Reject suggested action failed | %s: %s",
+            type(exc).__name__, str(exc)[:200],
+        )
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "code": "REJECT_FAILED",
+                "message": "Ablehnen fehlgeschlagen. Bitte nochmal versuchen.",
+            },
+        )
+
+    return SuggestedActionDecisionResponse(**result)

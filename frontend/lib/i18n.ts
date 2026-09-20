@@ -157,6 +157,24 @@ const dict: Record<string, Record<Lang, string>> = {
   "jarvis.open_mobile":       { en: "Open Jarvis",        de: "Jarvis öffnen" },
   "jarvis.close":             { en: "Close",              de: "Schließen" },
 
+  // ── Jarvis suggested actions (JARVIS-C1 — Command Layer) ────────────────────
+  "jarvis.suggested_action.heading":       { en: "Proposal",          de: "Vorschlag" },
+  "jarvis.suggested_action.team_type":     { en: "Team",              de: "Team" },
+  "jarvis.suggested_action.target_repo":   { en: "Repo",              de: "Repo" },
+  "jarvis.suggested_action.risk":          { en: "Risk",              de: "Risiko" },
+  "jarvis.suggested_action.risk.low":      { en: "low",               de: "niedrig" },
+  "jarvis.suggested_action.risk.medium":   { en: "medium",            de: "mittel" },
+  "jarvis.suggested_action.risk.high":     { en: "high",              de: "hoch" },
+  "jarvis.suggested_action.requires_approval_yes": { en: "Needs approval for every step", de: "Jeder Schritt braucht Freigabe" },
+  "jarvis.suggested_action.requires_approval_no":  { en: "Standard approval scope", de: "Standard-Freigabe-Rahmen" },
+  "jarvis.suggested_action.confirm":       { en: "Confirm",           de: "Bestätigen" },
+  "jarvis.suggested_action.reject":        { en: "Reject",            de: "Ablehnen" },
+  "jarvis.suggested_action.deciding":      { en: "Working...",        de: "Wird verarbeitet..." },
+  "jarvis.suggested_action.confirmed":     { en: "Work order created", de: "Work Order angelegt" },
+  "jarvis.suggested_action.rejected":      { en: "Rejected",          de: "Abgelehnt" },
+  "jarvis.suggested_action.view_work_order": { en: "View work order", de: "Work Order ansehen" },
+  "jarvis.suggested_action.error_retry":   { en: "Failed — try again:", de: "Fehlgeschlagen — nochmal versuchen:" },
+
   // ── Settings ───────────────────────────────────────────────────────────────
   "settings.title":           { en: "Settings",           de: "Einstellungen" },
   "settings.subtitle":        { en: "Account and preferences.", de: "Konto und Einstellungen." },
