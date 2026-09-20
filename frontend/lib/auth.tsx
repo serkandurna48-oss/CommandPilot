@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from "react";
 import type { Session, User } from "@supabase/supabase-js";
@@ -96,12 +97,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [setLanguage]
   );
 
+  // Tracks the currently-authenticated user id outside of React state so the
+  // onAuthStateChange handler below can tell a genuine sign-in (different or
+  // previously-absent user) apart from a redundant SIGNED_IN re-emit for the
+  // *same* already-authenticated user (Supabase fires this on tab refocus /
+  // session revalidation). Only the former should flip `loading` back to
+  // true — doing it unconditionally unmounts the whole ProtectedRoute
+  // subtree (and any local state inside it, e.g. Jarvis chat) on every tab
+  // refocus.
+  const sessionUserIdRef = useRef<string | null>(null);
+
   useEffect(() => {
     let alive = true;
 
     supabase.auth.getSession().then(async ({ data }) => {
       if (!alive) return;
       setSession(data.session);
+      sessionUserIdRef.current = data.session?.user?.id ?? null;
       try {
         await bootstrap(data.session);
       } finally {
@@ -110,9 +122,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     });
 
     const { data: listener } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      const previousUserId = sessionUserIdRef.current;
+      const nextUserId = nextSession?.user?.id ?? null;
       setSession(nextSession);
+      sessionUserIdRef.current = nextUserId;
 
       if (event === "SIGNED_IN") {
+        if (previousUserId && previousUserId === nextUserId) {
+          // Same user, already authenticated and bootstrapped — just
+          // refresh the session object, no loading/unmount cycle.
+          return;
+        }
         // Reset any previous session-expired flag on a fresh login.
         setSessionExpired(false);
         setLoading(true);
