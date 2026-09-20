@@ -2,7 +2,69 @@
 @tailwind components;
 @tailwind utilities;
 
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Source+Serif+4:wght@500;600&display=swap');
+
+/*
+ * Focus Deck — Design-Foundation (Slice 1, JARVIS-Auftrag "Focus Deck").
+ * Drei Ebenen, Technik übernommen aus der JARVIS-D1-Token-Architektur
+ * (cp-design, verworfene Steel-Blue-Farbwelt) — die Struktur bewährt sich,
+ * nur die Werte sind neu:
+ * 1. Primitiv  — tailwind.config.ts (brand-50..900 Bronze/Copper, status-*)
+ * 2. Semantisch — Flächen/Text/Rahmen unten, benennt eine Rolle, nicht eine Farbe
+ * 3. Interaktiv — pro Variante eigene default/hover/press-Tokens
+ * Kein Theme-Umschalter, dark-only. Bronze ist AUSSCHLIESSLICH Brand/Action,
+ * niemals Warning — siehe Kommentar bei --status-warning unten für den
+ * berechneten Farbabstand.
+ */
+:root {
+  /* Flächen — warmes Graphit statt neutralem Slate */
+  --bg-app: #0b0b0c;
+  --bg-surface: #17171a;
+  --bg-elevated: #1e1e22;
+
+  /* Text — leicht warme Grauskala passend zur Bronze-Markenfarbe */
+  --text-primary: #f2efea;
+  --text-secondary: #a8a29a;
+  --text-tertiary: #7a756d;
+  --text-placeholder: #5c5850;
+  --text-accent: #b5733f; /* brand-500 */
+
+  /* Rahmen — vier Gewichte statt eines */
+  --border-light: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-medium: rgba(255, 255, 255, 0.16);
+  --border-heavy: rgba(255, 255, 255, 0.24);
+
+  /* Interaktion — Hover/Press als Alpha-Overlay auf dem Akzent selbst,
+     kein zweiter Bronze-Ton nur für "Hover" (gleiche Technik wie JARVIS-D1). */
+  --interactive-bg-primary-default: #9c5e33; /* brand-600 */
+  --interactive-bg-primary-hover: color-mix(in srgb, white 10%, var(--interactive-bg-primary-default));
+  --interactive-bg-primary-press: color-mix(in srgb, black 12%, var(--interactive-bg-primary-default));
+
+  --interactive-bg-secondary-default: transparent;
+  --interactive-bg-secondary-hover: rgba(255, 255, 255, 0.08);
+  --interactive-bg-secondary-press: rgba(255, 255, 255, 0.04);
+  --interactive-bg-secondary-selected: rgba(255, 255, 255, 0.08);
+
+  --interactive-bg-tertiary-hover: rgba(255, 255, 255, 0.04);
+
+  /* Fokus: eigener, kontraststarker Token statt des Akzents (der bei 1.5px
+     zu wenig Kontrast hätte) — nur :focus-visible verwendet ihn. */
+  --interactive-border-focus: var(--text-primary);
+
+  /*
+   * Bronze (brand-600, #9c5e33) vs. Warning (status-warning, #eab308) —
+   * echter Farbabstand, nicht nur "sieht anders aus":
+   * Bronze:  HSL ≈ (25°, 51%, 41%)
+   * Warning: HSL ≈ (45°, 93%, 48%)
+   * → 20° Farbtonabstand + 43 Prozentpunkte Sättigungsunterschied.
+   * Weiß-Text auf brand-600: Kontrast ≈ 5.2:1 (besteht AA für Normaltext).
+   * Warning-Text auf --bg-app: Kontrast ≈ 10.7:1.
+   * Implementierungsanforderung (Phase 6/7 des Design-Auftrags): bei
+   * jeder neuen Bronze- oder Warning-Verwendung diesen Abstand erhalten,
+   * nicht durch spätere Anpassung wieder annähern.
+   */
+}
 
 * {
   box-sizing: border-box;
@@ -14,15 +76,24 @@ html {
 }
 
 body {
-  background-color: #020617; /* slate-950 */
-  color: #f1f5f9;            /* slate-100 */
+  background-color: var(--bg-app);
+  color: var(--text-primary);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 /* scrollbar */
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #475569; }
+::-webkit-scrollbar-thumb { background: var(--border-heavy); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
 
 /* range inputs */
 input[type="range"] {
@@ -30,7 +101,7 @@ input[type="range"] {
   appearance: none;
   height: 4px;
   border-radius: 4px;
-  background: #334155;
+  background: var(--border-heavy);
   outline: none;
 }
 
@@ -39,11 +110,11 @@ input[type="range"]::-webkit-slider-thumb {
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: #6366f1;
+  background: var(--interactive-bg-primary-default);
   cursor: pointer;
   transition: background 0.2s;
 }
 
 input[type="range"]::-webkit-slider-thumb:hover {
-  background: #818cf8;
+  background: var(--interactive-bg-primary-hover);
 }

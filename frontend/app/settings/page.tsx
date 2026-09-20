@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { AppShell } from "@/components/layout/AppShell";
-import { Header } from "@/components/layout/Header";
+import { FocusDeckShell } from "@/components/layout/FocusDeckShell";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useAuth } from "@/lib/auth";
@@ -33,20 +32,26 @@ export default function SettingsPage() {
   }
 
   return (
-    <AppShell>
-      <Header
-        title={t("settings.title")}
-        subtitle={t("settings.subtitle")}
-      />
+    <FocusDeckShell>
+      {/* Seitentitel: die eine erlaubte Serif-Headline pro View (Design-
+          System-Board, Typography-Blatt) — lokal hier, nicht über die
+          geteilte Header.tsx, damit unmigrierte Routen (die Header.tsx
+          weiter nutzen) optisch unverändert bleiben. */}
+      <div className="mb-8">
+        <h1 className="font-serif text-[28px] leading-[34px] font-semibold text-[var(--text-primary)]">
+          {t("settings.title")}
+        </h1>
+        <p className="text-[var(--text-secondary)] text-sm mt-1">{t("settings.subtitle")}</p>
+      </div>
 
       <div className="space-y-4">
         <Card>
           <CardHeader><CardTitle>{t("settings.account")}</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <div>
-              <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">{t("settings.signed_in_as")}</p>
-              <p className="text-slate-300 text-sm">{user?.email}</p>
-              <p className="text-slate-600 font-mono text-xs mt-1">{user?.id}</p>
+              <p className="text-xs text-[var(--text-tertiary)] uppercase tracking-wide mb-1">{t("settings.signed_in_as")}</p>
+              <p className="text-[var(--text-secondary)] text-sm">{user?.email}</p>
+              <p className="text-[var(--text-tertiary)] font-mono text-xs mt-1">{user?.id}</p>
             </div>
             <Button variant="secondary" size="sm" onClick={() => signOut()}>
               {t("settings.sign_out")}
@@ -58,7 +63,7 @@ export default function SettingsPage() {
           <CardHeader><CardTitle>{t("settings.preferences")}</CardTitle></CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <p className="text-xs text-slate-500 uppercase tracking-wide mb-2">{t("settings.language")}</p>
+              <p className="text-xs text-[var(--text-tertiary)] uppercase tracking-wide mb-2">{t("settings.language")}</p>
               <div className="flex gap-2 flex-wrap">
                 {SUPPORTED_LANGS.map(({ value, label }) => (
                   <button
@@ -67,8 +72,8 @@ export default function SettingsPage() {
                     disabled={langSaving}
                     className={
                       language === value
-                        ? "px-4 py-1.5 rounded-lg text-sm font-medium bg-brand-600 text-white border border-brand-500"
-                        : "px-4 py-1.5 rounded-lg text-sm font-medium bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition-colors"
+                        ? "px-4 py-1.5 rounded-lg text-sm font-medium bg-[var(--interactive-bg-primary-default)] text-white border border-transparent"
+                        : "px-4 py-1.5 rounded-lg text-sm font-medium bg-[var(--bg-elevated)] text-[var(--text-secondary)] border border-[var(--border-default)] hover:bg-[var(--interactive-bg-secondary-hover)] motion-safe:transition-colors"
                     }
                   >
                     {label}
@@ -79,16 +84,16 @@ export default function SettingsPage() {
                 <p className="text-brand-400 text-xs mt-2">{t("settings.language_saved")}</p>
               )}
               {langError && (
-                <p className="text-red-400 text-xs mt-2">{langError}</p>
+                <p className="text-status-danger text-xs mt-2">{langError}</p>
               )}
             </div>
             <div>
-              <p className="text-xs text-slate-500 uppercase tracking-wide mb-1">{t("settings.ai_model")}</p>
-              <p className="text-slate-400 text-sm">GPT-4o — set in backend .env</p>
+              <p className="text-xs text-[var(--text-tertiary)] uppercase tracking-wide mb-1">{t("settings.ai_model")}</p>
+              <p className="text-[var(--text-secondary)] text-sm">GPT-4o</p>
             </div>
           </CardContent>
         </Card>
       </div>
-    </AppShell>
+    </FocusDeckShell>
   );
 }

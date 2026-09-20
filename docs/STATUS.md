@@ -1,15 +1,30 @@
 # STATUS — CommandPilot / Jarvis
 
-Letzte Aktualisierung: 18.09.2026, Ende des Arbeitstags.
+Letzte Aktualisierung: 20.09.2026.
 Diese Datei ist der Einstieg. Wer hier anfängt, weiß, wo alles steht.
 
 ## Wo die Stränge stehen
 
 | Strang | Ort | Branch | Stand | Nächster Schritt |
 |---|---|---|---|---|
-| main | dev/commandpilot | main | A1 fertig, 39 Tests grün | prüfen ob alles gepusht ist |
-| Design D1 | dev/cp-design | feat/design-system | Phase 3 + Token-Architektur fertig | Serkan prüft 4 Routen, dann Phase 4 |
+| main | dev/commandpilot | main | A1 fertig, 39 Tests grün | unverändert, Basis für Focus Deck |
+| Design D1 (Steel-Blue) | dev/cp-design | feat/design-system | Phase 4 implementiert, danach von Serkan **verworfen** — nicht committen/mergen | ersetzt durch Focus Deck |
 | Multiagent M1 | dev/cp-multiagent | feat/multiagent | Phase 0 BESTANDEN | Activity-Log-Bug fixen, dann Phase 1 |
+| **Focus Deck (Bronze)** | dev/cp-focus-deck | feat/focus-deck-v2 | Design vollständig LOCKED, **Implementierung Slice 1 läuft gerade** | siehe unten |
+
+**Zielrichtung**: "Focus Deck" (Graphit + Bronze/Copper, permanente
+Jarvis-Spalte, fünf-teilige Icon-Navigation) ersetzt die verworfene
+Steel-Blue-Richtung aus JARVIS-D1. Design-Referenzen liegen außerhalb des
+Git-Repos unter `C:\Users\serka\dev\commandpilot-design-v2\` — nie
+committen. Vollständiger Implementierungsplan:
+`docs/design/commandpilot-focus-deck-implementation-plan.md`.
+
+**Implementierungsstand (ehrlich, kein "done"-Claim)**: Slice 1
+(Design-Foundation-Tokens + neue Shell-Komponente + Settings als erste
+migrierte Route) ist in Arbeit im Worktree `cp-focus-deck`. Noch nicht
+committet, noch nicht gepusht, noch nicht gemerged. Alle anderen Routen
+(Home, Jarvis, Projects, Operator) laufen unverändert auf der alten
+AppShell weiter, bis sie in späteren Slices migriert werden.
 
 ## Was heute erreicht wurde
 

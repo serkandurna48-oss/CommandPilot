@@ -32,11 +32,11 @@ export function EmptyState({
 }) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
-      <div className="h-12 w-12 rounded-full bg-slate-800 flex items-center justify-center mb-4">
+      <div className="h-12 w-12 rounded-full bg-[var(--bg-elevated)] flex items-center justify-center mb-4">
         <span className="text-2xl">—</span>
       </div>
-      <p className="text-slate-300 font-medium">{title}</p>
-      {description && <p className="text-slate-500 text-sm mt-1 max-w-xs">{description}</p>}
+      <p className="text-[var(--text-secondary)] font-medium">{title}</p>
+      {description && <p className="text-[var(--text-tertiary)] text-sm mt-1 max-w-xs">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
   );

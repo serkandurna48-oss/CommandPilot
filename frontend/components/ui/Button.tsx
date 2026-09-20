@@ -8,10 +8,13 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const variants = {
-  primary:   "bg-brand-600 hover:bg-brand-700 text-white border-transparent",
-  secondary: "bg-slate-700 hover:bg-slate-600 text-slate-100 border-slate-600",
-  ghost:     "bg-transparent hover:bg-slate-800 text-slate-300 border-transparent",
-  danger:    "bg-red-600 hover:bg-red-700 text-white border-transparent",
+  primary:
+    "bg-[var(--interactive-bg-primary-default)] hover:bg-[var(--interactive-bg-primary-hover)] active:bg-[var(--interactive-bg-primary-press)] text-white border-transparent",
+  secondary:
+    "bg-[var(--bg-elevated)] hover:bg-[var(--interactive-bg-secondary-hover)] text-[var(--text-primary)] border-[var(--border-default)]",
+  ghost:
+    "bg-transparent hover:bg-[var(--interactive-bg-secondary-hover)] text-[var(--text-secondary)] border-transparent",
+  danger: "bg-status-danger hover:brightness-110 active:brightness-90 text-white border-transparent",
 };
 
 const sizes = {
@@ -27,7 +30,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         ref={ref}
         disabled={disabled || loading}
         className={cn(
-          "inline-flex items-center justify-center gap-2 rounded-lg border font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-brand-500 focus:ring-offset-2 focus:ring-offset-slate-900 disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98] active:brightness-95",
+          "inline-flex items-center justify-center gap-2 rounded-lg border font-medium motion-safe:transition-colors focus:outline-none focus-visible:outline focus-visible:outline-[1.5px] focus-visible:outline-offset-[2.5px] focus-visible:outline-[var(--interactive-border-focus)] disabled:opacity-50 disabled:cursor-not-allowed active:scale-[0.98]",
           variants[variant],
           sizes[size],
           className

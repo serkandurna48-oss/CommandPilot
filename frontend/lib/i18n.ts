@@ -39,6 +39,11 @@ const dict: Record<string, Record<Lang, string>> = {
   "nav.operator":             { en: "Operator",           de: "Operator" },
   "nav.jarvis":               { en: "Jarvis",             de: "Jarvis" },
   "nav.settings":             { en: "Settings",           de: "Einstellungen" },
+  // Focus-Deck-Icon-Rail (Slice 1): fünf globale Ziele, bündeln die acht
+  // Routen oben. "Home" bündelt Dashboard/Morning/Plan/Review, "Activity"
+  // bündelt Operator/Work Orders/Agent Runs/Review Packages.
+  "nav.home":                 { en: "Home",               de: "Home" },
+  "nav.activity":             { en: "Activity",           de: "Aktivität" },
 
   // ── Dashboard ──────────────────────────────────────────────────────────────
   "dashboard.title":          { en: "Dashboard",          de: "Cockpit" },
@@ -145,10 +150,16 @@ const dict: Record<string, Record<Lang, string>> = {
   "jarvis.empty_state":       { en: "Ask a question to get started.", de: "Stell eine Frage, um loszulegen." },
   "jarvis.error_banner":      { en: "Jarvis could not answer:", de: "Jarvis konnte nicht antworten:" },
   "jarvis.retry":             { en: "Retry",              de: "Nochmal versuchen" },
+  // Focus-Deck-Jarvis-Rail (Slice 1): Layout-States, kein neuer Chat-Text.
+  "jarvis.expand":            { en: "Expand Jarvis",      de: "Jarvis ausklappen" },
+  "jarvis.collapse":          { en: "Collapse Jarvis",    de: "Jarvis einklappen" },
+  "jarvis.restore":           { en: "Restore Jarvis size", de: "Jarvis auf Normalgröße" },
+  "jarvis.open_mobile":       { en: "Open Jarvis",        de: "Jarvis öffnen" },
+  "jarvis.close":             { en: "Close",              de: "Schließen" },
 
   // ── Settings ───────────────────────────────────────────────────────────────
   "settings.title":           { en: "Settings",           de: "Einstellungen" },
-  "settings.subtitle":        { en: "Account, preferences, and integrations.", de: "Konto, Sprache und Verhalten." },
+  "settings.subtitle":        { en: "Account and preferences.", de: "Konto und Einstellungen." },
   "settings.account":         { en: "Account",            de: "Konto" },
   "settings.signed_in_as":    { en: "Signed in as",       de: "Angemeldet als" },
   "settings.sign_out":        { en: "Sign out",           de: "Abmelden" },
