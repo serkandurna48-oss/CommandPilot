@@ -1,6 +1,6 @@
 "use client";
 
-import { Header } from "@/components/layout/Header";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { OperatorManager } from "@/components/operator/OperatorManager";
 import { useT } from "@/lib/i18n";
 
@@ -8,7 +8,7 @@ export default function OperatorPage() {
   const t = useT();
   return (
     <>
-      <Header
+      <PageHeader
         title={t("operator.title")}
         subtitle={t("operator.subtitle")}
       />

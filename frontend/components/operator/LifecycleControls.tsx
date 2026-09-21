@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useT } from "@/lib/i18n";
 import type { WorkOrderStatus } from "@/types";
@@ -97,46 +96,41 @@ export function LifecycleControls({ status, isLive, onStatusChange }: Props) {
   }
 
   return (
-    <Card variant="bordered">
-      <CardHeader>
-        <CardTitle>{t("operator.lifecycle.title")}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-2">
-        {!isLive && <p className="text-amber-400/70 text-xs">{t("operator.lifecycle.demo_note")}</p>}
-        {confirmingCancel && (
-          <div className="rounded-lg bg-rose-950/20 border border-rose-900/30 px-3 py-2 space-y-2">
-            <p className="text-rose-300/90 text-xs">{t("operator.lifecycle.cancel_confirm_message")}</p>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                variant="danger"
-                disabled={pending !== null}
-                loading={pending === "cancelled"}
-                onClick={() => handleClick("cancelled")}
-              >
-                {t("operator.lifecycle.cancel_confirm_yes")}
-              </Button>
-              <Button size="sm" variant="ghost" disabled={pending !== null} onClick={() => setConfirmingCancel(false)}>
-                {t("operator.lifecycle.cancel_confirm_no")}
-              </Button>
-            </div>
-          </div>
-        )}
-        <div className="flex flex-wrap gap-2">
-          {options.map(({ action, labelKey, variant }) => (
+    <div className="space-y-2">
+      {!isLive && <p className="text-[var(--text-tertiary)] text-xs">{t("operator.lifecycle.demo_note")}</p>}
+      {confirmingCancel && (
+        <div className="rounded-lg bg-status-danger/10 border border-status-danger/30 px-3 py-2 space-y-2">
+          <p className="text-status-danger text-xs">{t("operator.lifecycle.cancel_confirm_message")}</p>
+          <div className="flex gap-2">
             <Button
-              key={action}
               size="sm"
-              variant={action === "cancelled" ? "danger" : variant}
-              disabled={!isLive || pending !== null || (action === "cancelled" && confirmingCancel)}
-              loading={pending === action && !confirmingCancel}
-              onClick={() => handleClick(action)}
+              variant="danger"
+              disabled={pending !== null}
+              loading={pending === "cancelled"}
+              onClick={() => handleClick("cancelled")}
             >
-              {t(labelKey)}
+              {t("operator.lifecycle.cancel_confirm_yes")}
             </Button>
-          ))}
+            <Button size="sm" variant="ghost" disabled={pending !== null} onClick={() => setConfirmingCancel(false)}>
+              {t("operator.lifecycle.cancel_confirm_no")}
+            </Button>
+          </div>
         </div>
-      </CardContent>
-    </Card>
+      )}
+      <div className="flex flex-wrap gap-2">
+        {options.map(({ action, labelKey, variant }) => (
+          <Button
+            key={action}
+            size="sm"
+            variant={action === "cancelled" ? "danger" : variant}
+            disabled={!isLive || pending !== null || (action === "cancelled" && confirmingCancel)}
+            loading={pending === action && !confirmingCancel}
+            onClick={() => handleClick(action)}
+          >
+            {t(labelKey)}
+          </Button>
+        ))}
+      </div>
+    </div>
   );
 }

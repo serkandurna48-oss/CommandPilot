@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Header } from "@/components/layout/Header";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { ReviewForm } from "@/components/review/ReviewForm";
 import { PageLoader } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
@@ -24,7 +24,7 @@ function ReviewPageContent() {
 
   return (
     <>
-      <Header
+      <PageHeader
         title={t("review.title")}
         subtitle={t("review.subtitle")}
       />

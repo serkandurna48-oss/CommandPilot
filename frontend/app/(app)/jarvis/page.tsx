@@ -1,6 +1,6 @@
 "use client";
 
-import { Header } from "@/components/layout/Header";
+import { PageHeader } from "@/components/layout/PageHeader";
 import { EmptyState } from "@/components/ui/Spinner";
 import { useT } from "@/lib/i18n";
 
@@ -15,7 +15,7 @@ export default function JarvisPage() {
   const t = useT();
   return (
     <>
-      <Header title={t("jarvis.title")} subtitle={t("jarvis.subtitle")} />
+      <PageHeader title={t("jarvis.title")} subtitle={t("jarvis.subtitle")} />
       <EmptyState title={t("jarvis.empty_state")} />
     </>
   );

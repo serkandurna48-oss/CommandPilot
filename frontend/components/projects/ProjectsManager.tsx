@@ -154,7 +154,7 @@ export function ProjectsManager() {
             { key: "waiting", count: projects.filter(p => p.status === "waiting").length },
             { key: "backlog", count: projects.filter(p => p.status === "backlog").length },
           ].map(({ key, count }) => (
-            <span key={key} className="text-[10px] font-mono px-2 py-0.5 rounded bg-slate-800 border border-slate-700 text-slate-500">
+            <span key={key} className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-tertiary)]">
               {count} {key}
             </span>
           ))}
@@ -215,7 +215,7 @@ export function ProjectsManager() {
                 onChange={(e) => setForm((f) => ({ ...f, risk: e.target.value }))}
               />
               {formError && (
-                <p className="text-red-400 text-xs">{formError}</p>
+                <p className="text-status-danger text-xs">{formError}</p>
               )}
               <Button type="submit" loading={saving} size="sm">{t("projects.save")}</Button>
             </form>
@@ -229,7 +229,7 @@ export function ProjectsManager() {
         </div>
       ) : hasLoadError ? (
         <div className="py-8 flex flex-col items-center gap-3 text-center">
-          <p className="text-slate-400 text-sm">{t("error.load_failed")}</p>
+          <p className="text-[var(--text-secondary)] text-sm">{t("error.load_failed")}</p>
           <Button size="sm" variant="secondary" onClick={loadProjects}>
             <RefreshCw className="h-4 w-4" />
             {t("button.retry")}
@@ -238,120 +238,122 @@ export function ProjectsManager() {
       ) : projects.length === 0 ? (
         <EmptyState title={t("projects.empty_title")} description={t("projects.empty_desc")} />
       ) : (
-        <div className="space-y-2">
+        // One coherent surface, divided by hairlines — not a stack of
+        // independently bordered cards (Focus-Deck-Kompositions-Pass). The
+        // per-project left priority accent is kept (real signal: how urgent
+        // is this), everything else rides the shared divider.
+        <div className="rounded-lg border border-[var(--border-light)] bg-[var(--bg-surface)]/40 divide-y divide-[var(--border-light)]">
           {projects.map((project) => (
-            <Card key={project.id}>
-              <CardContent className="py-3">
-                {editingId === project.id ? (
-                  <form onSubmit={handleUpdate} className="space-y-3">
-                    <Input
-                      label={t("projects.field_name")}
-                      required
-                      value={editForm.name}
-                      onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
-                    />
-                    <Input
-                      label={t("projects.field_next_action")}
-                      placeholder={t("projects.field_next_action_ph")}
-                      value={editForm.next_action}
-                      onChange={(e) => setEditForm((f) => ({ ...f, next_action: e.target.value }))}
-                    />
-                    <div className="grid grid-cols-2 gap-3">
-                      <Select
-                        label={t("projects.field_status")}
-                        value={editForm.status}
-                        onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value as ProjectStatus }))}
-                      >
-                        {STATUS_OPTIONS.map((s) => (
-                          <option key={s} value={s}>{t(`projects.status.${s}`)}</option>
-                        ))}
-                      </Select>
-                      <Select
-                        label={t("projects.field_priority")}
-                        value={editForm.priority}
-                        onChange={(e) => setEditForm((f) => ({ ...f, priority: e.target.value as ProjectPriority }))}
-                      >
-                        {PRIORITY_OPTIONS.map((p) => (
-                          <option key={p} value={p}>{t(`projects.priority.${p}`)}</option>
-                        ))}
-                      </Select>
-                    </div>
-                    <Textarea
-                      label={t("projects.field_description")}
-                      rows={2}
-                      value={editForm.description}
-                      onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
-                    />
-                    <Input
-                      label={t("projects.field_risk")}
-                      placeholder={t("projects.field_risk_ph")}
-                      value={editForm.risk}
-                      onChange={(e) => setEditForm((f) => ({ ...f, risk: e.target.value }))}
-                    />
-                    {editError && (
-                      <p className="text-red-400 text-xs">{editError}</p>
-                    )}
-                    <div className="flex gap-2">
-                      <Button type="submit" loading={saving} size="sm">{t("projects.save_changes")}</Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => setEditingId(null)}
-                      >
-                        <X className="h-4 w-4" />
-                        {t("common.cancel")}
-                      </Button>
-                    </div>
-                  </form>
-                ) : (
-                  <div className={cn("flex gap-3 items-start -mx-5 -my-3 px-5 py-3 rounded-lg", PRIORITY_BORDER[project.priority])}>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                        <p className="text-slate-200 text-sm font-medium">{project.name}</p>
-                        <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-mono", STATUS_COLORS[project.status])}>
-                          {t(`projects.status.${project.status}`)}
-                        </span>
-                        <span className={cn("text-[10px] font-mono", PRIORITY_COLORS[project.priority])}>
-                          {t(`projects.priority.${project.priority}`)}
-                        </span>
-                      </div>
-                      {project.next_action && (
-                        <p className="text-slate-300 text-xs mb-1 flex items-start gap-1.5">
-                          <span className="text-brand-500/60 shrink-0 mt-px">→</span>
-                          <span>{project.next_action}</span>
-                        </p>
-                      )}
-                      {project.description && (
-                        <p className="text-slate-500 text-xs mb-0.5">{project.description}</p>
-                      )}
-                      {project.risk && (
-                        <p className="text-amber-400/70 text-xs flex items-center gap-1.5 mt-0.5">
-                          <AlertTriangle className="h-3 w-3 shrink-0" />
-                          {project.risk}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex gap-1 shrink-0">
-                      <button
-                        onClick={() => startEdit(project)}
-                        className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
-                        title={t("projects.edit")}
-                      >
-                        <Pencil className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => archiveProject(project.id)}
-                        className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-amber-400 transition-colors"
-                        title={t("projects.archive")}
-                      >
-                        <Archive className="h-4 w-4" />
-                      </button>
-                    </div>
+            <div key={project.id} className="px-5 py-4">
+              {editingId === project.id ? (
+                <form onSubmit={handleUpdate} className="space-y-3">
+                  <Input
+                    label={t("projects.field_name")}
+                    required
+                    value={editForm.name}
+                    onChange={(e) => setEditForm((f) => ({ ...f, name: e.target.value }))}
+                  />
+                  <Input
+                    label={t("projects.field_next_action")}
+                    placeholder={t("projects.field_next_action_ph")}
+                    value={editForm.next_action}
+                    onChange={(e) => setEditForm((f) => ({ ...f, next_action: e.target.value }))}
+                  />
+                  <div className="grid grid-cols-2 gap-3">
+                    <Select
+                      label={t("projects.field_status")}
+                      value={editForm.status}
+                      onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value as ProjectStatus }))}
+                    >
+                      {STATUS_OPTIONS.map((s) => (
+                        <option key={s} value={s}>{t(`projects.status.${s}`)}</option>
+                      ))}
+                    </Select>
+                    <Select
+                      label={t("projects.field_priority")}
+                      value={editForm.priority}
+                      onChange={(e) => setEditForm((f) => ({ ...f, priority: e.target.value as ProjectPriority }))}
+                    >
+                      {PRIORITY_OPTIONS.map((p) => (
+                        <option key={p} value={p}>{t(`projects.priority.${p}`)}</option>
+                      ))}
+                    </Select>
                   </div>
-                )}
-              </CardContent>
-            </Card>
+                  <Textarea
+                    label={t("projects.field_description")}
+                    rows={2}
+                    value={editForm.description}
+                    onChange={(e) => setEditForm((f) => ({ ...f, description: e.target.value }))}
+                  />
+                  <Input
+                    label={t("projects.field_risk")}
+                    placeholder={t("projects.field_risk_ph")}
+                    value={editForm.risk}
+                    onChange={(e) => setEditForm((f) => ({ ...f, risk: e.target.value }))}
+                  />
+                  {editError && (
+                    <p className="text-status-danger text-xs">{editError}</p>
+                  )}
+                  <div className="flex gap-2">
+                    <Button type="submit" loading={saving} size="sm">{t("projects.save_changes")}</Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingId(null)}
+                    >
+                      <X className="h-4 w-4" />
+                      {t("common.cancel")}
+                    </Button>
+                  </div>
+                </form>
+              ) : (
+                <div className={cn("flex gap-3 items-start -my-4 py-4 pl-4 -ml-5", PRIORITY_BORDER[project.priority])}>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
+                      <p className="text-[var(--text-primary)] text-sm font-medium">{project.name}</p>
+                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-mono", STATUS_COLORS[project.status])}>
+                        {t(`projects.status.${project.status}`)}
+                      </span>
+                      <span className={cn("text-[10px] font-mono", PRIORITY_COLORS[project.priority])}>
+                        {t(`projects.priority.${project.priority}`)}
+                      </span>
+                    </div>
+                    {project.next_action && (
+                      <p className="text-[var(--text-secondary)] text-xs mb-1 flex items-start gap-1.5">
+                        <span className="text-[var(--text-accent)] shrink-0 mt-px">→</span>
+                        <span>{project.next_action}</span>
+                      </p>
+                    )}
+                    {project.description && (
+                      <p className="text-[var(--text-tertiary)] text-xs mb-0.5">{project.description}</p>
+                    )}
+                    {project.risk && (
+                      <p className="text-status-warning/80 text-xs flex items-center gap-1.5 mt-0.5">
+                        <AlertTriangle className="h-3 w-3 shrink-0" />
+                        {project.risk}
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex gap-1 shrink-0">
+                    <button
+                      onClick={() => startEdit(project)}
+                      className="p-1.5 rounded hover:bg-[var(--interactive-bg-secondary-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] motion-safe:transition-colors"
+                      title={t("projects.edit")}
+                    >
+                      <Pencil className="h-4 w-4" />
+                    </button>
+                    <button
+                      onClick={() => archiveProject(project.id)}
+                      className="p-1.5 rounded hover:bg-[var(--interactive-bg-secondary-hover)] text-[var(--text-tertiary)] hover:text-status-warning motion-safe:transition-colors"
+                      title={t("projects.archive")}
+                    >
+                      <Archive className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           ))}
         </div>
       )}

@@ -456,6 +456,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.section.no_artifacts":        { en: "No artifacts yet.",        de: "Noch keine Artifacts." },
   "operator.section.no_review_package":   { en: "No review package yet — work order is not review-ready.", de: "Noch kein Review Package — Work Order ist noch nicht review-ready." },
   "operator.section.execution_plan":      { en: "Execution Plan",           de: "Execution Plan" },
+  "operator.section.technical_details":   { en: "Technical details",        de: "Technische Details" },
   "operator.section.progress":            { en: "Progress",                 de: "Fortschritt" },
   "operator.section.no_steps":            { en: "No steps planned yet.",    de: "Noch keine Steps geplant." },
   "operator.section.output_summary":      { en: "Output",                   de: "Ergebnis" },
