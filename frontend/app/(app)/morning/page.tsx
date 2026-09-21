@@ -2,6 +2,7 @@
 
 import { PageHeader } from "@/components/layout/PageHeader";
 import { CheckinForm } from "@/components/morning/CheckinForm";
+import { CheckinHistory } from "@/components/morning/CheckinHistory";
 import { useT } from "@/lib/i18n";
 
 export default function MorningPage() {
@@ -13,6 +14,7 @@ export default function MorningPage() {
         subtitle={t("morning.subtitle")}
       />
       <CheckinForm />
+      <CheckinHistory />
     </>
   );
 }

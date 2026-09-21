@@ -2,7 +2,9 @@
 
 import { X } from "lucide-react";
 import { useT } from "@/lib/i18n";
+import { useJarvisContext } from "@/lib/jarvisContext";
 import { JarvisChat } from "@/components/jarvis/JarvisChat";
+import { JarvisIntelligenceHeader } from "@/components/jarvis/JarvisIntelligenceHeader";
 
 interface MobileJarvisOverlayProps {
   open: boolean;
@@ -12,9 +14,12 @@ interface MobileJarvisOverlayProps {
 // Mobile Jarvis = Fullscreen/Overlay (Focus-Deck-Auftrag, gelockt) statt
 // permanenter Spalte wie auf Desktop. Wrappt die unveränderte JarvisChat —
 // bleibt gemountet, nur per CSS ausgeblendet, damit ein Gespräch beim
-// Schließen/Wiederöffnen nicht verloren geht.
+// Schließen/Wiederöffnen nicht verloren geht. Jarvis Intelligence States
+// pass: same header component as desktop (JarvisRail), compact size —
+// mobile gets the same real context, not a stripped-down version.
 export function MobileJarvisOverlay({ open, onClose }: MobileJarvisOverlayProps) {
   const t = useT();
+  const context = useJarvisContext();
 
   return (
     <div
@@ -28,7 +33,7 @@ export function MobileJarvisOverlay({ open, onClose }: MobileJarvisOverlayProps)
       aria-label={t("jarvis.title")}
     >
       <div className="flex items-center justify-between px-4 py-3 border-b border-[var(--border-light)] shrink-0">
-        <span className="text-sm font-medium text-[var(--text-primary)]">{t("jarvis.title")}</span>
+        <JarvisIntelligenceHeader context={context} size="sm" />
         <button
           type="button"
           onClick={onClose}

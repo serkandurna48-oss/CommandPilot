@@ -14,9 +14,9 @@ from pydantic import ValidationError
 from app.core.config import settings
 from app.prompts.daily_plan import SYSTEM_PROMPT, JSON_SCHEMA, build_user_prompt
 from app.prompts.jarvis_chat import (
-    SYSTEM_PROMPT as JARVIS_SYSTEM_PROMPT,
     JSON_SCHEMA as JARVIS_JSON_SCHEMA,
     build_chat_prompt,
+    build_system_prompt as build_jarvis_system_prompt,
 )
 from app.models.plan import DailyPlanAI
 from app.models.jarvis import JarvisChatAI
@@ -239,6 +239,7 @@ async def generate_chat_reply(
     message: str,
     history: list[dict],
     context_block: str,
+    language: str = "de",
 ) -> tuple[JarvisChatAI, int, int]:
     """
     Call OpenAI for a Jarvis chat reply. Structured JSON output (reply +
@@ -248,10 +249,17 @@ async def generate_chat_reply(
     output_tokens). Raises AIGenerationError with the same error-code
     taxonomy as generate_daily_plan on any failure, including the JSON-parse
     and schema-validation failure modes structured output can newly produce.
-    """
-    logger.info("AI chat reply started | model=%s", settings.OPENAI_MODEL)
 
-    user_prompt = build_chat_prompt(message, history, context_block)
+    language is the caller's resolved profile.language ("en"/"de") — same
+    contract as generate_daily_plan's language param below. Previously this
+    was hardcoded to German regardless of the caller's language, unlike the
+    daily-plan path; that mismatch is why switching the UI language left
+    Jarvis chat replies stuck in German.
+    """
+    logger.info("AI chat reply started | model=%s | language=%s", settings.OPENAI_MODEL, language)
+
+    user_prompt = build_chat_prompt(message, history, context_block, language)
+    system_prompt = build_jarvis_system_prompt(language)
 
     try:
         response = await client.chat.completions.create(
@@ -265,7 +273,7 @@ async def generate_chat_reply(
                 },
             },
             messages=[
-                {"role": "system", "content": JARVIS_SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.4,

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { useT } from "@/lib/i18n";
 import { cn, formatDate, formatDateShort, getUserLanguage } from "@/lib/utils";
 import { WORK_ORDER_STATUS_COLORS } from "@/lib/operatorStyles";
+import { ProductWebsites } from "@/components/dashboard/ProductWebsites";
 import type { DailyPlan, Project, ProjectStatus, WorkOrder } from "@/types";
 import { ChevronRight } from "lucide-react";
 
@@ -283,6 +284,8 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
           </Section>
         </div>
       </div>
+
+      <ProductWebsites projects={projects} />
 
       {/* ROW 2 — Recent activity + active projects: supporting context,
           clearly subordinate, densest rows, last in the flow. */}

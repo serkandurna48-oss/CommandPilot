@@ -47,9 +47,21 @@ class _FakeQuery:
         self._filters: dict = {}
         self._op = None
         self._payload = None
+        self._order_col = None
+        self._order_desc = False
+        self._limit = None
 
     def select(self, *_cols):
         self._op = "select"
+        return self
+
+    def order(self, col, desc=False):
+        self._order_col = col
+        self._order_desc = desc
+        return self
+
+    def limit(self, n):
+        self._limit = n
         return self
 
     def insert(self, payload):
@@ -75,7 +87,12 @@ class _FakeQuery:
 
     def execute(self):
         if self._op == "select":
-            return _FakeResult([r for r in self._table.rows if self._matches(r)])
+            rows = [r for r in self._table.rows if self._matches(r)]
+            if self._order_col is not None:
+                rows = sorted(rows, key=lambda r: r.get(self._order_col), reverse=self._order_desc)
+            if self._limit is not None:
+                rows = rows[: self._limit]
+            return _FakeResult(rows)
         if self._op == "insert":
             key = (self._payload.get("user_id"), self._payload.get("request_id"))
             if key in self._table.unique_keys:
@@ -248,6 +265,31 @@ class SuggestedActionServiceTests(unittest.TestCase):
 
         self.assertEqual(retried["work_order_id"], "wo-retry")
         self.assertFalse(retried["already_decided"])
+
+    def test_list_decisions_returns_most_recent_first(self):
+        svc.reject_suggested_action("user-1", "ws-1", _ACTION, "req-older")
+        self.fake_db.table("suggested_action_decisions").rows[-1]["created_at"] = "2026-09-01T00:00:00+00:00"
+        with patch.object(
+            svc.work_order_service, "create_work_order",
+            return_value={"id": "wo-newer", "approval_scope_id": "scope-newer"},
+        ), patch.object(svc.work_order_service, "append_activity_log", return_value={"id": "log-newer"}):
+            svc.confirm_suggested_action("user-1", "ws-1", "Serkan", _ACTION, "req-newer")
+        self.fake_db.table("suggested_action_decisions").rows[-1]["created_at"] = "2026-09-21T00:00:00+00:00"
+
+        result = svc.list_decisions("user-1")
+
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["decision"], "confirmed")
+        self.assertEqual(result[1]["decision"], "rejected")
+
+    def test_list_decisions_scoped_to_user(self):
+        svc.reject_suggested_action("user-1", "ws-1", _ACTION, "req-mine")
+        svc.reject_suggested_action("user-2", "ws-1", _ACTION, "req-not-mine")
+
+        result = svc.list_decisions("user-1")
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["request_id"], "req-mine")
 
     def test_requires_approval_action_gets_a_stricter_scope(self):
         strict_action = _ACTION.model_copy(update={"requires_approval": True})

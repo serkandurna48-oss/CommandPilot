@@ -160,6 +160,7 @@ export interface Project {
   priority: ProjectPriority;
   next_action?: string;
   risk?: string;
+  website_url?: string;
   created_at: string;
   updated_at: string;
 }
@@ -171,6 +172,7 @@ export interface ProjectCreate {
   priority: ProjectPriority;
   next_action?: string;
   risk?: string;
+  website_url?: string;
 }
 
 export interface ProjectUpdate {
@@ -180,6 +182,7 @@ export interface ProjectUpdate {
   priority?: ProjectPriority;
   next_action?: string;
   risk?: string;
+  website_url?: string;
 }
 
 // ─── Background Dev Team — Control Plane ────────────────────────────────────────
@@ -390,6 +393,27 @@ export interface JarvisSuggestedActionDecisionResponse {
   decision: "confirmed" | "rejected";
   work_order_id?: string | null;
   already_decided: boolean;
+}
+
+// ─── Suggested action decision history (Command Layer audit trail) ──────────────
+// Read-only view of every proposal a human has ever confirmed or rejected —
+// see backend/app/models/jarvis.py's SuggestedActionDecisionListItem. Fields
+// are a denormalized snapshot from decision time, not a live work_order join.
+export interface JarvisSuggestedActionDecisionListItem {
+  id: string;
+  decision: "confirmed" | "rejected";
+  title: string;
+  team_type?: string | null;
+  target_repo_name?: string | null;
+  risk?: "low" | "medium" | "high" | null;
+  requires_approval?: boolean | null;
+  sources: JarvisSourceRef[];
+  work_order_id?: string | null;
+  created_at: string;
+}
+
+export interface JarvisSuggestedActionDecisionListResponse {
+  decisions: JarvisSuggestedActionDecisionListItem[];
 }
 
 // ─── API responses ─────────────────────────────────────────────────────────────

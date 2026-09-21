@@ -10,13 +10,17 @@ import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { RISK_COLORS } from "@/lib/operatorStyles";
 import { useJarvisContext } from "@/lib/jarvisContext";
+import { deriveJarvisIntelligenceMode } from "@/lib/jarvisIntelligenceState";
+import { JarvisContextSnapshot } from "@/components/jarvis/JarvisContextSnapshot";
+import { JarvisQuickAction } from "@/components/jarvis/JarvisQuickAction";
+import { JarvisDecisionHistory } from "@/components/jarvis/JarvisDecisionHistory";
 import type {
   JarvisChatMessage,
   JarvisSourceRef,
   JarvisSuggestedAction,
   JarvisSuggestedActionDecisionRequest,
 } from "@/types";
-import { Sparkles, ArrowRight, Check, X, ChevronRight, FileText, FolderOpen } from "lucide-react";
+import { ArrowRight, Check, X, ChevronRight, FileText, FolderOpen, Sparkles } from "lucide-react";
 
 // One suggested_action as shown in the UI, tagged with a stable client-side
 // idempotency token (JARVIS-C1, Phase 6) generated once when the proposal
@@ -32,6 +36,11 @@ interface DisplayMessage extends JarvisChatMessage {
   sources?: JarvisSourceRef[];
   baseSources?: JarvisSourceRef[];
   suggestedActions?: DisplaySuggestedAction[];
+  // Set only when this reply came from a quick-intelligence action that
+  // defines a resultLabel (e.g. "Risk analysis") — replaces the generic
+  // "Jarvis" role label above the answer. Free-typed follow-ups have none,
+  // and keep the plain role label; never fabricated per message.
+  modeLabel?: string;
 }
 
 // Higgsfield reference (05-pages/02-jarvis-expanded-desktop.png): a real,
@@ -188,8 +197,20 @@ export function JarvisChat() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<Record<string, DecisionState>>({});
+  // Set only while a quick-intelligence action's request is in flight — the
+  // working-state label shown instead of the generic "Thinking..." (e.g.
+  // "Analyzing risks…"). Cleared once the request settles either way.
+  const [pendingLabel, setPendingLabel] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  const lastMessage = messages[messages.length - 1];
+  const mode = deriveJarvisIntelligenceMode({
+    hasMessages: messages.length > 0,
+    loading,
+    lastAssistantHasActions:
+      !!lastMessage && lastMessage.role === "assistant" && (lastMessage.suggestedActions?.length ?? 0) > 0,
+  });
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -208,12 +229,13 @@ export function JarvisChat() {
     el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
   }, [input]);
 
-  async function send(text: string) {
+  async function send(text: string, opts?: { workingLabel?: string; resultLabel?: string }) {
     const question = text.trim();
     if (!question || loading) return;
 
     setError(null);
     setInput("");
+    setPendingLabel(opts?.workingLabel ?? null);
 
     // History sent to the backend is the conversation as it stood before this
     // question — the backend appends the current message separately.
@@ -230,7 +252,14 @@ export function JarvisChat() {
       }));
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: res.reply, sources: res.sources, baseSources: res.base_sources, suggestedActions },
+        {
+          role: "assistant",
+          content: res.reply,
+          sources: res.sources,
+          baseSources: res.base_sources,
+          suggestedActions,
+          modeLabel: opts?.resultLabel,
+        },
       ]);
     } catch (err: unknown) {
       // Never fall back to mock/placeholder content on failure — a visible
@@ -242,6 +271,7 @@ export function JarvisChat() {
       setInput(question);
     } finally {
       setLoading(false);
+      setPendingLabel(null);
     }
   }
 
@@ -303,42 +333,51 @@ export function JarvisChat() {
     // this" concern belongs to them, not to this shared component.
     <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto space-y-4 pb-4">
-        {messages.length === 0 && !loading && (
-          // Bespoke welcome block, not the shared EmptyState (that one is
-          // reused across many unrelated empty states app-wide — this is
-          // Jarvis-specific presentation). Interactive Operating System pass:
-          // replaces the generic time-of-day greeting with real route/entity
-          // context (CommandPilot.jarvisContext) and quick actions derived
-          // from it — never the same block on every screen.
-          <div className="py-6 space-y-5">
-            <Sparkles className="h-6 w-6 text-[var(--text-accent)]" />
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
-                {t("jarvis.panel.context_label")}
-              </p>
-              <p className="font-serif text-xl text-[var(--text-primary)] mt-1">{jarvisContext.summary}</p>
-            </div>
+        {mode === "context" && (
+          // Contextual Intelligence Workspace pass: this is the "the user
+          // should not need to type first" surface — real structured fields
+          // about what's currently in view (JarvisContextSnapshot), then
+          // real quick-intelligence rows that send real prompts through the
+          // unchanged /api/jarvis/chat endpoint. The entity title itself
+          // lives in the surrounding chrome (JarvisIntelligenceHeader in
+          // JarvisRail/JarvisPage/MobileJarvisOverlay), not duplicated here.
+          <div className="py-2 space-y-6">
+            {jarvisContext.snapshot && jarvisContext.snapshot.length > 0 && (
+              <JarvisContextSnapshot fields={jarvisContext.snapshot} />
+            )}
             {jarvisContext.quickActions.length > 0 && (
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] mb-2">
-                  {t("jarvis.panel.quick_actions_label")}
+                  {t("jarvis.panel.quick_intelligence_label")}
                 </p>
                 <div className="space-y-2">
                   {jarvisContext.quickActions.map((qa) => (
-                    <button
+                    <JarvisQuickAction
                       key={qa.label}
-                      type="button"
-                      onClick={() => send(qa.prompt)}
-                      className="w-full flex items-center gap-3 rounded-xl border border-[var(--border-light)] px-4 py-3 text-left hover:bg-[var(--interactive-bg-secondary-hover)] motion-safe:transition-colors duration-150"
-                    >
-                      <Sparkles className="h-4 w-4 text-[var(--text-accent)] shrink-0" />
-                      <span className="text-sm text-[var(--text-primary)] flex-1">{qa.label}</span>
-                      <ChevronRight className="h-4 w-4 text-[var(--text-tertiary)] shrink-0" />
-                    </button>
+                      label={qa.label}
+                      description={qa.description}
+                      icon={qa.icon}
+                      onClick={() => send(qa.prompt, { workingLabel: qa.workingLabel, resultLabel: qa.resultLabel })}
+                    />
                   ))}
                 </div>
               </div>
             )}
+            {/* Fallback for routes without real structured data or quick
+                actions yet (e.g. Settings) — the plain route summary, never
+                a blank panel. */}
+            {(!jarvisContext.snapshot || jarvisContext.snapshot.length === 0) &&
+              jarvisContext.quickActions.length === 0 && (
+                <div className="flex items-start gap-3">
+                  <Sparkles className="h-5 w-5 text-[var(--text-accent)] shrink-0 mt-0.5" />
+                  <p className="font-serif text-lg text-[var(--text-primary)]">{jarvisContext.summary}</p>
+                </div>
+              )}
+            {/* Command Layer audit trail (JARVIS-C1) — every proposal ever
+                confirmed/rejected, route-agnostic so it renders once per
+                panel/page regardless of what's currently in context. Renders
+                nothing until real decisions exist. */}
+            <JarvisDecisionHistory />
           </div>
         )}
 
@@ -348,7 +387,7 @@ export function JarvisChat() {
         {messages.map((msg, i) => (
           <div key={i} className="pb-4 border-b border-[var(--border-light)] last:border-0">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] mb-2">
-              {msg.role === "user" ? t("jarvis.you_label") : t("jarvis.title")}
+              {msg.role === "user" ? t("jarvis.you_label") : msg.modeLabel ?? t("jarvis.title")}
             </p>
             <p
               className={cn(
@@ -363,7 +402,7 @@ export function JarvisChat() {
 
             {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
               <div className="mt-3">
-                <SourcesDisclosure title={t("jarvis.sources")} icon={FileText} sources={msg.sources} defaultOpen />
+                <SourcesDisclosure title={t("jarvis.sources")} icon={FileText} sources={msg.sources} />
               </div>
             )}
             {msg.role === "assistant" && msg.baseSources && msg.baseSources.length > 0 && (
@@ -373,25 +412,32 @@ export function JarvisChat() {
             )}
 
             {msg.role === "assistant" && msg.suggestedActions && msg.suggestedActions.length > 0 && (
-              <div className="space-y-2 mt-3">
-                {msg.suggestedActions.map((action) => (
-                  <SuggestedActionCard
-                    key={action.requestId}
-                    action={action}
-                    decision={decisions[action.requestId]}
-                    onConfirm={() => decideSuggestedAction(action, "confirm")}
-                    onReject={() => decideSuggestedAction(action, "reject")}
-                  />
-                ))}
+              <div className="mt-3">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] mb-2">
+                  {t("jarvis.panel.next_steps_label")}
+                </p>
+                <div className="space-y-2">
+                  {msg.suggestedActions.map((action) => (
+                    <SuggestedActionCard
+                      key={action.requestId}
+                      action={action}
+                      decision={decisions[action.requestId]}
+                      onConfirm={() => decideSuggestedAction(action, "confirm")}
+                      onReject={() => decideSuggestedAction(action, "reject")}
+                    />
+                  ))}
+                </div>
               </div>
             )}
           </div>
         ))}
 
-        {loading && (
-          <div className="flex items-center gap-2 text-sm text-[var(--text-tertiary)] pb-4">
-            <div className="h-4 w-4 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
-            {t("jarvis.thinking")}
+        {mode === "thinking" && (
+          <div className="flex items-center gap-2 pb-4">
+            <div className="h-4 w-4 rounded-full border-2 border-brand-500 border-t-transparent animate-spin shrink-0" />
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+              {pendingLabel ?? t("jarvis.thinking")}
+            </span>
           </div>
         )}
 

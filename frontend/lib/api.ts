@@ -14,6 +14,7 @@ import type {
   JarvisChatResponse,
   JarvisSuggestedActionDecisionRequest,
   JarvisSuggestedActionDecisionResponse,
+  JarvisSuggestedActionDecisionListResponse,
 } from "@/types";
 import { supabase } from "@/lib/supabase";
 import type {
@@ -197,6 +198,10 @@ export const api = {
       request<JarvisSuggestedActionDecisionResponse>("/api/jarvis/suggested-actions/reject", {
         method: "POST", body: JSON.stringify(data),
       }),
+
+    // Command Layer audit trail — every proposal ever confirmed/rejected.
+    listDecisions: () =>
+      request<JarvisSuggestedActionDecisionListResponse>("/api/jarvis/suggested-actions/decisions"),
   },
 
   // ─── Work Orders (Background Dev Team control plane) ───────────────────────────

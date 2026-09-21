@@ -11,7 +11,7 @@ import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useSetJarvisContext, useJarvisPanelControl } from "@/lib/jarvisContext";
 import type { Project, ProjectStatus, ProjectPriority } from "@/types";
-import { Archive, Pencil, Plus, X, RefreshCw, AlertTriangle, ChevronRight, Sparkles } from "lucide-react";
+import { Archive, Pencil, Plus, X, RefreshCw, AlertTriangle, ChevronRight, Sparkles, Globe } from "lucide-react";
 
 const STATUS_OPTIONS: ProjectStatus[] = ["active", "waiting", "paused", "backlog", "done"];
 const PRIORITY_OPTIONS: ProjectPriority[] = ["high", "medium", "low"];
@@ -49,6 +49,7 @@ const EMPTY_FORM = {
   priority: "medium" as ProjectPriority,
   next_action: "",
   risk: "",
+  website_url: "",
 };
 
 // Interactive Operating System pass — Projects becomes a control surface:
@@ -103,35 +104,65 @@ export function ProjectsManager() {
     const p = selectedProject;
     const statusLabel = t(`projects.status.${p.status}`);
     const priorityLabel = t(`projects.priority.${p.priority}`);
+
+    // Contextual Intelligence Workspace pass: every field here is real
+    // project data already rendered on this page — nothing summarized or
+    // invented. Fields without real data (next_action, risk) are simply
+    // omitted rather than shown as empty/placeholder rows.
+    const snapshot = [
+      { label: t("jarvis.snapshot.status"), value: statusLabel },
+      { label: t("jarvis.snapshot.priority"), value: priorityLabel },
+      ...(p.next_action ? [{ label: t("jarvis.snapshot.next_move"), value: p.next_action }] : []),
+      ...(p.risk ? [{ label: t("jarvis.snapshot.risk"), value: p.risk }] : []),
+    ];
+
     return {
       route: "projects",
       entityType: "project" as const,
       entityId: p.id,
+      kicker: t("jarvis.kicker.project_selected"),
       title: p.name,
       summary: `Working with: ${p.name}`,
+      snapshot,
       quickActions: [
         {
-          label: t("jarvis.qa.analyze_project"),
+          label: t("jarvis.qa.analyze_risks"),
+          description: t("jarvis.qa.analyze_risks_desc"),
+          icon: "risk" as const,
+          workingLabel: t("jarvis.qa.analyze_risks_working"),
+          resultLabel: t("jarvis.qa.analyze_risks_result"),
           prompt:
-            `Analyze the project "${p.name}". Status: ${statusLabel}, priority: ${priorityLabel}.` +
-            (p.next_action ? ` Next action on file: ${p.next_action}.` : "") +
-            (p.risk ? ` Noted risk: ${p.risk}.` : "") +
+            `What risks or blockers should I watch for on "${p.name}"?` +
+            (p.risk ? ` Currently noted: ${p.risk}.` : " No risk is currently on file.") +
             (p.description ? ` Description: ${p.description}.` : ""),
         },
         {
-          label: t("jarvis.qa.show_risks"),
+          label: t("jarvis.qa.review_progress"),
+          description: t("jarvis.qa.review_progress_desc"),
+          icon: "progress" as const,
+          workingLabel: t("jarvis.qa.review_progress_working"),
+          resultLabel: t("jarvis.qa.review_progress_result"),
           prompt:
-            `What risks or blockers should I watch for on "${p.name}"?` +
-            (p.risk ? ` Currently noted: ${p.risk}.` : " No risk is currently on file."),
+            `Review the current state of the project "${p.name}". Status: ${statusLabel}, priority: ${priorityLabel}.` +
+            (p.next_action ? ` Next action on file: ${p.next_action}.` : "") +
+            (p.description ? ` Description: ${p.description}.` : ""),
         },
         {
           label: t("jarvis.qa.define_next_move"),
+          description: t("jarvis.qa.define_next_move_desc"),
+          icon: "next_move" as const,
+          workingLabel: t("jarvis.qa.define_next_move_working"),
+          resultLabel: t("jarvis.qa.define_next_move_result"),
           prompt:
             `What should the next concrete step be for "${p.name}"?` +
             (p.next_action ? ` Current next action on file: ${p.next_action}.` : ""),
         },
         {
-          label: t("jarvis.qa.create_work_order"),
+          label: t("jarvis.qa.create_action"),
+          description: t("jarvis.qa.create_action_desc"),
+          icon: "action" as const,
+          workingLabel: t("jarvis.qa.create_action_working"),
+          resultLabel: t("jarvis.qa.create_action_result"),
           prompt: `Help me turn the next step for "${p.name}" into a work order for the background dev team.`,
         },
       ],
@@ -153,6 +184,7 @@ export function ProjectsManager() {
         priority: form.priority,
         next_action: form.next_action.trim() || undefined,
         risk: form.risk.trim() || undefined,
+        website_url: form.website_url.trim() || undefined,
       });
       setForm({ ...EMPTY_FORM });
       setShowForm(false);
@@ -174,6 +206,7 @@ export function ProjectsManager() {
       priority: project.priority,
       next_action: project.next_action ?? "",
       risk: project.risk ?? "",
+      website_url: project.website_url ?? "",
     });
   }
 
@@ -190,6 +223,7 @@ export function ProjectsManager() {
         priority: editForm.priority,
         next_action: editForm.next_action.trim() || undefined,
         risk: editForm.risk.trim() || undefined,
+        website_url: editForm.website_url.trim() || undefined,
       });
       setEditingId(null);
       await loadProjects();
@@ -289,6 +323,13 @@ export function ProjectsManager() {
                 value={form.risk}
                 onChange={(e) => setForm((f) => ({ ...f, risk: e.target.value }))}
               />
+              <Input
+                label={t("projects.field_website_url")}
+                placeholder={t("projects.field_website_url_ph")}
+                type="url"
+                value={form.website_url}
+                onChange={(e) => setForm((f) => ({ ...f, website_url: e.target.value }))}
+              />
               {formError && (
                 <p className="text-status-danger text-xs">{formError}</p>
               )}
@@ -342,6 +383,7 @@ export function ProjectsManager() {
                       <p className="text-[var(--text-tertiary)] text-xs truncate mt-0.5">{project.next_action}</p>
                     )}
                   </div>
+                  {project.website_url && <Globe className="h-3.5 w-3.5 text-[var(--text-accent)] shrink-0" />}
                   {project.risk && <AlertTriangle className="h-3.5 w-3.5 text-status-warning/80 shrink-0" />}
                   <span className={cn("text-[10px] font-mono shrink-0 hidden sm:inline", PRIORITY_COLORS[project.priority])}>
                     {t(`projects.priority.${project.priority}`)}
@@ -404,6 +446,13 @@ export function ProjectsManager() {
                     placeholder={t("projects.field_risk_ph")}
                     value={editForm.risk}
                     onChange={(e) => setEditForm((f) => ({ ...f, risk: e.target.value }))}
+                  />
+                  <Input
+                    label={t("projects.field_website_url")}
+                    placeholder={t("projects.field_website_url_ph")}
+                    type="url"
+                    value={editForm.website_url}
+                    onChange={(e) => setEditForm((f) => ({ ...f, website_url: e.target.value }))}
                   />
                   {editError && (
                     <p className="text-status-danger text-xs">{editError}</p>
@@ -473,6 +522,21 @@ export function ProjectsManager() {
                       <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
                       <span>{selectedProject.risk}</span>
                     </p>
+                  </div>
+                )}
+
+                {selectedProject.website_url && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)] mb-1">{t("projects.field_website_url")}</p>
+                    <a
+                      href={selectedProject.website_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-sm text-[var(--text-accent)] hover:underline flex items-center gap-1.5 break-all"
+                    >
+                      <Globe className="h-3.5 w-3.5 shrink-0" />
+                      <span>{selectedProject.website_url}</span>
+                    </a>
                   </div>
                 )}
 

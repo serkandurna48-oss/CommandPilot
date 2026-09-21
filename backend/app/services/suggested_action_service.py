@@ -115,6 +115,25 @@ def _source_labels(action: SuggestedAction) -> str:
     )
 
 
+def list_decisions(user_id: str, limit: int = 20) -> list[dict]:
+    """
+    Most-recent-first read of this user's decision history — every proposal
+    ever confirmed or rejected. Filtered by user_id alone, same as the
+    confirm/reject path's own lookups; workspace_id is stored on the row but
+    not needed for ownership (see the migration's header comment).
+    """
+    db = get_db()
+    result = (
+        db.table(_TABLE)
+        .select("*")
+        .eq("user_id", user_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+        .execute()
+    )
+    return result.data or []
+
+
 def _get_existing_decision(user_id: str, request_id: str) -> dict | None:
     db = get_db()
     result = (

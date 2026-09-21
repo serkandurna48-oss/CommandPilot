@@ -64,6 +64,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "dashboard.section.in_progress":     { en: "In Progress",            de: "In Arbeit" },
   "dashboard.section.recent_activity": { en: "Recent Activity",        de: "Letzte Aktivität" },
   "dashboard.section.active_projects": { en: "Active Projects",        de: "Aktive Projekte" },
+  "dashboard.section.product_websites": { en: "Product Websites",      de: "Produkt-Websites" },
   "dashboard.today.priority_label":    { en: "Priority",               de: "Priorität" },
   "dashboard.decision.empty_title":    { en: "Nothing needs your decision.", de: "Nichts wartet auf deine Entscheidung." },
   "dashboard.decision.empty_desc":     { en: "Work orders waiting for your approval will show up here.", de: "Arbeitsaufträge, die auf deine Freigabe warten, erscheinen hier." },
@@ -102,6 +103,9 @@ const dict: Record<string, Record<Lang, string>> = {
   "morning.generating":       { en: "Generating your daily plan...", de: "CommandPilot strukturiert deinen Tag..." },
   "morning.generating_sub":   { en: "This takes about 5-10 seconds.", de: "Das dauert etwa 5–10 Sekunden." },
   "morning.checkin_hint":     { en: "Your check-in was saved. Clicking \"Generate\" will retry plan generation without creating a duplicate.", de: "Dein Tagesstart wurde gespeichert. Du kannst den Tagesplan jetzt erneut erstellen." },
+  "morning.history.title":    { en: "Recent check-ins",  de: "Letzte Tagesstarts" },
+  "morning.history.energy":   { en: "Energy",             de: "Energie" },
+  "morning.history.sleep":    { en: "Sleep",              de: "Schlaf" },
 
   // ── Plan View ──────────────────────────────────────────────────────────────
   "plan.based_on_review":     { en: "Based on your recent evening review", de: "Basierend auf deiner letzten Abend-Reflexion" },
@@ -146,6 +150,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "review.saved":             { en: "Review saved.",      de: "Reflexion gespeichert." },
   "review.saved_sub":         { en: "Rest well. Tomorrow is a clean slate.", de: "Ruh dich aus. Morgen ist ein neuer Tag." },
   "review.back":              { en: "Back to Dashboard",  de: "Zurück zum Cockpit" },
+  "review.history.title":     { en: "Recent reviews",     de: "Letzte Reflexionen" },
 
   // ── Rules ──────────────────────────────────────────────────────────────────
   "rules.title":              { en: "Personal Rules",     de: "Regeln" },
@@ -167,10 +172,6 @@ const dict: Record<string, Record<Lang, string>> = {
   // ── Command Jarvis bar (Interactive Operating System pass) ───────────────────
   "jarvis.command_bar.title":    { en: "Command Jarvis",  de: "Command Jarvis" },
   "jarvis.command_bar.subtitle": { en: "Ask, prepare, prioritize, or execute across your workspace...", de: "Frag, bereite vor, priorisiere oder handle über dein ganzes Workspace hinweg ..." },
-
-  // ── Jarvis panel — context + quick actions (shown before the first message) ──
-  "jarvis.panel.context_label":       { en: "Context",       de: "Kontext" },
-  "jarvis.panel.quick_actions_label": { en: "Quick actions", de: "Schnellaktionen" },
 
   // Per-route default context (JarvisContext, lib/jarvisContext.tsx) — the
   // fallback shown until a page pushes something more specific (e.g. a
@@ -195,9 +196,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "jarvis.qa.prioritize_projects":  { en: "Prioritize projects",    de: "Projekte priorisieren" },
   "jarvis.qa.show_risks":           { en: "Show risks",             de: "Risiken anzeigen" },
   "jarvis.qa.summarize_running":    { en: "Summarize running work", de: "Laufende Arbeit zusammenfassen" },
-  "jarvis.qa.analyze_project":      { en: "Analyze project",        de: "Projekt analysieren" },
   "jarvis.qa.define_next_move":     { en: "Define next move",       de: "Nächsten Schritt festlegen" },
-  "jarvis.qa.create_work_order":    { en: "Create work order",      de: "Work Order erstellen" },
   // Empty-state welcome block (Visual Fidelity Sprint — Higgsfield
   // Focus-Deck-Referenz): static hint text, not clickable — no new
   // send-on-click behavior was added along with the visual polish.
@@ -222,6 +221,70 @@ const dict: Record<string, Record<Lang, string>> = {
   "jarvis.suggested_action.rejected":      { en: "Rejected",          de: "Abgelehnt" },
   "jarvis.suggested_action.view_work_order": { en: "View work order", de: "Work Order ansehen" },
   "jarvis.suggested_action.error_retry":   { en: "Failed — try again:", de: "Fehlgeschlagen — nochmal versuchen:" },
+
+  // ── Jarvis Intelligence States (contextual workspace pass) ──────────────────
+  // Kickers: the small line above "Jarvis" naming what's currently in view.
+  "jarvis.kicker.home":             { en: "Home",                     de: "Home" },
+  "jarvis.kicker.projects_none":    { en: "Projects — no selection",  de: "Projekte — keine Auswahl" },
+  "jarvis.kicker.project_selected": { en: "Project selected",         de: "Projekt ausgewählt" },
+  "jarvis.kicker.operator":         { en: "Operator",                 de: "Operator" },
+  "jarvis.kicker.daily_plan":       { en: "Daily plan",               de: "Tagesplan" },
+  "jarvis.kicker.settings":         { en: "Settings",                 de: "Einstellungen" },
+
+  "jarvis.panel.quick_intelligence_label": { en: "Quick intelligence",      de: "Schnelle Analyse" },
+  "jarvis.panel.next_steps_label":         { en: "Possible next steps",     de: "Mögliche nächste Schritte" },
+  "jarvis.panel.decisions_label":          { en: "Recent decisions",        de: "Letzte Entscheidungen" },
+
+  // Context snapshot field labels — only rendered when the field's real
+  // value exists (see JarvisContextSnapshot); never fabricated.
+  "jarvis.snapshot.status":              { en: "Status",              de: "Status" },
+  "jarvis.snapshot.priority":            { en: "Priority",            de: "Priorität" },
+  "jarvis.snapshot.next_move":           { en: "Next move",           de: "Nächster Schritt" },
+  "jarvis.snapshot.risk":                { en: "Risk / blocker",      de: "Risiko / Blocker" },
+  "jarvis.snapshot.today":               { en: "Today",               de: "Heute" },
+  "jarvis.snapshot.decisions":           { en: "Needs decision",      de: "Entscheidung nötig" },
+  "jarvis.snapshot.running":             { en: "In progress",         de: "In Arbeit" },
+  "jarvis.snapshot.no_plan":             { en: "No plan generated yet", de: "Noch kein Plan erstellt" },
+  "jarvis.snapshot.plan_for":            { en: "Plan for",            de: "Plan für" },
+  "jarvis.snapshot.awaiting_approval":   { en: "awaiting approval",   de: "wartet auf Freigabe" },
+  "jarvis.snapshot.in_progress_suffix":  { en: "in progress",         de: "in Arbeit" },
+
+  // Quick-intelligence descriptions/working/result labels — only defined for
+  // actions that get the bespoke "working state -> mode label" treatment;
+  // actions without one fall back to the generic jarvis.thinking label and
+  // the plain "Jarvis" role label (see JarvisChat.tsx).
+  "jarvis.qa.analyze_risks":          { en: "Analyze risks",                        de: "Risiken analysieren" },
+  "jarvis.qa.analyze_risks_desc":     { en: "Review blockers and weak points",      de: "Blocker und Schwachstellen prüfen" },
+  "jarvis.qa.analyze_risks_working":  { en: "Analyzing risks…",                     de: "Risiken werden analysiert…" },
+  "jarvis.qa.analyze_risks_result":   { en: "Risk analysis",                        de: "Risikoanalyse" },
+  "jarvis.qa.review_progress":        { en: "Review progress",                      de: "Fortschritt prüfen" },
+  "jarvis.qa.review_progress_desc":   { en: "Assess current state and recent movement", de: "Aktuellen Stand und Bewegung einschätzen" },
+  "jarvis.qa.review_progress_working": { en: "Reviewing project…",                  de: "Projekt wird geprüft…" },
+  "jarvis.qa.review_progress_result": { en: "Progress review",                      de: "Fortschrittsprüfung" },
+  "jarvis.qa.define_next_move_desc":  { en: "Turn context into one concrete next step", de: "Kontext in einen konkreten nächsten Schritt verwandeln" },
+  "jarvis.qa.define_next_move_working": { en: "Defining next move…",                de: "Nächster Schritt wird festgelegt…" },
+  "jarvis.qa.define_next_move_result": { en: "Next move",                           de: "Nächster Schritt" },
+  "jarvis.qa.create_action":          { en: "Create action",                        de: "Aktion erstellen" },
+  "jarvis.qa.create_action_desc":     { en: "Prepare an executable Suggested Action", de: "Eine ausführbare Aktion vorbereiten" },
+  "jarvis.qa.create_action_working":  { en: "Preparing action…",                    de: "Aktion wird vorbereitet…" },
+  "jarvis.qa.create_action_result":   { en: "Suggested action",                     de: "Vorgeschlagene Aktion" },
+
+  "jarvis.qa.review_today_desc":      { en: "Assess priorities and time blocks for today.", de: "Prioritäten und Zeitblöcke für heute prüfen." },
+  "jarvis.qa.review_today_working":   { en: "Reviewing today's plan…",              de: "Heutiger Plan wird geprüft…" },
+  "jarvis.qa.review_today_result":    { en: "Today's review",                       de: "Tagesrückblick" },
+  "jarvis.qa.check_blocked_desc":     { en: "See what's waiting on your approval.", de: "Sehen, was auf deine Freigabe wartet." },
+  "jarvis.qa.check_blocked_working":  { en: "Checking blocked work…",               de: "Blockierte Arbeit wird geprüft…" },
+  "jarvis.qa.check_blocked_result":   { en: "Blocked work",                         de: "Blockierte Arbeit" },
+  "jarvis.qa.prioritize_projects_desc": { en: "Decide what deserves attention first.", de: "Entscheiden, was zuerst Aufmerksamkeit braucht." },
+  "jarvis.qa.prioritize_projects_working": { en: "Prioritizing projects…",          de: "Projekte werden priorisiert…" },
+  "jarvis.qa.prioritize_projects_result": { en: "Project priorities",               de: "Projektprioritäten" },
+  "jarvis.qa.plan_day_desc":          { en: "Turn today's context into a plan.",    de: "Den heutigen Kontext in einen Plan verwandeln." },
+  "jarvis.qa.plan_day_working":       { en: "Planning your day…",                   de: "Dein Tag wird geplant…" },
+  "jarvis.qa.plan_day_result":        { en: "Day plan",                             de: "Tagesplan" },
+
+  "jarvis.suggestion.1_desc":         { en: "Check status, priority and risk across your projects.", de: "Status, Priorität und Risiko deiner Projekte prüfen." },
+  "jarvis.qa.show_risks_desc":        { en: "Surface risks across active projects.", de: "Risiken über aktive Projekte hinweg aufdecken." },
+  "jarvis.qa.summarize_running_desc": { en: "See what's currently executing.",      de: "Sehen, was gerade läuft." },
 
   // ── Settings (Visual Fidelity Sprint — Higgsfield Focus-Deck-Referenz) ──────
   "settings.title":           { en: "Settings",           de: "Einstellungen" },
@@ -375,6 +438,8 @@ const dict: Record<string, Record<Lang, string>> = {
   "projects.field_next_action_ph": { en: "What's the single next step?", de: "Was ist der nächste konkrete Schritt?" },
   "projects.field_risk":           { en: "Risk / Blocker (optional)", de: "Risiko / Blocker (optional)" },
   "projects.field_risk_ph":        { en: "What could slow this down?", de: "Was könnte dieses Projekt bremsen?" },
+  "projects.field_website_url":    { en: "Website (optional)", de: "Website (optional)" },
+  "projects.field_website_url_ph": { en: "https://your-product.com", de: "https://dein-produkt.de" },
   "projects.field_status":         { en: "Status",               de: "Status" },
   "projects.field_priority":       { en: "Priority",             de: "Priorität" },
   "projects.status.active":        { en: "Active",               de: "Aktiv" },

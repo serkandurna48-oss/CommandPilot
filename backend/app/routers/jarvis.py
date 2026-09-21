@@ -9,6 +9,8 @@ from app.models.jarvis import (
     JarvisChatRequest,
     JarvisChatResponse,
     SourceRef,
+    SuggestedActionDecisionListItem,
+    SuggestedActionDecisionListResponse,
     SuggestedActionDecisionRequest,
     SuggestedActionDecisionResponse,
 )
@@ -63,6 +65,13 @@ async def chat(
             },
         )
 
+    # Same rule as routers/plans.py: language is always taken from the user's
+    # profile, never the request body — profile.language is the single
+    # source of truth. Previously missing here entirely, which is why
+    # switching the UI language left Jarvis chat replies stuck in German.
+    _profile_lang = (setup.get("profile") or {}).get("language") or "en"
+    effective_language = _profile_lang if _profile_lang in ("en", "de") else "en"
+
     # Same soft daily spending cap as daily-plan generation — chat is called
     # far more often than the once-a-day plan generation, so without this
     # check it is an unbounded cost path.
@@ -106,7 +115,7 @@ async def chat(
     history = [turn.model_dump() for turn in req.history]
     try:
         chat_ai, input_tokens, output_tokens = await generate_chat_reply(
-            req.message, history, context_block
+            req.message, history, context_block, effective_language
         )
     except AIGenerationError as exc:
         logger.error("Jarvis chat generation failed | code=%s | %s", exc.code, str(exc))
@@ -187,6 +196,30 @@ async def chat(
         # and the confirm/reject endpoints below for the only place a
         # suggestion can become a real work order (JARVIS-C1).
         suggested_actions=chat_ai.suggested_actions,
+    )
+
+
+@router.get("/suggested-actions/decisions", response_model=SuggestedActionDecisionListResponse)
+async def list_suggested_action_decisions(
+    user: CurrentUser = Depends(get_current_user),
+):
+    rows = suggested_action_service.list_decisions(user.id)
+    return SuggestedActionDecisionListResponse(
+        decisions=[
+            SuggestedActionDecisionListItem(
+                id=row["id"],
+                decision=row["decision"],
+                title=row["title"],
+                team_type=row.get("team_type"),
+                target_repo_name=row.get("target_repo_name"),
+                risk=row.get("risk"),
+                requires_approval=row.get("requires_approval"),
+                sources=[SourceRef(**s) for s in (row.get("sources") or [])],
+                work_order_id=row.get("work_order_id"),
+                created_at=row["created_at"],
+            )
+            for row in rows
+        ]
     )
 
 

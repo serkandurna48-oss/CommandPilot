@@ -96,6 +96,59 @@ class JarvisChatEndpointTests(unittest.TestCase):
         # user_id must never be taken from the client — only from get_current_user
         mock_generate.assert_called_once()
 
+    def test_profile_language_is_resolved_and_passed_to_ai_call(self):
+        # Regression test: generate_chat_reply used to always be called
+        # without a language, hardcoding German inside the prompt regardless
+        # of the user's actual profile.language — reported as "the UI
+        # language doesn't fully switch over."
+        app.dependency_overrides[get_current_user] = _override_get_current_user
+
+        with patch.object(
+            jarvis_router, "ensure_user_workspace",
+            return_value={"workspace_id": "ws-1", "profile": {"language": "en"}},
+        ), \
+             patch.object(jarvis_router, "check_daily_cap", return_value=None), \
+             patch.object(
+                 jarvis_router.vault_service, "get_context_for_query",
+                 return_value=("", [], []),
+             ), \
+             patch.object(
+                 jarvis_router, "generate_chat_reply",
+                 return_value=(JarvisChatAI(reply="Your project is active.", suggested_actions=[]), 10, 5),
+             ) as mock_generate, \
+             patch.object(jarvis_router, "log_ai_usage", return_value=None):
+            resp = self.client.post(
+                "/api/jarvis/chat",
+                json={"message": "What am I working on?", "history": []},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        # Fourth positional arg is the resolved language, sourced from the
+        # profile — never the request body, which has no language field.
+        self.assertEqual(mock_generate.call_args.args[3], "en")
+
+    def test_unknown_profile_language_falls_back_to_english(self):
+        app.dependency_overrides[get_current_user] = _override_get_current_user
+
+        with patch.object(
+            jarvis_router, "ensure_user_workspace",
+            return_value={"workspace_id": "ws-1", "profile": {"language": "fr"}},
+        ), \
+             patch.object(jarvis_router, "check_daily_cap", return_value=None), \
+             patch.object(
+                 jarvis_router.vault_service, "get_context_for_query",
+                 return_value=("", [], []),
+             ), \
+             patch.object(
+                 jarvis_router, "generate_chat_reply",
+                 return_value=(JarvisChatAI(reply="ok", suggested_actions=[]), 10, 5),
+             ) as mock_generate, \
+             patch.object(jarvis_router, "log_ai_usage", return_value=None):
+            resp = self.client.post("/api/jarvis/chat", json={"message": "Hi", "history": []})
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(mock_generate.call_args.args[3], "en")
+
     def test_daily_cap_reached_returns_429_and_skips_ai_call(self):
         app.dependency_overrides[get_current_user] = _override_get_current_user
 
@@ -198,6 +251,64 @@ class SuggestedActionEndpointTests(unittest.TestCase):
         self.assertEqual(resp.status_code, 409)
         self.assertEqual(resp.json()["detail"]["code"], "ALREADY_DECIDED")
         self.assertEqual(resp.json()["detail"]["decision"], "rejected")
+
+
+class SuggestedActionDecisionListEndpointTests(unittest.TestCase):
+    """GET /api/jarvis/suggested-actions/decisions — decision history read."""
+
+    def setUp(self):
+        self.client = TestClient(app)
+
+    def tearDown(self):
+        app.dependency_overrides.pop(get_current_user, None)
+
+    def test_missing_token_returns_401(self):
+        resp = self.client.get("/api/jarvis/suggested-actions/decisions")
+        self.assertEqual(resp.status_code, 401)
+
+    def test_returns_decisions_scoped_to_authenticated_user(self):
+        app.dependency_overrides[get_current_user] = _override_get_current_user
+
+        with patch.object(
+            jarvis_router.suggested_action_service, "list_decisions",
+            return_value=[
+                {
+                    "id": "dec-1",
+                    "decision": "confirmed",
+                    "title": "CampPilot Onboarding für JK vorbereiten",
+                    "team_type": "development",
+                    "target_repo_name": "camppilot",
+                    "risk": "medium",
+                    "requires_approval": False,
+                    "sources": [{"source_file": "Projekte/CampPilot.md", "source_heading": ""}],
+                    "work_order_id": "wo-1",
+                    "created_at": "2026-09-21T10:00:00+00:00",
+                },
+                {
+                    "id": "dec-2",
+                    "decision": "rejected",
+                    "title": "Unwichtiger Vorschlag",
+                    "team_type": "development",
+                    "target_repo_name": None,
+                    "risk": "low",
+                    "requires_approval": False,
+                    "sources": [],
+                    "work_order_id": None,
+                    "created_at": "2026-09-20T09:00:00+00:00",
+                },
+            ],
+        ) as mock_list:
+            resp = self.client.get("/api/jarvis/suggested-actions/decisions")
+
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertEqual(len(body["decisions"]), 2)
+        self.assertEqual(body["decisions"][0]["decision"], "confirmed")
+        self.assertEqual(body["decisions"][0]["work_order_id"], "wo-1")
+        self.assertEqual(body["decisions"][1]["decision"], "rejected")
+        self.assertIsNone(body["decisions"][1]["work_order_id"])
+        # user_id must come from get_current_user, never the client
+        self.assertEqual(mock_list.call_args.args[0], _FAKE_USER.id)
 
 
 if __name__ == "__main__":

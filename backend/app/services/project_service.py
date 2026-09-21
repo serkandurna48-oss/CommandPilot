@@ -54,6 +54,7 @@ def create_project(user_id: str, workspace_id: str | None, data) -> dict:
         "priority": data.priority,
         "next_action": data.next_action,
         "risk": data.risk,
+        "website_url": data.website_url,
     }
     result = db.table("projects").insert(payload).execute()
     if not result.data:

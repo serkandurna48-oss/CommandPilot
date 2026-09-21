@@ -19,12 +19,36 @@ from pathlib import Path
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_ROOT))
 
-from app.prompts.jarvis_chat import SYSTEM_PROMPT, build_chat_prompt  # noqa: E402
+from app.prompts.jarvis_chat import SYSTEM_PROMPT, build_chat_prompt, build_system_prompt  # noqa: E402
 
 
 def test_system_prompt_instructs_no_hallucination():
     assert "Erfinde nichts" in SYSTEM_PROMPT
     assert "Deutsch" in SYSTEM_PROMPT
+
+
+def test_build_system_prompt_defaults_to_german():
+    assert build_system_prompt() == SYSTEM_PROMPT
+
+
+def test_build_system_prompt_english_instructs_english_reply():
+    prompt = build_system_prompt("en")
+    assert "Antworte ausschließlich auf Englisch" in prompt
+    assert "Antworte ausschließlich auf Deutsch." not in prompt
+    # No-hallucination and no-sources-line rules must survive the language switch.
+    assert "Erfinde nichts" in prompt
+    assert "Quellen:" in prompt
+
+
+def test_build_chat_prompt_english_language_instructs_english_reply():
+    prompt = build_chat_prompt("What is my rehab status?", [], "", language="en")
+    assert "Antworte auf Englisch" in prompt
+    assert "Antworte auf Deutsch" not in prompt
+
+
+def test_build_chat_prompt_defaults_to_german():
+    prompt = build_chat_prompt("Wie ist mein Reha-Stand?", [], "")
+    assert "Antworte auf Deutsch" in prompt
 
 
 def test_system_prompt_forbids_inline_source_list():

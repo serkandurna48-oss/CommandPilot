@@ -4,6 +4,7 @@ import { Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { PageHeader } from "@/components/layout/PageHeader";
 import { ReviewForm } from "@/components/review/ReviewForm";
+import { ReviewHistory } from "@/components/review/ReviewHistory";
 import { PageLoader } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
@@ -29,6 +30,7 @@ function ReviewPageContent() {
         subtitle={t("review.subtitle")}
       />
       <ReviewForm planId={planId} reviewQuestions={reviewQuestions} />
+      <ReviewHistory />
     </>
   );
 }

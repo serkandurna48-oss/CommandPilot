@@ -109,3 +109,27 @@ class SuggestedActionDecisionResponse(BaseModel):
     # True when this call replayed an already-recorded decision for the same
     # request_id (idempotent retry) rather than performing a fresh write.
     already_decided: bool = False
+
+
+# ─── Suggested Action decision history ───────────────────────────────────────────
+# Read-only view over suggested_action_decisions (013_suggested_action_decisions.sql)
+# — every proposal a human has ever confirmed or rejected, confirmed ones
+# linking to the real work order they became. Denormalized snapshot fields
+# (title/risk/etc.) come straight from the row, not a live join against
+# work_orders, so a decision's audit trail stands even if that work order is
+# later edited — same rationale as the migration's own header comment.
+class SuggestedActionDecisionListItem(BaseModel):
+    id: str
+    decision: Literal["confirmed", "rejected"]
+    title: str
+    team_type: Optional[str] = None
+    target_repo_name: Optional[str] = None
+    risk: Optional[Literal["low", "medium", "high"]] = None
+    requires_approval: Optional[bool] = None
+    sources: list[SourceRef] = []
+    work_order_id: Optional[str] = None
+    created_at: str
+
+
+class SuggestedActionDecisionListResponse(BaseModel):
+    decisions: list[SuggestedActionDecisionListItem] = []
