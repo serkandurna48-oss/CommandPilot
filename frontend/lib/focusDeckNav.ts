@@ -44,5 +44,13 @@ export function isWideWorkspaceRoute(pathname: string): boolean {
   // dort die volle Workspace-Breite statt der ~896px-Lesebreite — die Seite
   // setzt selbst noch ein eigenes, etwas engeres max-w auf ihren Karten.
   if (pathname === "/settings") return true;
+  // Interactive Operating System pass: Projects became a two-column control
+  // surface (scannable list + detail panel) — needs the same full width as
+  // the other control-surface routes, not the ~896px reading column.
+  if (pathname === "/projects") return true;
+  // The dedicated Jarvis route is the one place Jarvis gets the large,
+  // permanently-open workspace experience (Interactive Operating System
+  // pass) — its own content still caps conversation line-length internally.
+  if (pathname.startsWith("/jarvis")) return true;
   return false;
 }

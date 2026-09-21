@@ -1,15 +1,17 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
+import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea, Select } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
-import type { Project, ProjectStatus, ProjectPriority } from "@/types";
-import { Archive, Pencil, Plus, X, RefreshCw, AlertTriangle } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useSetJarvisContext, useJarvisPanelControl } from "@/lib/jarvisContext";
+import type { Project, ProjectStatus, ProjectPriority } from "@/types";
+import { Archive, Pencil, Plus, X, RefreshCw, AlertTriangle, ChevronRight, Sparkles } from "lucide-react";
 
 const STATUS_OPTIONS: ProjectStatus[] = ["active", "waiting", "paused", "backlog", "done"];
 const PRIORITY_OPTIONS: ProjectPriority[] = ["high", "medium", "low"];
@@ -31,11 +33,13 @@ const PRIORITY_COLORS: Record<ProjectPriority, string> = {
   low:    "text-slate-600",
 };
 
-// Left accent border per priority
-const PRIORITY_BORDER: Record<ProjectPriority, string> = {
-  high:   "border-l-4 border-rose-500/50",
-  medium: "border-l-4 border-slate-600/50",
-  low:    "border-l-4 border-slate-700/50",
+const STATUS_DOT: Record<ProjectStatus, string> = {
+  active:   "bg-status-success",
+  waiting:  "bg-status-warning",
+  paused:   "bg-[var(--text-tertiary)]",
+  backlog:  "bg-[var(--text-placeholder)]",
+  done:     "bg-status-info",
+  archived: "bg-[var(--text-placeholder)]",
 };
 
 const EMPTY_FORM = {
@@ -47,8 +51,17 @@ const EMPTY_FORM = {
   risk: "",
 };
 
+// Interactive Operating System pass — Projects becomes a control surface:
+// a scannable list (title/status/priority/next-move/risk) on the left,
+// selecting a row reveals a richer detail panel on the right instead of
+// cramming everything into every row. Selecting a project also pushes it
+// into JarvisContext, so "Ask Jarvis about this project" opens the panel
+// already contextualized — no fabricated data, just the same fields this
+// page already renders.
 export function ProjectsManager() {
   const t = useT();
+  const searchParams = useSearchParams();
+  const { openPanel } = useJarvisPanelControl();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [hasLoadError, setHasLoadError] = useState(false);
@@ -59,6 +72,7 @@ export function ProjectsManager() {
   const [editError, setEditError] = useState<string | null>(null);
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [editForm, setEditForm] = useState({ ...EMPTY_FORM });
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   const loadProjects = useCallback(async () => {
     setLoading(true);
@@ -74,6 +88,57 @@ export function ProjectsManager() {
   }, []); // stable — no t dependency to avoid render-loop
 
   useEffect(() => { loadProjects(); }, [loadProjects]);
+
+  // Deep-link from Home's "Active Projects" rows (?project=<id>) — selects
+  // once the real project is loaded, never before (no phantom selection).
+  useEffect(() => {
+    const qid = searchParams.get("project");
+    if (qid && projects.some((p) => p.id === qid)) setSelectedId(qid);
+  }, [searchParams, projects]);
+
+  const selectedProject = useMemo(() => projects.find((p) => p.id === selectedId) ?? null, [projects, selectedId]);
+
+  const jarvisCtx = useMemo(() => {
+    if (!selectedProject) return null;
+    const p = selectedProject;
+    const statusLabel = t(`projects.status.${p.status}`);
+    const priorityLabel = t(`projects.priority.${p.priority}`);
+    return {
+      route: "projects",
+      entityType: "project" as const,
+      entityId: p.id,
+      title: p.name,
+      summary: `Working with: ${p.name}`,
+      quickActions: [
+        {
+          label: t("jarvis.qa.analyze_project"),
+          prompt:
+            `Analyze the project "${p.name}". Status: ${statusLabel}, priority: ${priorityLabel}.` +
+            (p.next_action ? ` Next action on file: ${p.next_action}.` : "") +
+            (p.risk ? ` Noted risk: ${p.risk}.` : "") +
+            (p.description ? ` Description: ${p.description}.` : ""),
+        },
+        {
+          label: t("jarvis.qa.show_risks"),
+          prompt:
+            `What risks or blockers should I watch for on "${p.name}"?` +
+            (p.risk ? ` Currently noted: ${p.risk}.` : " No risk is currently on file."),
+        },
+        {
+          label: t("jarvis.qa.define_next_move"),
+          prompt:
+            `What should the next concrete step be for "${p.name}"?` +
+            (p.next_action ? ` Current next action on file: ${p.next_action}.` : ""),
+        },
+        {
+          label: t("jarvis.qa.create_work_order"),
+          prompt: `Help me turn the next step for "${p.name}" into a work order for the background dev team.`,
+        },
+      ],
+    };
+  }, [selectedProject, t]);
+
+  useSetJarvisContext(jarvisCtx);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -140,26 +205,36 @@ export function ProjectsManager() {
     try {
       await api.projects.update(id, { status: "archived" });
       setProjects((prev) => prev.filter((p) => p.id !== id));
+      if (selectedId === id) setSelectedId(null);
     } catch {
       alert(t("error.save_failed"));
     }
   }
 
+  const activeCount = projects.filter((p) => p.status === "active").length;
+  const waitingCount = projects.filter((p) => p.status === "waiting").length;
+  const atRiskCount = projects.filter((p) => !!p.risk).length;
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <div className="flex gap-1.5 flex-wrap">
-          {[
-            { key: "active", count: projects.filter(p => p.status === "active").length },
-            { key: "waiting", count: projects.filter(p => p.status === "waiting").length },
-            { key: "backlog", count: projects.filter(p => p.status === "backlog").length },
-          ].map(({ key, count }) => (
-            <span key={key} className="text-[10px] font-mono px-2 py-0.5 rounded bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-tertiary)]">
-              {count} {key}
-            </span>
-          ))}
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-tertiary)]">
+            {activeCount} {t("projects.status.active")}
+          </span>
+          <span className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-tertiary)]">
+            {waitingCount} {t("projects.status.waiting")}
+          </span>
+          <span className={cn(
+            "text-[10px] font-mono px-2 py-0.5 rounded-md border",
+            atRiskCount > 0
+              ? "bg-status-warning/10 border-status-warning/30 text-status-warning/90"
+              : "bg-[var(--bg-elevated)] border-[var(--border-default)] text-[var(--text-tertiary)]"
+          )}>
+            {atRiskCount} {t("projects.summary.at_risk")}
+          </span>
         </div>
-        <Button size="sm" onClick={() => { setShowForm((v) => !v); setFormError(null); setEditingId(null); }}>
+        <Button size="sm" className="rounded-xl" onClick={() => { setShowForm((v) => !v); setFormError(null); setEditingId(null); }}>
           <Plus className="h-4 w-4" />
           {showForm ? t("common.cancel") : t("projects.add")}
         </Button>
@@ -217,7 +292,7 @@ export function ProjectsManager() {
               {formError && (
                 <p className="text-status-danger text-xs">{formError}</p>
               )}
-              <Button type="submit" loading={saving} size="sm">{t("projects.save")}</Button>
+              <Button type="submit" loading={saving} size="sm" className="rounded-xl">{t("projects.save")}</Button>
             </form>
           </CardContent>
         </Card>
@@ -230,7 +305,7 @@ export function ProjectsManager() {
       ) : hasLoadError ? (
         <div className="py-8 flex flex-col items-center gap-3 text-center">
           <p className="text-[var(--text-secondary)] text-sm">{t("error.load_failed")}</p>
-          <Button size="sm" variant="secondary" onClick={loadProjects}>
+          <Button size="sm" variant="secondary" className="rounded-xl" onClick={loadProjects}>
             <RefreshCw className="h-4 w-4" />
             {t("button.retry")}
           </Button>
@@ -238,14 +313,53 @@ export function ProjectsManager() {
       ) : projects.length === 0 ? (
         <EmptyState title={t("projects.empty_title")} description={t("projects.empty_desc")} />
       ) : (
-        // One coherent surface, divided by hairlines — not a stack of
-        // independently bordered cards (Focus-Deck-Kompositions-Pass). The
-        // per-project left priority accent is kept (real signal: how urgent
-        // is this), everything else rides the shared divider.
-        <div className="rounded-lg border border-[var(--border-light)] bg-[var(--bg-surface)]/40 divide-y divide-[var(--border-light)]">
-          {projects.map((project) => (
-            <div key={project.id} className="px-5 py-4">
-              {editingId === project.id ? (
+        // List = scan, detail = understand: selecting a row reveals the
+        // richer panel instead of every row carrying its full description.
+        <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px] gap-4 items-start">
+          <div className="rounded-2xl border border-white/[0.06] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] divide-y divide-white/[0.05] overflow-hidden">
+            {projects.map((project) => {
+              const isSelected = project.id === selectedId;
+              return (
+                <button
+                  key={project.id}
+                  type="button"
+                  onClick={() => setSelectedId(isSelected ? null : project.id)}
+                  aria-pressed={isSelected}
+                  className={cn(
+                    "w-full flex items-center gap-3 px-5 py-3 text-left motion-safe:transition-colors duration-150 hover:bg-[var(--interactive-bg-secondary-hover)] focus:outline-none focus-visible:outline focus-visible:outline-[1.5px] focus-visible:outline-offset-[-1px] focus-visible:outline-[var(--interactive-border-focus)]",
+                    isSelected && "bg-[var(--bg-elevated)]"
+                  )}
+                >
+                  <span className={cn("h-2 w-2 rounded-full shrink-0", STATUS_DOT[project.status])} />
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-sm font-medium text-[var(--text-primary)] truncate">{project.name}</p>
+                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded-md font-mono shrink-0", STATUS_COLORS[project.status])}>
+                        {t(`projects.status.${project.status}`)}
+                      </span>
+                    </div>
+                    {project.next_action && (
+                      <p className="text-[var(--text-tertiary)] text-xs truncate mt-0.5">{project.next_action}</p>
+                    )}
+                  </div>
+                  {project.risk && <AlertTriangle className="h-3.5 w-3.5 text-status-warning/80 shrink-0" />}
+                  <span className={cn("text-[10px] font-mono shrink-0 hidden sm:inline", PRIORITY_COLORS[project.priority])}>
+                    {t(`projects.priority.${project.priority}`)}
+                  </span>
+                  <ChevronRight className={cn("h-4 w-4 shrink-0 motion-safe:transition-colors duration-150", isSelected ? "text-[var(--text-accent)]" : "text-[var(--text-tertiary)]")} />
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="rounded-2xl border border-white/[0.06] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden xl:sticky xl:top-8">
+            {!selectedProject ? (
+              <div className="px-6 py-10 text-center">
+                <p className="text-sm font-medium text-[var(--text-secondary)]">{t("projects.detail.empty_title")}</p>
+                <p className="text-xs text-[var(--text-tertiary)] mt-1">{t("projects.detail.select_hint")}</p>
+              </div>
+            ) : editingId === selectedProject.id ? (
+              <div className="p-5">
                 <form onSubmit={handleUpdate} className="space-y-3">
                   <Input
                     label={t("projects.field_name")}
@@ -295,66 +409,84 @@ export function ProjectsManager() {
                     <p className="text-status-danger text-xs">{editError}</p>
                   )}
                   <div className="flex gap-2">
-                    <Button type="submit" loading={saving} size="sm">{t("projects.save_changes")}</Button>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => setEditingId(null)}
-                    >
+                    <Button type="submit" loading={saving} size="sm" className="rounded-xl">{t("projects.save_changes")}</Button>
+                    <Button type="button" variant="ghost" size="sm" className="rounded-xl" onClick={() => setEditingId(null)}>
                       <X className="h-4 w-4" />
                       {t("common.cancel")}
                     </Button>
                   </div>
                 </form>
-              ) : (
-                <div className={cn("flex gap-3 items-start -my-4 py-4 pl-4 -ml-5", PRIORITY_BORDER[project.priority])}>
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                      <p className="text-[var(--text-primary)] text-sm font-medium">{project.name}</p>
-                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-mono", STATUS_COLORS[project.status])}>
-                        {t(`projects.status.${project.status}`)}
+              </div>
+            ) : (
+              <div className="p-5 space-y-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-serif text-lg text-[var(--text-primary)] truncate">{selectedProject.name}</p>
+                    <div className="flex items-center gap-2 mt-1.5">
+                      <span className={cn("text-[10px] px-1.5 py-0.5 rounded-md font-mono", STATUS_COLORS[selectedProject.status])}>
+                        {t(`projects.status.${selectedProject.status}`)}
                       </span>
-                      <span className={cn("text-[10px] font-mono", PRIORITY_COLORS[project.priority])}>
-                        {t(`projects.priority.${project.priority}`)}
+                      <span className={cn("text-[10px] font-mono", PRIORITY_COLORS[selectedProject.priority])}>
+                        {t(`projects.priority.${selectedProject.priority}`)}
                       </span>
                     </div>
-                    {project.next_action && (
-                      <p className="text-[var(--text-secondary)] text-xs mb-1 flex items-start gap-1.5">
-                        <span className="text-[var(--text-accent)] shrink-0 mt-px">→</span>
-                        <span>{project.next_action}</span>
-                      </p>
-                    )}
-                    {project.description && (
-                      <p className="text-[var(--text-tertiary)] text-xs mb-0.5">{project.description}</p>
-                    )}
-                    {project.risk && (
-                      <p className="text-status-warning/80 text-xs flex items-center gap-1.5 mt-0.5">
-                        <AlertTriangle className="h-3 w-3 shrink-0" />
-                        {project.risk}
-                      </p>
-                    )}
                   </div>
                   <div className="flex gap-1 shrink-0">
                     <button
-                      onClick={() => startEdit(project)}
-                      className="p-1.5 rounded hover:bg-[var(--interactive-bg-secondary-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] motion-safe:transition-colors"
+                      onClick={() => startEdit(selectedProject)}
+                      className="p-1.5 rounded-lg hover:bg-[var(--bg-hover-surface)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] motion-safe:transition-colors duration-150"
                       title={t("projects.edit")}
                     >
                       <Pencil className="h-4 w-4" />
                     </button>
                     <button
-                      onClick={() => archiveProject(project.id)}
-                      className="p-1.5 rounded hover:bg-[var(--interactive-bg-secondary-hover)] text-[var(--text-tertiary)] hover:text-status-warning motion-safe:transition-colors"
+                      onClick={() => archiveProject(selectedProject.id)}
+                      className="p-1.5 rounded-lg hover:bg-[var(--bg-hover-surface)] text-[var(--text-tertiary)] hover:text-status-warning motion-safe:transition-colors duration-150"
                       title={t("projects.archive")}
                     >
                       <Archive className="h-4 w-4" />
                     </button>
                   </div>
                 </div>
-              )}
-            </div>
-          ))}
+
+                {selectedProject.next_action && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)] mb-1">{t("projects.field_next_action")}</p>
+                    <p className="text-sm text-[var(--text-secondary)] flex items-start gap-1.5">
+                      <span className="text-[var(--text-accent)] shrink-0 mt-px">→</span>
+                      <span>{selectedProject.next_action}</span>
+                    </p>
+                  </div>
+                )}
+
+                {selectedProject.description && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)] mb-1">{t("projects.field_description")}</p>
+                    <p className="text-sm text-[var(--text-secondary)] leading-relaxed">{selectedProject.description}</p>
+                  </div>
+                )}
+
+                {selectedProject.risk && (
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wide text-[var(--text-tertiary)] mb-1">{t("projects.field_risk")}</p>
+                    <p className="text-status-warning/80 text-sm flex items-start gap-1.5">
+                      <AlertTriangle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
+                      <span>{selectedProject.risk}</span>
+                    </p>
+                  </div>
+                )}
+
+                <button
+                  type="button"
+                  onClick={openPanel}
+                  className="w-full flex items-center gap-2 rounded-xl border border-[var(--border-default)] px-4 py-2.5 text-sm text-[var(--text-primary)] hover:bg-[var(--interactive-bg-secondary-hover)] hover:border-[var(--interactive-bg-primary-default)] motion-safe:transition-colors duration-150"
+                >
+                  <Sparkles className="h-4 w-4 text-[var(--text-accent)]" />
+                  {t("projects.detail.ask_jarvis")}
+                </button>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>

@@ -51,7 +51,7 @@ const dict: Record<string, Record<Lang, string>> = {
   // Decision, In Progress, Recent Activity — all backed by real plan/work-order
   // data, no fabricated metrics.
   "dashboard.title":          { en: "Dashboard",          de: "Cockpit" },
-  "dashboard.subtitle":       { en: "Your personal command center.", de: "Behalte deine Tagespläne, offenen Schritte und letzten Entscheidungen im Blick." },
+  "dashboard.subtitle":       { en: "Here's what's on your plate today.", de: "Das steht heute für dich an." },
   "dashboard.hero.standby":   { en: "Awaiting mission brief.", de: "Kein Tagesplan bisher." },
   "dashboard.no_plan_sub":    { en: "Start your morning check-in and get your AI-generated daily strategy in under 30 seconds.", de: "Starte deinen Tagesstart und erhalte in wenigen Sekunden einen klaren Tagesplan." },
   "dashboard.start_checkin":  { en: "Start Morning Check-in", de: "Tagesstart beginnen" },
@@ -63,6 +63,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "dashboard.section.needs_decision":  { en: "Needs Your Decision",    de: "Braucht deine Entscheidung" },
   "dashboard.section.in_progress":     { en: "In Progress",            de: "In Arbeit" },
   "dashboard.section.recent_activity": { en: "Recent Activity",        de: "Letzte Aktivität" },
+  "dashboard.section.active_projects": { en: "Active Projects",        de: "Aktive Projekte" },
   "dashboard.today.priority_label":    { en: "Priority",               de: "Priorität" },
   "dashboard.decision.empty_title":    { en: "Nothing needs your decision.", de: "Nichts wartet auf deine Entscheidung." },
   "dashboard.decision.empty_desc":     { en: "Work orders waiting for your approval will show up here.", de: "Arbeitsaufträge, die auf deine Freigabe warten, erscheinen hier." },
@@ -152,26 +153,56 @@ const dict: Record<string, Record<Lang, string>> = {
 
   // ── Jarvis (second-brain chat) ────────────────────────────────────────────────
   "jarvis.title":             { en: "Jarvis",             de: "Jarvis" },
-  "jarvis.subtitle":          { en: "Ask anything grounded in your second brain.", de: "Frag, was du willst — die Antwort stützt sich auf dein Second Brain." },
   "jarvis.placeholder":       { en: "Ask Jarvis anything...", de: "Frag Jarvis etwas..." },
   "jarvis.send":              { en: "Send",               de: "Senden" },
   "jarvis.thinking":          { en: "Thinking...",        de: "Denkt nach..." },
-  "jarvis.sources":           { en: "Sources",            de: "Quellen" },
-  "jarvis.empty_state":       { en: "Ask a question to get started.", de: "Stell eine Frage, um loszulegen." },
+  "jarvis.sources":           { en: "Sources used",       de: "Verwendete Quellen" },
+  "jarvis.base_context":      { en: "Base context",       de: "Basiskontext" },
+  "jarvis.you_label":         { en: "You",                de: "Du" },
   "jarvis.error_banner":      { en: "Jarvis could not answer:", de: "Jarvis konnte nicht antworten:" },
   "jarvis.retry":             { en: "Retry",              de: "Nochmal versuchen" },
-  // Focus-Deck-Jarvis-Rail (Slice 1): Layout-States, kein neuer Chat-Text.
-  "jarvis.expand":            { en: "Expand Jarvis",      de: "Jarvis ausklappen" },
-  "jarvis.collapse":          { en: "Collapse Jarvis",    de: "Jarvis einklappen" },
-  "jarvis.restore":           { en: "Restore Jarvis size", de: "Jarvis auf Normalgröße" },
   "jarvis.open_mobile":       { en: "Open Jarvis",        de: "Jarvis öffnen" },
   "jarvis.close":             { en: "Close",              de: "Schließen" },
+
+  // ── Command Jarvis bar (Interactive Operating System pass) ───────────────────
+  "jarvis.command_bar.title":    { en: "Command Jarvis",  de: "Command Jarvis" },
+  "jarvis.command_bar.subtitle": { en: "Ask, prepare, prioritize, or execute across your workspace...", de: "Frag, bereite vor, priorisiere oder handle über dein ganzes Workspace hinweg ..." },
+
+  // ── Jarvis panel — context + quick actions (shown before the first message) ──
+  "jarvis.panel.context_label":       { en: "Context",       de: "Kontext" },
+  "jarvis.panel.quick_actions_label": { en: "Quick actions", de: "Schnellaktionen" },
+
+  // Per-route default context (JarvisContext, lib/jarvisContext.tsx) — the
+  // fallback shown until a page pushes something more specific (e.g. a
+  // selected project). Not user-facing navigation labels (those are the
+  // nav.* keys) — these are Jarvis's own framing of "what am I looking at."
+  "jarvis.context.home.title":         { en: "Home",       de: "Home" },
+  "jarvis.context.home.summary":       { en: "Your daily command center.", de: "Deine tägliche Kommandozentrale." },
+  "jarvis.context.projects.title":     { en: "Projects",   de: "Projekte" },
+  "jarvis.context.projects.summary":   { en: "Review projects, risks and next moves.", de: "Projekte, Risiken und nächste Schritte im Blick behalten." },
+  "jarvis.context.operator.title":     { en: "Operator",   de: "Operator" },
+  "jarvis.context.operator.summary":   { en: "Review and control execution.", de: "Ausführung prüfen und steuern." },
+  "jarvis.context.daily_plan.title":   { en: "Daily Plan", de: "Tagesplan" },
+  "jarvis.context.daily_plan.summary": { en: "Review today's priorities.", de: "Die heutigen Prioritäten durchgehen." },
+  "jarvis.context.settings.title":     { en: "Settings",   de: "Einstellungen" },
+  "jarvis.context.settings.summary":   { en: "Rules and preferences.", de: "Regeln und Einstellungen." },
+
+  // Quick-action labels — doubles as the literal message sent for the
+  // generic (non-entity) ones; entity-specific contexts (selected project,
+  // work order) build a real-data prompt separately and reuse only the label.
+  "jarvis.qa.review_today":         { en: "Review today",           de: "Heute durchgehen" },
+  "jarvis.qa.check_blocked":        { en: "Check blocked work",     de: "Blockierte Arbeit prüfen" },
+  "jarvis.qa.prioritize_projects":  { en: "Prioritize projects",    de: "Projekte priorisieren" },
+  "jarvis.qa.show_risks":           { en: "Show risks",             de: "Risiken anzeigen" },
+  "jarvis.qa.summarize_running":    { en: "Summarize running work", de: "Laufende Arbeit zusammenfassen" },
+  "jarvis.qa.analyze_project":      { en: "Analyze project",        de: "Projekt analysieren" },
+  "jarvis.qa.define_next_move":     { en: "Define next move",       de: "Nächsten Schritt festlegen" },
+  "jarvis.qa.create_work_order":    { en: "Create work order",      de: "Work Order erstellen" },
   // Empty-state welcome block (Visual Fidelity Sprint — Higgsfield
   // Focus-Deck-Referenz): static hint text, not clickable — no new
   // send-on-click behavior was added along with the visual polish.
   "jarvis.suggestion.try":    { en: "Try:",               de: "Versuch's mit:" },
   "jarvis.suggestion.1":      { en: "Review my project status", de: "Meinen Projektstatus prüfen" },
-  "jarvis.suggestion.2":      { en: "Find a document",    de: "Ein Dokument finden" },
   "jarvis.suggestion.3":      { en: "Plan my day",        de: "Meinen Tag planen" },
 
   // ── Jarvis suggested actions (JARVIS-C1 — Command Layer) ────────────────────
@@ -355,6 +386,10 @@ const dict: Record<string, Record<Lang, string>> = {
   "projects.priority.high":        { en: "High",                 de: "Hoch" },
   "projects.priority.medium":      { en: "Medium",               de: "Mittel" },
   "projects.priority.low":         { en: "Low",                  de: "Niedrig" },
+  "projects.summary.at_risk":      { en: "at risk",              de: "gefährdet" },
+  "projects.detail.ask_jarvis":    { en: "Ask Jarvis about this project", de: "Jarvis zu diesem Projekt fragen" },
+  "projects.detail.select_hint":   { en: "Select a project to see full details.", de: "Wähle ein Projekt, um alle Details zu sehen." },
+  "projects.detail.empty_title":   { en: "No project selected",  de: "Kein Projekt ausgewählt" },
 
   // ── Background Operator / Dev Team Control Plane ──────────────────────────────
   "operator.title":                { en: "Background Operator",  de: "Background Operator" },

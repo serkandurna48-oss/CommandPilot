@@ -13,24 +13,28 @@ const config: Config = {
         // brand-600 ist der Standard-Button-Fill (siehe globals.css für den
         // berechneten Kontrast gegen Weiß-Text und den Abstand zu warning).
         brand: {
-          50:  "#faf3ec",
-          100: "#f0dfc9",
-          200: "#e2c29d",
-          300: "#d1a374",
-          400: "#c0884f",
+          // Exact Higgsfield spec (04-design-system/01-brand-color.png) —
+          // 500/600 already matched the prior scale precisely, the rest are
+          // now aligned too.
+          50:  "#f7d9b3",
+          100: "#f2c79a",
+          200: "#e7b07a",
+          300: "#d99b60",
+          400: "#c8894e",
           500: "#b5733f",
           600: "#9c5e33",
-          700: "#7c4a28",
-          800: "#5c371e",
-          900: "#3d2414",
+          700: "#7f4b28",
+          800: "#62381e",
+          900: "#4a2b16",
         },
         // Statusfarben — bewusst getrennte Farbfamilie von brand/bronze,
         // niemals als Ersatz für Bronze verwendet (siehe globals.css).
         status: {
           success: "#22c55e",
-          warning: "#eab308",
+          warning: "#f59e0b", // Higgsfield spec value (was #eab308)
           danger:  "#ef4444",
           info:    "#3b82f6",
+          neutral: "#6b7280", // Higgsfield spec's 4th status color (inactive/disabled)
         },
       },
       fontFamily: {

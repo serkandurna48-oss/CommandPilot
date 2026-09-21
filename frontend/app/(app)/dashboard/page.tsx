@@ -5,24 +5,29 @@ import { PageLoader } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import { mapWorkOrderFromApi } from "@/lib/workOrderMapper";
 import { HomeBriefing, buildActivity } from "@/components/dashboard/HomeBriefing";
-import type { DailyPlan, WorkOrder } from "@/types";
+import type { DailyPlan, Project, WorkOrder } from "@/types";
 
 export default function DashboardPage() {
   const [plan, setPlan] = useState<DailyPlan | null>(null);
   const [orders, setOrders] = useState<WorkOrder[]>([]);
+  const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    const [plansResult, ordersResult] = await Promise.allSettled([
+    const [plansResult, ordersResult, projectsResult] = await Promise.allSettled([
       api.plans.listMine(),
       api.workOrders.listMine(),
+      api.projects.listMine(),
     ]);
     if (plansResult.status === "fulfilled" && plansResult.value.length > 0) {
       setPlan(plansResult.value[0]);
     }
     if (ordersResult.status === "fulfilled") {
       setOrders(ordersResult.value.map(mapWorkOrderFromApi));
+    }
+    if (projectsResult.status === "fulfilled") {
+      setProjects(projectsResult.value);
     }
     setLoading(false);
   }, []);
@@ -73,6 +78,7 @@ export default function DashboardPage() {
       needsDecision={needsDecision}
       inProgress={inProgress}
       activity={activity}
+      projects={projects}
       pendingId={pendingId}
       onRequeue={requeue}
     />

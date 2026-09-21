@@ -9,24 +9,14 @@ import { ApiError, api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { RISK_COLORS } from "@/lib/operatorStyles";
+import { useJarvisContext } from "@/lib/jarvisContext";
 import type {
   JarvisChatMessage,
   JarvisSourceRef,
   JarvisSuggestedAction,
   JarvisSuggestedActionDecisionRequest,
 } from "@/types";
-import { Sparkles, ArrowRight, Check, X } from "lucide-react";
-
-// Mirrors components/dashboard/HomeBriefing.tsx's getGreetingKey() — small
-// enough (and presentational-only, Visual Fidelity Sprint) that a shared
-// util would be more ceremony than the duplication it avoids.
-function getGreetingKey(): string {
-  const h = new Date().getHours();
-  if (h >= 5 && h < 12) return "greeting.morning";
-  if (h >= 12 && h < 17) return "greeting.afternoon";
-  if (h >= 17 && h < 22) return "greeting.evening";
-  return "greeting.night";
-}
+import { Sparkles, ArrowRight, Check, X, ChevronRight, FileText, FolderOpen } from "lucide-react";
 
 // One suggested_action as shown in the UI, tagged with a stable client-side
 // idempotency token (JARVIS-C1, Phase 6) generated once when the proposal
@@ -40,7 +30,52 @@ interface DisplaySuggestedAction extends JarvisSuggestedAction {
 
 interface DisplayMessage extends JarvisChatMessage {
   sources?: JarvisSourceRef[];
+  baseSources?: JarvisSourceRef[];
   suggestedActions?: DisplaySuggestedAction[];
+}
+
+// Higgsfield reference (05-pages/02-jarvis-expanded-desktop.png): a real,
+// bordered, collapsible "SOURCES USED" disclosure — not an inline plain-text
+// list. base_sources is real data the backend already returns (CLAUDE.md's
+// Jarvis contract: "separat verfügbar, aber nicht Default-sichtbar") — this
+// surfaces it honestly, collapsed by default, never fabricated.
+function SourcesDisclosure({
+  title,
+  icon: Icon,
+  sources,
+  defaultOpen,
+}: {
+  title: string;
+  icon: typeof FileText;
+  sources: JarvisSourceRef[];
+  defaultOpen?: boolean;
+}) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
+    <div className="rounded-lg border border-[var(--border-light)] overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center gap-2 px-3 py-2.5 text-left hover:bg-[var(--interactive-bg-secondary-hover)] motion-safe:transition-colors"
+      >
+        <Icon className="h-3.5 w-3.5 text-[var(--text-tertiary)] shrink-0" />
+        <span className="text-xs font-medium text-[var(--text-secondary)] flex-1">
+          {title} ({sources.length})
+        </span>
+        <ChevronRight className={cn("h-3.5 w-3.5 text-[var(--text-tertiary)] motion-safe:transition-transform", open && "rotate-90")} />
+      </button>
+      {open && (
+        <ol className="px-3 pb-3 space-y-1">
+          {sources.map((s, si) => (
+            <li key={si} className="text-[11px] font-mono text-[var(--text-tertiary)] flex gap-2">
+              <span className="text-[var(--text-placeholder)]">{si + 1}.</span>
+              <span>{s.source_file}{s.source_heading ? ` — ${s.source_heading}` : ""}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
 }
 
 type DecisionStatus = "idle" | "confirming" | "rejecting" | "confirmed" | "rejected";
@@ -147,16 +182,31 @@ function SuggestedActionCard({
 
 export function JarvisChat() {
   const t = useT();
+  const jarvisContext = useJarvisContext();
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [decisions, setDecisions] = useState<Record<string, DecisionState>>({});
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, loading]);
+
+  // Composer grows with content (comfortable one-liner up to ~4 lines), then
+  // scrolls internally rather than growing indefinitely — also what snaps it
+  // back to baseline height once `send()` clears the input.
+  useEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    const maxHeight = 136;
+    el.style.height = "auto";
+    const next = Math.min(el.scrollHeight, maxHeight);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > maxHeight ? "auto" : "hidden";
+  }, [input]);
 
   async function send(text: string) {
     const question = text.trim();
@@ -180,7 +230,7 @@ export function JarvisChat() {
       }));
       setMessages((prev) => [
         ...prev,
-        { role: "assistant", content: res.reply, sources: res.sources, suggestedActions },
+        { role: "assistant", content: res.reply, sources: res.sources, baseSources: res.base_sources, suggestedActions },
       ]);
     } catch (err: unknown) {
       // Never fall back to mock/placeholder content on failure — a visible
@@ -247,78 +297,101 @@ export function JarvisChat() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-14rem)] md:h-[calc(100vh-12rem)]">
+    // Fills whatever real height its ancestor chain resolves to — the panel,
+    // the mobile overlay, and the dedicated /jarvis page each establish that
+    // height differently, so the "how tall is the viewport chrome around
+    // this" concern belongs to them, not to this shared component.
+    <div className="flex flex-col h-full">
       <div className="flex-1 overflow-y-auto space-y-4 pb-4">
         {messages.length === 0 && !loading && (
           // Bespoke welcome block, not the shared EmptyState (that one is
           // reused across many unrelated empty states app-wide — this is
-          // Jarvis-specific presentation, Visual Fidelity Sprint).
-          <div className="py-6 space-y-4">
+          // Jarvis-specific presentation). Interactive Operating System pass:
+          // replaces the generic time-of-day greeting with real route/entity
+          // context (CommandPilot.jarvisContext) and quick actions derived
+          // from it — never the same block on every screen.
+          <div className="py-6 space-y-5">
             <Sparkles className="h-6 w-6 text-[var(--text-accent)]" />
             <div>
-              <p className="font-serif text-xl text-[var(--text-primary)]">{t(getGreetingKey())}</p>
-              <p className="text-[var(--text-secondary)] text-sm mt-1">{t("jarvis.subtitle")}</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)]">
+                {t("jarvis.panel.context_label")}
+              </p>
+              <p className="font-serif text-xl text-[var(--text-primary)] mt-1">{jarvisContext.summary}</p>
             </div>
-            <p className="text-[var(--text-tertiary)] text-xs">
-              {t("jarvis.suggestion.try")}{" "}
-              <span className="italic">&ldquo;{t("jarvis.suggestion.1")}&rdquo;</span> ·{" "}
-              <span className="italic">&ldquo;{t("jarvis.suggestion.2")}&rdquo;</span> ·{" "}
-              <span className="italic">&ldquo;{t("jarvis.suggestion.3")}&rdquo;</span>
-            </p>
+            {jarvisContext.quickActions.length > 0 && (
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] mb-2">
+                  {t("jarvis.panel.quick_actions_label")}
+                </p>
+                <div className="space-y-2">
+                  {jarvisContext.quickActions.map((qa) => (
+                    <button
+                      key={qa.label}
+                      type="button"
+                      onClick={() => send(qa.prompt)}
+                      className="w-full flex items-center gap-3 rounded-xl border border-[var(--border-light)] px-4 py-3 text-left hover:bg-[var(--interactive-bg-secondary-hover)] motion-safe:transition-colors duration-150"
+                    >
+                      <Sparkles className="h-4 w-4 text-[var(--text-accent)] shrink-0" />
+                      <span className="text-sm text-[var(--text-primary)] flex-1">{qa.label}</span>
+                      <ChevronRight className="h-4 w-4 text-[var(--text-tertiary)] shrink-0" />
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
+        {/* Higgsfield reference (05-pages/02-jarvis-expanded-desktop.png):
+            a briefing/document read, not a two-sided chat UI — plain
+            YOU/JARVIS label + text, hairline-divided, no bubbles. */}
         {messages.map((msg, i) => (
-          <div key={i} className={cn("flex", msg.role === "user" ? "justify-end" : "justify-start")}>
-            <div className={cn("max-w-[85%] md:max-w-[70%]", msg.role === "user" ? "" : "w-full")}>
-              <Card
-                variant={msg.role === "user" ? "elevated" : "default"}
-                className={cn(msg.role === "user" ? "bg-brand-600/15 border-brand-600/30" : undefined)}
-              >
-                <CardContent className="py-3 text-sm text-slate-100 whitespace-pre-wrap">
-                  {msg.content}
-                </CardContent>
-              </Card>
-              {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
-                <div className="mt-1.5 px-1">
-                  <p className="text-[11px] uppercase tracking-wide text-slate-500 mb-1">
-                    {t("jarvis.sources")}
-                  </p>
-                  <ul className="space-y-0.5">
-                    {msg.sources.map((s, si) => (
-                      <li key={si} className="text-xs text-slate-400 font-mono">
-                        {s.source_file}
-                        {s.source_heading ? ` — ${s.source_heading}` : ""}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+          <div key={i} className="pb-4 border-b border-[var(--border-light)] last:border-0">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-[var(--text-tertiary)] mb-2">
+              {msg.role === "user" ? t("jarvis.you_label") : t("jarvis.title")}
+            </p>
+            <p
+              className={cn(
+                "whitespace-pre-wrap",
+                msg.role === "user"
+                  ? "text-sm text-[var(--text-secondary)]"
+                  : "font-serif text-[17px] leading-relaxed text-[var(--text-primary)]"
               )}
-              {msg.role === "assistant" && msg.suggestedActions && msg.suggestedActions.length > 0 && (
-                <div className="space-y-2">
-                  {msg.suggestedActions.map((action) => (
-                    <SuggestedActionCard
-                      key={action.requestId}
-                      action={action}
-                      decision={decisions[action.requestId]}
-                      onConfirm={() => decideSuggestedAction(action, "confirm")}
-                      onReject={() => decideSuggestedAction(action, "reject")}
-                    />
-                  ))}
-                </div>
-              )}
-            </div>
+            >
+              {msg.content}
+            </p>
+
+            {msg.role === "assistant" && msg.sources && msg.sources.length > 0 && (
+              <div className="mt-3">
+                <SourcesDisclosure title={t("jarvis.sources")} icon={FileText} sources={msg.sources} defaultOpen />
+              </div>
+            )}
+            {msg.role === "assistant" && msg.baseSources && msg.baseSources.length > 0 && (
+              <div className="mt-2">
+                <SourcesDisclosure title={t("jarvis.base_context")} icon={FolderOpen} sources={msg.baseSources} />
+              </div>
+            )}
+
+            {msg.role === "assistant" && msg.suggestedActions && msg.suggestedActions.length > 0 && (
+              <div className="space-y-2 mt-3">
+                {msg.suggestedActions.map((action) => (
+                  <SuggestedActionCard
+                    key={action.requestId}
+                    action={action}
+                    decision={decisions[action.requestId]}
+                    onConfirm={() => decideSuggestedAction(action, "confirm")}
+                    onReject={() => decideSuggestedAction(action, "reject")}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         ))}
 
         {loading && (
-          <div className="flex justify-start">
-            <Card>
-              <CardContent className="py-3 flex items-center gap-2 text-sm text-slate-400">
-                <div className="h-4 w-4 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
-                {t("jarvis.thinking")}
-              </CardContent>
-            </Card>
+          <div className="flex items-center gap-2 text-sm text-[var(--text-tertiary)] pb-4">
+            <div className="h-4 w-4 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
+            {t("jarvis.thinking")}
           </div>
         )}
 
@@ -333,7 +406,7 @@ export function JarvisChat() {
           Kartenrahmen um den Composer selbst. */}
       <div className="pt-3 border-t border-[var(--border-light)] shrink-0">
         {error && (
-          <div className="mb-3 rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm flex items-center justify-between gap-3">
+          <div className="mb-3 rounded-lg bg-status-danger/10 border border-status-danger/30 px-4 py-3 text-status-danger text-sm flex items-center justify-between gap-3">
             <p>
               <span className="font-medium">{t("jarvis.error_banner")}</span> {error}
             </p>
@@ -344,29 +417,44 @@ export function JarvisChat() {
         )}
 
         <form onSubmit={handleSubmit}>
+          {/* Deterministic composer: outer is `relative`, the icon and the
+              send button are `absolute` at fixed edges, and the textarea is
+              a single full-width block with padding carved out for both —
+              not a flex row. A flex row lets an intrinsically-wide child
+              (or browser flex quirks) shove the button around; absolute
+              positioning makes the button's position a constant, full stop,
+              regardless of placeholder/typed-text/textarea/viewport width. */}
           <div
             className={cn(
-              "flex items-center gap-2 w-full rounded-full border bg-[var(--bg-surface)] pl-4 pr-1.5 py-1.5",
-              "motion-safe:transition-colors",
-              "border-brand-500/40 focus-within:border-brand-500"
+              // Full intelligence input, not the closed command bar's compact
+              // pill: rounded-2xl (card-family radius) rather than
+              // rounded-full, and a taller comfortable baseline — grows
+              // further as content wraps (see the resize effect above).
+              "relative w-full rounded-2xl border bg-[var(--bg-surface)]",
+              "motion-safe:transition-[border-color,box-shadow]",
+              // Calm by default, glow only on focus (Higgsfield reference:
+              // the composer is a plain neutral surface until active).
+              "border-[var(--border-default)]",
+              "focus-within:border-[var(--interactive-bg-primary-default)] focus-within:shadow-[0_0_0_3px_rgba(181,115,63,0.18)]"
             )}
           >
-            <Sparkles className="h-4 w-4 text-[var(--text-accent)] shrink-0" />
+            <Sparkles className="absolute left-4 top-1/2 -translate-y-1/2 h-4 w-4 text-[var(--text-accent)] pointer-events-none" />
             <Textarea
+              ref={textareaRef}
               bare
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyDown}
               placeholder={t("jarvis.placeholder")}
               rows={1}
-              className="flex-1 py-1.5 text-sm min-h-0"
+              className="block w-full min-w-0 py-5 pl-10 pr-12 text-sm min-h-0 resize-none"
               disabled={loading}
             />
             <button
               type="submit"
               disabled={loading || !input.trim()}
               aria-label={t("jarvis.send")}
-              className="flex items-center justify-center h-9 w-9 rounded-full shrink-0 bg-[var(--interactive-bg-primary-default)] hover:bg-[var(--interactive-bg-primary-hover)] text-white disabled:opacity-50 motion-safe:transition-colors focus:outline-none focus-visible:outline focus-visible:outline-[1.5px] focus-visible:outline-offset-2 focus-visible:outline-[var(--interactive-border-focus)]"
+              className="absolute right-2 top-1/2 -translate-y-1/2 z-10 flex items-center justify-center h-10 w-10 rounded-full shrink-0 bg-[var(--interactive-bg-primary-default)] hover:bg-[var(--interactive-bg-primary-hover)] text-white disabled:opacity-50 motion-safe:transition-colors focus:outline-none focus-visible:outline focus-visible:outline-[1.5px] focus-visible:outline-offset-2 focus-visible:outline-[var(--interactive-border-focus)]"
             >
               {loading ? (
                 <div className="h-4 w-4 rounded-full border-2 border-white border-t-transparent animate-spin" />

@@ -17,23 +17,35 @@
  * berechneten Farbabstand.
  */
 :root {
-  /* Flächen — warmes Graphit statt neutralem Slate */
-  --bg-app: #0b0b0c;
-  --bg-surface: #17171a;
-  --bg-elevated: #1e1e22;
+  /* Flächen — Higgsfield-Referenz (04-design-system/01-brand-color.png):
+     vier Ebenen, exakte Hex-Werte statt Näherung. */
+  --bg-app: #0e1114;
+  --bg-surface: #1a1f22;
+  --bg-elevated: #23282d;
+  --bg-hover-surface: #2b3035;
 
-  /* Text — leicht warme Grauskala passend zur Bronze-Markenfarbe */
+  /* Text — warmer Grauton beibehalten (05-pages/*.png zeigen durchgängig
+     warmes Off-White in den Serif-Headlines, nicht das kühlere Blaugrau aus
+     der Brand-&-Color-Spec-Sheet — bei Widerspruch gewinnt die finale
+     Page-Referenz, siehe 02-typography.png's eigene "warme" Notiz #EAE7E1). */
   --text-primary: #f2efea;
   --text-secondary: #a8a29a;
   --text-tertiary: #7a756d;
   --text-placeholder: #5c5850;
   --text-accent: #b5733f; /* brand-500 */
 
-  /* Rahmen — vier Gewichte statt eines */
-  --border-light: rgba(255, 255, 255, 0.06);
-  --border-default: rgba(255, 255, 255, 0.10);
-  --border-medium: rgba(255, 255, 255, 0.16);
-  --border-heavy: rgba(255, 255, 255, 0.24);
+  /* Rahmen — Higgsfield-Referenz: sichtbare, solide Farben statt Weiß-Alpha.
+     Jede Karte in den Page-Referenzen hat einen klar erkennbaren Rand. */
+  --border-light: #2a2a34;
+  --border-default: #3a4046;
+  --border-medium: #4a5157;
+  --border-heavy: #5c6368;
+
+  /* Elevation — Visual Polish Pass: two tiers, used sparingly. Cards read
+     their depth mostly from the surface/border step already, so they get
+     almost no shadow; only the floating Jarvis panel gets real depth. */
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.22);
+  --shadow-float: -16px 0 48px rgba(0, 0, 0, 0.32), 0 8px 24px rgba(0, 0, 0, 0.22);
 
   /* Interaktion — Hover/Press als Alpha-Overlay auf dem Akzent selbst,
      kein zweiter Bronze-Ton nur für "Hover" (gleiche Technik wie JARVIS-D1). */

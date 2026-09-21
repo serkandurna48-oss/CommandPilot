@@ -1,22 +1,34 @@
 "use client";
 
-import { PageHeader } from "@/components/layout/PageHeader";
-import { EmptyState } from "@/components/ui/Spinner";
+import { Sparkles } from "lucide-react";
 import { useT } from "@/lib/i18n";
+import { useJarvisContext } from "@/lib/jarvisContext";
+import { JarvisChat } from "@/components/jarvis/JarvisChat";
 
-// Jarvis lebt jetzt permanent in der Jarvis-Rail (Focus-Deck-Auftrag,
-// Slice 2) und wird beim Ankommen auf dieser Route automatisch auf
-// "expanded" gestellt (siehe FocusDeckShell). Diese Seite rendert deshalb
-// KEINE zweite JarvisChat-Instanz mehr — das gäbe zwei unabhängige,
-// gegeneinander laufende Chats mit eigenem State. Nur ein kurzer,
-// zustandsneutraler Hinweis im Workspace; JarvisChat selbst bleibt
-// unverändert (keine neue Chat-Logik).
+// Interactive Operating System pass — the dedicated route is now the FULL
+// Jarvis workspace: a real header, then JarvisChat (conversation, sources,
+// Suggested Actions, composer — all unchanged logic) filling the rest of
+// the viewport. No second, redundant Jarvis area — this route doesn't
+// render the shell's reflow panel at all (see FocusDeckShell), so this
+// page's own content IS the whole experience.
 export default function JarvisPage() {
   const t = useT();
+  const context = useJarvisContext();
+
   return (
-    <>
-      <PageHeader title={t("jarvis.title")} subtitle={t("jarvis.subtitle")} />
-      <EmptyState title={t("jarvis.empty_state")} />
-    </>
+    <div className="flex flex-col h-full">
+      <div className="flex items-center gap-3 pb-5 mb-1 border-b border-white/[0.06] shrink-0">
+        <span className="flex items-center justify-center h-9 w-9 rounded-full bg-[var(--interactive-bg-primary-default)]/15 text-[var(--text-accent)] shrink-0">
+          <Sparkles className="h-4 w-4" />
+        </span>
+        <div className="min-w-0">
+          <h1 className="font-serif text-xl text-[var(--text-primary)] leading-tight">{t("jarvis.title")}</h1>
+          <p className="text-xs text-[var(--text-tertiary)] leading-tight truncate">{context.title} — {context.summary}</p>
+        </div>
+      </div>
+      <div className="flex-1 min-h-0 max-w-3xl mx-auto w-full pt-2">
+        <JarvisChat />
+      </div>
+    </div>
   );
 }
