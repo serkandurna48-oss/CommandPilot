@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
 import { Button } from "@/components/ui/Button";
 import { useT } from "@/lib/i18n";
 import type { AgentRun, ReviewPackage, WorkOrder } from "@/types";
@@ -24,8 +23,8 @@ const RUNNER_PHASE_COLORS: Record<RunnerPhase, string> = {
   not_started:      "bg-slate-800 border border-slate-700 text-slate-500",
   prompt_generated: "bg-slate-800 border border-slate-600 text-slate-300",
   awaiting_result:  "bg-slate-800 border border-brand-700/40 text-brand-400/80",
-  import_failed:    "bg-slate-800 border border-rose-800/40 text-rose-400/80",
-  review_ready:     "bg-slate-800 border border-sky-800/40 text-sky-400/80",
+  import_failed:    "bg-slate-800 border border-status-danger/40 text-status-danger",
+  review_ready:     "bg-slate-800 border border-status-info/40 text-status-info",
 };
 
 function deriveRunnerPhase(
@@ -56,11 +55,11 @@ function deriveRunnerPhase(
 function CreditBadge({ usesCredits }: { usesCredits: boolean }) {
   const t = useT();
   return usesCredits ? (
-    <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-amber-400/90 bg-amber-950/30 border border-amber-900/40 rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-status-warning/90 bg-status-warning/10 border border-status-warning/30 rounded px-1.5 py-0.5">
       <Coins className="h-3 w-3" /> {t("operator.runner.badge_uses_credits")}
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-emerald-400/80 bg-emerald-950/20 border border-emerald-900/30 rounded px-1.5 py-0.5">
+    <span className="inline-flex items-center gap-1 text-[10px] font-mono uppercase tracking-wider text-status-success/80 bg-status-success/10 border border-status-success/30 rounded px-1.5 py-0.5">
       <ShieldCheck className="h-3 w-3" /> {t("operator.runner.badge_no_credits")}
     </span>
   );
@@ -93,12 +92,12 @@ function CommandBlock({
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2 flex-wrap">
-        <p className="text-xs font-medium text-slate-300">{label}</p>
+        <p className="text-xs font-medium text-[var(--text-secondary)]">{label}</p>
         {usesCredits !== undefined && <CreditBadge usesCredits={usesCredits} />}
       </div>
-      {hint && <p className="text-slate-500 text-xs">{hint}</p>}
+      {hint && <p className="text-[var(--text-tertiary)] text-xs">{hint}</p>}
       <div className="flex items-start gap-2">
-        <pre className="flex-1 text-xs font-mono bg-slate-950 border border-slate-700 rounded-lg p-2 overflow-x-auto text-slate-300 whitespace-pre-wrap break-all">
+        <pre className="flex-1 text-xs font-mono bg-[var(--bg-app)] border border-[var(--border-default)] rounded-lg p-2 overflow-x-auto text-[var(--text-secondary)] whitespace-pre-wrap break-all">
           {command}
         </pre>
         <Button size="sm" variant="secondary" onClick={handleCopy}>
@@ -114,10 +113,10 @@ function StepNote({ label, hint, usesCredits }: { label: string; hint: string; u
   return (
     <div className="space-y-1">
       <div className="flex items-center gap-2 flex-wrap">
-        <p className="text-xs font-medium text-slate-300">{label}</p>
+        <p className="text-xs font-medium text-[var(--text-secondary)]">{label}</p>
         {usesCredits !== undefined && <CreditBadge usesCredits={usesCredits} />}
       </div>
-      <p className="text-slate-500 text-xs">{hint}</p>
+      <p className="text-[var(--text-tertiary)] text-xs">{hint}</p>
     </div>
   );
 }
@@ -164,79 +163,74 @@ export function LocalRunnerPanel({
   const importCmd = `python scripts/run_work_order.py ${order.id} --mode import-result --api-url ${apiUrl} --token $env:COMMANDPILOT_API_TOKEN`;
 
   return (
-    <Card variant="bordered">
-      <CardHeader>
-        <CardTitle>{t("operator.runner.title")}</CardTitle>
-      </CardHeader>
-      <CardContent className="space-y-4">
-        <div className="flex items-center gap-2 flex-wrap">
-          <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-mono", RUNNER_PHASE_COLORS[phase])}>
-            {t(`operator.runner.phase.${phase}`)}
-          </span>
-          <span className="text-slate-500 text-xs">{t(`operator.runner.phase.${phase}_hint`)}</span>
-        </div>
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 flex-wrap">
+        <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-mono", RUNNER_PHASE_COLORS[phase])}>
+          {t(`operator.runner.phase.${phase}`)}
+        </span>
+        <span className="text-[var(--text-tertiary)] text-xs">{t(`operator.runner.phase.${phase}_hint`)}</span>
+      </div>
 
-        <div className="flex items-center gap-2 text-xs">
-          <FolderOpen className="h-3.5 w-3.5 text-slate-500 shrink-0" />
-          <span className="text-slate-500">{t("operator.runner.run_folder_label")}:</span>
-          <code className="font-mono text-slate-300 bg-slate-950 border border-slate-700 rounded px-1.5 py-0.5">{runFolder}</code>
-        </div>
+      <div className="flex items-center gap-2 text-xs">
+        <FolderOpen className="h-3.5 w-3.5 text-[var(--text-tertiary)] shrink-0" />
+        <span className="text-[var(--text-tertiary)]">{t("operator.runner.run_folder_label")}:</span>
+        <code className="font-mono text-[var(--text-secondary)] bg-[var(--bg-app)] border border-[var(--border-default)] rounded px-1.5 py-0.5">{runFolder}</code>
+      </div>
 
-        <p className="text-slate-500 text-xs">{t("operator.runner.note")}</p>
-        <p className="text-[10px] font-mono uppercase tracking-wider text-slate-600">{t("operator.runner.powershell_note")}</p>
+      <p className="text-[var(--text-tertiary)] text-xs">{t("operator.runner.note")}</p>
+      <p className="text-[10px] font-mono uppercase tracking-wider text-[var(--text-placeholder)]">{t("operator.runner.powershell_note")}</p>
 
-        {isExternalRepo && (
-          <div className="rounded-lg bg-sky-950/20 border border-sky-900/30 px-3 py-2 flex items-start gap-2">
-            <FolderGit2 className="h-3.5 w-3.5 text-sky-400/80 shrink-0 mt-0.5" />
-            <div className="space-y-1 text-xs">
-              <p className="text-sky-300/90 font-medium">{t("operator.runner.cross_repo_title")}</p>
-              <p className="text-slate-400">
-                {t("operator.runner.cross_repo_control_plane")}
-              </p>
-              <p className="text-slate-400">
-                {t("operator.runner.cross_repo_target")}{" "}
-                <span className="font-mono text-slate-300">
-                  {order.targetRepoName ?? order.targetRepoPath} {order.targetRepoPath ? `(${order.targetRepoPath})` : ""}
-                </span>
-              </p>
-              <p className="text-slate-400">{t("operator.runner.cross_repo_import")}</p>
-            </div>
+      {isExternalRepo && (
+        <div className="rounded-lg bg-status-info/10 border border-status-info/30 px-3 py-2 flex items-start gap-2">
+          <FolderGit2 className="h-3.5 w-3.5 text-status-info/90 shrink-0 mt-0.5" />
+          <div className="space-y-1 text-xs">
+            <p className="text-status-info font-medium">{t("operator.runner.cross_repo_title")}</p>
+            <p className="text-[var(--text-secondary)]">
+              {t("operator.runner.cross_repo_control_plane")}
+            </p>
+            <p className="text-[var(--text-secondary)]">
+              {t("operator.runner.cross_repo_target")}{" "}
+              <span className="font-mono text-[var(--text-primary)]">
+                {order.targetRepoName ?? order.targetRepoPath} {order.targetRepoPath ? `(${order.targetRepoPath})` : ""}
+              </span>
+            </p>
+            <p className="text-[var(--text-secondary)]">{t("operator.runner.cross_repo_import")}</p>
           </div>
-        )}
-
-        <CommandBlock
-          label={t("operator.runner.step1_title")}
-          hint={t("operator.runner.step1_hint")}
-          command={setTokenCmd}
-        />
-
-        <div className="rounded-lg bg-amber-950/20 border border-amber-900/30 px-3 py-2 flex items-start gap-2">
-          <AlertTriangle className="h-3.5 w-3.5 text-amber-400/80 shrink-0 mt-0.5" />
-          <StepNote label={t("operator.runner.step2_title")} hint={t("operator.runner.step2_hint")} />
         </div>
+      )}
 
-        <CommandBlock label={t("operator.runner.step3_title")} command={startCmd} usesCredits={false} />
+      <CommandBlock
+        label={t("operator.runner.step1_title")}
+        hint={t("operator.runner.step1_hint")}
+        command={setTokenCmd}
+      />
 
-        <StepNote
-          label={t("operator.runner.step4_manual_title")}
-          hint={t("operator.runner.step4_manual_hint")}
-          usesCredits={false}
-        />
-        <CommandBlock
-          label={t("operator.runner.step4_auto_title")}
-          hint={t("operator.runner.step4_auto_hint")}
-          command={executeClaudeCmd}
-          usesCredits={true}
-        />
-        <div className="rounded-lg bg-amber-950/20 border border-amber-900/30 px-3 py-2 flex items-start gap-2">
-          <Coins className="h-3.5 w-3.5 text-amber-400/80 shrink-0 mt-0.5" />
-          <p className="text-amber-300/90 text-xs">{t("operator.runner.budget_required_hint")}</p>
-        </div>
+      <div className="rounded-lg bg-status-warning/10 border border-status-warning/30 px-3 py-2 flex items-start gap-2">
+        <AlertTriangle className="h-3.5 w-3.5 text-status-warning/90 shrink-0 mt-0.5" />
+        <StepNote label={t("operator.runner.step2_title")} hint={t("operator.runner.step2_hint")} />
+      </div>
 
-        <CommandBlock label={t("operator.runner.step5_title")} command={importCmd} />
+      <CommandBlock label={t("operator.runner.step3_title")} command={startCmd} usesCredits={false} />
 
-        <p className="text-slate-500 text-xs">{t("operator.runner.hint")}</p>
-      </CardContent>
-    </Card>
+      <StepNote
+        label={t("operator.runner.step4_manual_title")}
+        hint={t("operator.runner.step4_manual_hint")}
+        usesCredits={false}
+      />
+      <CommandBlock
+        label={t("operator.runner.step4_auto_title")}
+        hint={t("operator.runner.step4_auto_hint")}
+        command={executeClaudeCmd}
+        usesCredits={true}
+      />
+      <div className="rounded-lg bg-status-warning/10 border border-status-warning/30 px-3 py-2 flex items-start gap-2">
+        <Coins className="h-3.5 w-3.5 text-status-warning/90 shrink-0 mt-0.5" />
+        <p className="text-status-warning/90 text-xs">{t("operator.runner.budget_required_hint")}</p>
+      </div>
+
+      <CommandBlock label={t("operator.runner.step5_title")} command={importCmd} />
+
+      <p className="text-[var(--text-tertiary)] text-xs">{t("operator.runner.hint")}</p>
+    </div>
   );
 }

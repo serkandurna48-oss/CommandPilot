@@ -389,7 +389,7 @@ export function WorkOrderDetail({
           )}
         </SurfaceSection>
 
-        <SurfaceSection title={t("operator.section.artifacts")} className="rounded-b-lg">
+        <SurfaceSection title={t("operator.section.artifacts")}>
           {artifacts.length === 0 ? (
             <p className="text-[var(--text-tertiary)] text-xs">{t("operator.section.no_artifacts")}</p>
           ) : (
@@ -410,6 +410,20 @@ export function WorkOrderDetail({
             </div>
           )}
         </SurfaceSection>
+
+        {/* ── Local Runner (recommended path) ──────────────────────────────── */}
+        <SurfaceSection title={t("operator.runner.title")}>
+          <LocalRunnerPanel order={order} agentRuns={runs} reviewPackage={reviewPackage} />
+        </SurfaceSection>
+
+        {/* ── Generate Runner Prompt (manual fallback) — renders its own
+            header row (title + action), see component for why ──────────── */}
+        {scope && <RunnerPromptPanel order={order} scope={scope} steps={steps} />}
+
+        {/* ── Safety rules (always visible, order-independent) ─────────────── */}
+        <SurfaceSection title={t("operator.section.safety_rules")} className="rounded-b-lg">
+          <SafetyRulesPanel />
+        </SurfaceSection>
       </div>
 
       {!reviewPackage && (
@@ -417,15 +431,6 @@ export function WorkOrderDetail({
           <Info className="h-3.5 w-3.5 shrink-0" /> {t("operator.section.no_review_package")}
         </p>
       )}
-
-      {/* ── Local Runner (recommended path) ──────────────────────────────── */}
-      <LocalRunnerPanel order={order} agentRuns={runs} reviewPackage={reviewPackage} />
-
-      {/* ── Generate Runner Prompt (manual fallback) ─────────────────────── */}
-      {scope && <RunnerPromptPanel order={order} scope={scope} steps={steps} />}
-
-      {/* ── Safety rules (always visible, order-independent) ─────────────── */}
-      <SafetyRulesPanel />
     </div>
   );
 }
