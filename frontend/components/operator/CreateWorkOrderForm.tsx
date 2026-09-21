@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { FormSection } from "@/components/layout/FormSection";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
 import { useT } from "@/lib/i18n";
@@ -158,17 +158,14 @@ export function CreateWorkOrderForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {submitError && (
-        <div className="rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-sm text-red-300">
+        <div className="rounded-lg bg-status-danger/10 border border-status-danger/30 px-4 py-3 text-sm text-status-danger">
           <p className="font-medium">{t("operator.create.error_banner")}</p>
-          <p className="mt-1 text-red-300/90">{submitError}</p>
+          <p className="mt-1 text-status-danger/90">{submitError}</p>
         </div>
       )}
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("operator.create.section_basics")}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
+      <div className="rounded-lg border border-[var(--border-light)] bg-[var(--bg-surface)]/60 divide-y divide-[var(--border-light)]">
+        <FormSection title={t("operator.create.section_basics")}>
           <Input
             label={t("operator.create.field_title")}
             placeholder={t("operator.create.field_title_ph")}
@@ -205,16 +202,10 @@ export function CreateWorkOrderForm() {
               onChange={(e) => set("teamType", e.target.value)}
             />
           </div>
-          <p className="text-slate-500 text-xs">{t("operator.create.field_team_type_hint")}</p>
-        </CardContent>
-      </Card>
+          <p className="text-[var(--text-tertiary)] text-xs">{t("operator.create.field_team_type_hint")}</p>
+        </FormSection>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("operator.create.section_target_repo")}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-slate-500 text-xs">{t("operator.create.section_target_repo_hint")}</p>
+        <FormSection title={t("operator.create.section_target_repo")} description={t("operator.create.section_target_repo_hint")}>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
             <Input
               label={t("operator.create.field_target_repo_name")}
@@ -229,15 +220,10 @@ export function CreateWorkOrderForm() {
               onChange={(e) => set("targetRepoPath", e.target.value)}
             />
           </div>
-          <p className="text-slate-500 text-xs">{t("operator.create.field_target_repo_path_safety")}</p>
-        </CardContent>
-      </Card>
+          <p className="text-[var(--text-tertiary)] text-xs">{t("operator.create.field_target_repo_path_safety")}</p>
+        </FormSection>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("operator.create.section_criteria")}</CardTitle>
-        </CardHeader>
-        <CardContent>
+        <FormSection title={t("operator.create.section_criteria")}>
           <Textarea
             label={t("operator.create.field_criteria")}
             rows={4}
@@ -245,15 +231,9 @@ export function CreateWorkOrderForm() {
             onChange={(e) => set("acceptanceCriteria", e.target.value)}
             error={errors.acceptanceCriteria}
           />
-        </CardContent>
-      </Card>
+        </FormSection>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("operator.create.section_scope")}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <p className="text-slate-500 text-xs">{t("operator.create.defaults_hint")}</p>
+        <FormSection title={t("operator.create.section_scope")} description={t("operator.create.defaults_hint")}>
           <Textarea
             label={t("operator.create.field_allowed")}
             rows={4}
@@ -288,15 +268,15 @@ export function CreateWorkOrderForm() {
             />
           </div>
           {mentionsCodeChange(splitLines(form.allowedActions)) && splitLines(form.allowedPaths).length === 0 && (
-            <div className="rounded-lg bg-amber-950/20 border border-amber-900/30 px-3 py-2 flex items-start gap-2">
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-400/80 shrink-0 mt-0.5" />
-              <p className="text-amber-300/90 text-xs">{t("operator.create.warning_no_allowed_paths")}</p>
+            <div className="rounded-lg bg-status-warning/10 border border-status-warning/30 px-3 py-2 flex items-start gap-2">
+              <AlertTriangle className="h-3.5 w-3.5 text-status-warning/80 shrink-0 mt-0.5" />
+              <p className="text-status-warning/90 text-xs">{t("operator.create.warning_no_allowed_paths")}</p>
             </div>
           )}
-        </CardContent>
-      </Card>
+        </FormSection>
+      </div>
 
-      <p className="text-slate-500 text-xs">{t("operator.create.steps_hint")}</p>
+      <p className="text-[var(--text-tertiary)] text-xs">{t("operator.create.steps_hint")}</p>
 
       <div className="flex gap-2">
         <Button type="submit" loading={saving}>

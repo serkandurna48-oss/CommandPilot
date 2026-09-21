@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea } from "@/components/ui/Input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { FormSection } from "@/components/layout/FormSection";
 import { ApiError, api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { today } from "@/lib/utils";
@@ -123,8 +123,8 @@ export function CheckinForm() {
     return (
       <div className="flex flex-col items-center justify-center py-24 gap-4">
         <div className="h-10 w-10 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
-        <p className="text-slate-300 text-sm">{t("morning.generating")}</p>
-        <p className="text-slate-500 text-xs">{t("morning.generating_sub")}</p>
+        <p className="text-[var(--text-secondary)] text-sm">{t("morning.generating")}</p>
+        <p className="text-[var(--text-tertiary)] text-xs">{t("morning.generating_sub")}</p>
       </div>
     );
   }
@@ -132,20 +132,16 @@ export function CheckinForm() {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {error && (
-        <div className="rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm">
+        <div className="rounded-lg bg-status-danger/10 border border-status-danger/30 px-4 py-3 text-status-danger text-sm">
           <p>{error}</p>
           {pendingCheckinId && (
-            <p className="text-red-400 text-xs mt-1">{t("morning.checkin_hint")}</p>
+            <p className="text-status-danger/80 text-xs mt-1">{t("morning.checkin_hint")}</p>
           )}
         </div>
       )}
 
-      {/* Quick raw input */}
-      <Card variant="elevated">
-        <CardHeader>
-          <CardTitle>{t("morning.quick_input")}</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <div className="rounded-lg border border-[var(--border-light)] bg-[var(--bg-surface)]/60 divide-y divide-[var(--border-light)]">
+        <FormSection title={t("morning.quick_input")}>
           <Textarea
             label={t("morning.quick_label")}
             placeholder={t("morning.quick_ph")}
@@ -153,77 +149,67 @@ export function CheckinForm() {
             value={form.raw_input}
             onChange={(e) => updateField("raw_input", e.target.value)}
           />
-        </CardContent>
-      </Card>
+        </FormSection>
 
-      {/* Vitals */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("morning.vitals")}</CardTitle>
-        </CardHeader>
-        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Input
-            label={t("morning.wake_time")}
-            type="time"
-            value={form.wake_time}
-            onChange={(e) => updateField("wake_time", e.target.value)}
-          />
+        <FormSection title={t("morning.vitals")}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Input
+              label={t("morning.wake_time")}
+              type="time"
+              value={form.wake_time}
+              onChange={(e) => updateField("wake_time", e.target.value)}
+            />
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              {t("morning.sleep_quality")} — {form.sleep_quality}/10
-            </label>
-            <input
-              type="range" min={1} max={10}
-              value={form.sleep_quality}
-              onChange={(e) => updateField("sleep_quality", parseInt(e.target.value))}
-              className="accent-brand-500"
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-[var(--text-secondary)]">
+                {t("morning.sleep_quality")} — {form.sleep_quality}/10
+              </label>
+              <input
+                type="range" min={1} max={10}
+                value={form.sleep_quality}
+                onChange={(e) => updateField("sleep_quality", parseInt(e.target.value))}
+                className="accent-brand-500"
+              />
+            </div>
+
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-[var(--text-secondary)]">
+                {t("morning.energy_level")} — {form.energy_level}/10
+              </label>
+              <input
+                type="range" min={1} max={10}
+                value={form.energy_level}
+                onChange={(e) => updateField("energy_level", parseInt(e.target.value))}
+                className="accent-brand-500"
+              />
+            </div>
+
+            <Input
+              label={t("morning.avail_hours")}
+              type="number"
+              min={1} max={16} step={0.5}
+              placeholder="e.g. 8"
+              value={form.available_hours}
+              onChange={(e) => updateField("available_hours", e.target.value)}
+            />
+
+            <Input
+              label={t("morning.body_status")}
+              placeholder={t("morning.body_ph")}
+              value={form.body_status}
+              onChange={(e) => updateField("body_status", e.target.value)}
+            />
+
+            <Input
+              label={t("morning.mood")}
+              placeholder={t("morning.mood_ph")}
+              value={form.mood}
+              onChange={(e) => updateField("mood", e.target.value)}
             />
           </div>
+        </FormSection>
 
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              {t("morning.energy_level")} — {form.energy_level}/10
-            </label>
-            <input
-              type="range" min={1} max={10}
-              value={form.energy_level}
-              onChange={(e) => updateField("energy_level", parseInt(e.target.value))}
-              className="accent-brand-500"
-            />
-          </div>
-
-          <Input
-            label={t("morning.avail_hours")}
-            type="number"
-            min={1} max={16} step={0.5}
-            placeholder="e.g. 8"
-            value={form.available_hours}
-            onChange={(e) => updateField("available_hours", e.target.value)}
-          />
-
-          <Input
-            label={t("morning.body_status")}
-            placeholder={t("morning.body_ph")}
-            value={form.body_status}
-            onChange={(e) => updateField("body_status", e.target.value)}
-          />
-
-          <Input
-            label={t("morning.mood")}
-            placeholder={t("morning.mood_ph")}
-            value={form.mood}
-            onChange={(e) => updateField("mood", e.target.value)}
-          />
-        </CardContent>
-      </Card>
-
-      {/* Tasks & Events */}
-      <Card>
-        <CardHeader>
-          <CardTitle>{t("morning.agenda")}</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
+        <FormSection title={t("morning.agenda")}>
           <Textarea
             label={t("morning.fixed_events")}
             placeholder={t("morning.fixed_ph")}
@@ -245,8 +231,8 @@ export function CheckinForm() {
             value={form.day_constraints}
             onChange={(e) => updateField("day_constraints", e.target.value)}
           />
-        </CardContent>
-      </Card>
+        </FormSection>
+      </div>
 
       <Button type="submit" size="lg" className="w-full">
         {pendingCheckinId && error ? t("morning.retry") : t("morning.generate")}

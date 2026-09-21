@@ -12,7 +12,7 @@ const inputBase =
 export const Input = forwardRef<HTMLInputElement, InputProps>(
   ({ className, label, error, ...props }, ref) => (
     <div className="flex flex-col gap-1.5">
-      {label && <label className="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide">{label}</label>}
+      {label && <label className="text-sm font-medium text-[var(--text-secondary)]">{label}</label>}
       <input ref={ref} className={cn(inputBase, error && "border-status-danger", className)} {...props} />
       {error && <p className="text-xs text-status-danger">{error}</p>}
     </div>
@@ -35,7 +35,7 @@ const bareTextareaBase =
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
   ({ className, label, error, bare, ...props }, ref) => (
     <div className="flex flex-col gap-1.5">
-      {label && <label className="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide">{label}</label>}
+      {label && <label className="text-sm font-medium text-[var(--text-secondary)]">{label}</label>}
       <textarea
         ref={ref}
         className={cn(bare ? bareTextareaBase : cn(inputBase, "resize-none"), error && "border-status-danger", className)}
@@ -55,7 +55,7 @@ interface SelectProps extends React.SelectHTMLAttributes<HTMLSelectElement> {
 export const Select = forwardRef<HTMLSelectElement, SelectProps>(
   ({ className, label, error, children, ...props }, ref) => (
     <div className="flex flex-col gap-1.5">
-      {label && <label className="text-xs font-medium text-[var(--text-secondary)] uppercase tracking-wide">{label}</label>}
+      {label && <label className="text-sm font-medium text-[var(--text-secondary)]">{label}</label>}
       <select ref={ref} className={cn(inputBase, "cursor-pointer", error && "border-status-danger", className)} {...props}>
         {children}
       </select>

@@ -4,7 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Textarea } from "@/components/ui/Input";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/Card";
+import { FormSection } from "@/components/layout/FormSection";
 import { api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { today } from "@/lib/utils";
@@ -68,8 +68,8 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
         <div className="h-12 w-12 rounded-full bg-brand-600/20 border border-brand-500/30 flex items-center justify-center text-2xl">
           ✓
         </div>
-        <p className="text-slate-200 font-medium">{t("review.saved")}</p>
-        <p className="text-slate-500 text-sm">{t("review.saved_sub")}</p>
+        <p className="text-[var(--text-primary)] font-medium">{t("review.saved")}</p>
+        <p className="text-[var(--text-tertiary)] text-sm">{t("review.saved_sub")}</p>
         <Button variant="ghost" onClick={() => router.push("/dashboard")}>
           {t("review.back")}
         </Button>
@@ -80,63 +80,54 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {error && (
-        <div className="rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm">
+        <div className="rounded-lg bg-status-danger/10 border border-status-danger/30 px-4 py-3 text-status-danger text-sm">
           {error}
         </div>
       )}
 
-      {/* Review questions from today's plan */}
-      {reviewQuestions.length > 0 && (
-        <Card variant="bordered">
-          <CardHeader>
-            <CardTitle>{t("review.today_questions")}</CardTitle>
-          </CardHeader>
-          <CardContent>
+      <div className="rounded-lg border border-[var(--border-light)] bg-[var(--bg-surface)]/60 divide-y divide-[var(--border-light)]">
+        {/* Review questions from today's plan */}
+        {reviewQuestions.length > 0 && (
+          <FormSection title={t("review.today_questions")}>
             <ol className="space-y-2">
               {reviewQuestions.map((q, i) => (
-                <li key={i} className="text-slate-300 text-sm flex gap-3">
-                  <span className="text-slate-600 font-mono text-xs mt-0.5">{i + 1}.</span>
+                <li key={i} className="text-[var(--text-secondary)] text-sm flex gap-3">
+                  <span className="text-[var(--text-tertiary)] font-mono text-xs mt-0.5">{i + 1}.</span>
                   {q}
                 </li>
               ))}
             </ol>
-          </CardContent>
-        </Card>
-      )}
+          </FormSection>
+        )}
 
-      {/* Ratings */}
-      <Card>
-        <CardHeader><CardTitle>{t("review.eod_vitals")}</CardTitle></CardHeader>
-        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              {t("review.energy_end")} — {form.energy_end}/10
-            </label>
-            <input
-              type="range" min={1} max={10}
-              value={form.energy_end}
-              onChange={(e) => update("energy_end", parseInt(e.target.value))}
-              className="accent-brand-500"
-            />
+        <FormSection title={t("review.eod_vitals")}>
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-[var(--text-secondary)]">
+                {t("review.energy_end")} — {form.energy_end}/10
+              </label>
+              <input
+                type="range" min={1} max={10}
+                value={form.energy_end}
+                onChange={(e) => update("energy_end", parseInt(e.target.value))}
+                className="accent-brand-500"
+              />
+            </div>
+            <div className="flex flex-col gap-1.5">
+              <label className="text-sm font-medium text-[var(--text-secondary)]">
+                {t("review.overall_day")} — {form.overall_day_rating}/10
+              </label>
+              <input
+                type="range" min={1} max={10}
+                value={form.overall_day_rating}
+                onChange={(e) => update("overall_day_rating", parseInt(e.target.value))}
+                className="accent-brand-500"
+              />
+            </div>
           </div>
-          <div className="flex flex-col gap-1.5">
-            <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
-              {t("review.overall_day")} — {form.overall_day_rating}/10
-            </label>
-            <input
-              type="range" min={1} max={10}
-              value={form.overall_day_rating}
-              onChange={(e) => update("overall_day_rating", parseInt(e.target.value))}
-              className="accent-brand-500"
-            />
-          </div>
-        </CardContent>
-      </Card>
+        </FormSection>
 
-      {/* Execution */}
-      <Card>
-        <CardHeader><CardTitle>{t("review.execution")}</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
+        <FormSection title={t("review.execution")}>
           <Textarea
             label={t("review.completed")}
             placeholder={t("review.completed_ph")}
@@ -158,13 +149,9 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
             value={form.carry_over_raw}
             onChange={(e) => update("carry_over_raw", e.target.value)}
           />
-        </CardContent>
-      </Card>
+        </FormSection>
 
-      {/* Reflection */}
-      <Card>
-        <CardHeader><CardTitle>{t("review.reflection")}</CardTitle></CardHeader>
-        <CardContent className="space-y-4">
+        <FormSection title={t("review.reflection")}>
           <Textarea
             label={t("review.biggest_win")}
             placeholder={t("review.biggest_win_ph")}
@@ -186,8 +173,8 @@ export function ReviewForm({ planId, reviewQuestions = [] }: ReviewFormProps) {
             value={form.raw_reflection}
             onChange={(e) => update("raw_reflection", e.target.value)}
           />
-        </CardContent>
-      </Card>
+        </FormSection>
+      </div>
 
       <Button type="submit" size="lg" loading={submitting} className="w-full">
         {t("review.save")}
