@@ -134,6 +134,7 @@ export interface ApiWorkOrder {
   created_at: string;
   target_repo_name?: string | null;
   target_repo_path?: string | null;
+  daemon_run_requested_at?: string | null;
 }
 
 export interface ApiWorkOrderDetail extends ApiWorkOrder {
@@ -179,6 +180,7 @@ export function mapWorkOrderFromApi(raw: ApiWorkOrder): WorkOrder {
     missingContext: raw.missing_context.length > 0 ? mapMissingContext(raw.missing_context) : undefined,
     targetRepoName: raw.target_repo_name ?? undefined,
     targetRepoPath: raw.target_repo_path ?? undefined,
+    daemonRunRequestedAt: raw.daemon_run_requested_at ?? undefined,
   };
 }
 
@@ -340,6 +342,7 @@ export interface ApiWorkOrderUpdate {
   status?: string;
   recommended_next_step?: string;
   missing_context?: ApiMissingContextItem[];
+  daemon_run_requested_at?: string | null;
 }
 
 export interface ApiActivityLogCreate {

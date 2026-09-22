@@ -515,6 +515,24 @@ sind zum Zeitpunkt dieses CLAUDE.md-Updates noch nicht bearbeitet.
   Lauf, der `claude` tatsächlich im Container aufruft (bisher nur die
   Container-Mechanik selbst — Mount, Git, Cleanup — ohne echten `claude`-
   Aufruf verifiziert). Siehe `docs/manual-e2e-checklist.md`.
+- **Autonomer Trigger-Daemon (`scripts/run_work_order_daemon.py`, 22.09.2026)
+  — unit-getestet (11 Tests, `scripts/test_run_work_order_daemon.py`), UI-Pfad
+  live verifiziert, Daemon selbst noch nicht live gelaufen**: der "Autonom
+  starten"-Button (`LifecycleControls.tsx`, Status `queued`) wurde live im
+  Browser bestätigt — Bestätigungsdialog korrekt, PATCH feuert korrekt (nach
+  einem nötigen Backend-Neustart, der stale liefen Code hatte), Fehlerfall
+  sauber abgefangen (kein Crash). Der eigentliche Fehler beim Testen war
+  erwartbar und kein Bug: `Could not find the 'daemon_run_requested_at'
+  column ... in the schema cache` (PGRST204) — **Migration 016 wurde noch
+  nicht gegen das Live-Projekt ausgeführt** (wie jede Migration hier bewusst
+  nie automatisiert). Der Daemon-Prozess selbst (`run_work_order_daemon.py`)
+  wurde bisher nur gegen gemockte `call_api()`/`subprocess.run()`-Aufrufe
+  getestet, nicht live gegen einen echten laufenden Backend + eine echte
+  Work Order durchgeklickt. **Vor erstem echten Einsatz**: Migration 016 im
+  Supabase SQL Editor ausführen, dann Daemon lokal starten, "Autonom
+  starten" klicken, beobachten dass er den Auftrag abholt und
+  `run_work_order.py` wirklich anstößt (siehe
+  `docs/background-dev-team-runbook.md` § Autonomer Daemon).
 - **`openai`-Sprung 1.54.4 → 3.17.0 (22.09.2026), erzwungen durch `composio`**:
   `import composio` zieht unconditional `composio.core.provider._openai` und
   damit ein reales `openai>=2.48.0` — es gibt keine Möglichkeit, das SDK zu

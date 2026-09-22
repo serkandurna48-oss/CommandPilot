@@ -9,6 +9,13 @@ interface Props {
   status: WorkOrderStatus;
   isLive: boolean;
   onStatusChange: (status: WorkOrderStatus) => Promise<void> | void;
+  // Not a status transition — sets work_orders.daemon_run_requested_at
+  // (supabase/migrations/016_...sql), the trigger signal
+  // scripts/run_work_order_daemon.py polls for. Status stays "queued" until
+  // the daemon's own run_work_order.py invocation flips it to "running",
+  // exactly like the existing manual "Als laufend markieren" path. Optional
+  // so this component still renders standalone without the feature wired up.
+  onRequestAutonomousStart?: () => Promise<void> | void;
 }
 
 // Only the transitions a human is expected to trigger from this UI.
@@ -70,7 +77,7 @@ const TRANSITIONS: Partial<Record<WorkOrderStatus, { action: WorkOrderStatus; la
   ],
 };
 
-export function LifecycleControls({ status, isLive, onStatusChange }: Props) {
+export function LifecycleControls({ status, isLive, onStatusChange, onRequestAutonomousStart }: Props) {
   const t = useT();
   const [pending, setPending] = useState<WorkOrderStatus | null>(null);
   // Inline confirm — no new modal/dialog component introduced. Cancel/Stop is
@@ -80,9 +87,16 @@ export function LifecycleControls({ status, isLive, onStatusChange }: Props) {
   // "running" case comment above), so it gets a lightweight "really do this?
   // yes/no" step instead of firing immediately on click.
   const [confirmingCancel, setConfirmingCancel] = useState(false);
+  // Separate confirm state from confirmingCancel — "Autonom starten" isn't a
+  // WorkOrderStatus transition (see onRequestAutonomousStart's docstring),
+  // so it can't share `pending`/`handleClick` below, which are typed around
+  // TRANSITIONS' status actions specifically.
+  const [confirmingAutonomousStart, setConfirmingAutonomousStart] = useState(false);
+  const [autonomousStartPending, setAutonomousStartPending] = useState(false);
   const options = TRANSITIONS[status];
+  const canRequestAutonomousStart = status === "queued" && !!onRequestAutonomousStart;
 
-  if (!options || options.length === 0) return null;
+  if ((!options || options.length === 0) && !canRequestAutonomousStart) return null;
 
   async function handleClick(action: WorkOrderStatus) {
     if (action === "cancelled" && !confirmingCancel) {
@@ -95,6 +109,20 @@ export function LifecycleControls({ status, isLive, onStatusChange }: Props) {
       await onStatusChange(action);
     } finally {
       setPending(null);
+    }
+  }
+
+  async function handleAutonomousStartClick() {
+    if (!confirmingAutonomousStart) {
+      setConfirmingAutonomousStart(true);
+      return;
+    }
+    setConfirmingAutonomousStart(false);
+    setAutonomousStartPending(true);
+    try {
+      await onRequestAutonomousStart?.();
+    } finally {
+      setAutonomousStartPending(false);
     }
   }
 
@@ -124,8 +152,27 @@ export function LifecycleControls({ status, isLive, onStatusChange }: Props) {
           </div>
         </div>
       )}
+      {confirmingAutonomousStart && (
+        <div className="rounded-lg bg-status-info/10 border border-status-info/30 px-3 py-2 space-y-2">
+          <p className="text-status-info text-xs">{t("operator.lifecycle.autonomous_start_confirm_message")}</p>
+          <div className="flex gap-2">
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={autonomousStartPending}
+              loading={autonomousStartPending}
+              onClick={handleAutonomousStartClick}
+            >
+              {t("operator.lifecycle.autonomous_start_confirm_yes")}
+            </Button>
+            <Button size="sm" variant="ghost" disabled={autonomousStartPending} onClick={() => setConfirmingAutonomousStart(false)}>
+              {t("operator.lifecycle.cancel_confirm_no")}
+            </Button>
+          </div>
+        </div>
+      )}
       <div className="flex flex-wrap gap-2">
-        {options.map(({ action, labelKey, variant }) => (
+        {options?.map(({ action, labelKey, variant }) => (
           <Button
             key={action}
             size="sm"
@@ -137,6 +184,17 @@ export function LifecycleControls({ status, isLive, onStatusChange }: Props) {
             {t(labelKey)}
           </Button>
         ))}
+        {canRequestAutonomousStart && (
+          <Button
+            size="sm"
+            variant="primary"
+            disabled={!isLive || pending !== null || autonomousStartPending || confirmingAutonomousStart}
+            loading={autonomousStartPending && !confirmingAutonomousStart}
+            onClick={handleAutonomousStartClick}
+          >
+            {t("operator.lifecycle.autonomous_start")}
+          </Button>
+        )}
       </div>
     </div>
   );

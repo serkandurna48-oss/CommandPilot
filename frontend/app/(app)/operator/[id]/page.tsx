@@ -120,6 +120,17 @@ export default function WorkOrderPage({ params }: Props) {
     await load();
   }
 
+  // "Autonom starten" — not a status transition, sets the trigger signal
+  // scripts/run_work_order_daemon.py polls for (see LifecycleControls.tsx's
+  // onRequestAutonomousStart docstring). Status stays "queued" until the
+  // daemon's own run_work_order.py invocation flips it to "running", at
+  // which point the Realtime subscription above already picks it up live.
+  async function handleRequestAutonomousStart() {
+    if (!isLive) return;
+    await api.workOrders.update(id, { daemon_run_requested_at: new Date().toISOString() });
+    await load();
+  }
+
   return (
     <>
       <div className="mb-6">
@@ -135,7 +146,12 @@ export default function WorkOrderPage({ params }: Props) {
       ) : !bundle ? (
         <p className="text-slate-400 text-sm">{t("operator.empty_title")}</p>
       ) : (
-        <WorkOrderDetail {...bundle} isLive={isLive} onStatusChange={handleStatusChange} />
+        <WorkOrderDetail
+          {...bundle}
+          isLive={isLive}
+          onStatusChange={handleStatusChange}
+          onRequestAutonomousStart={handleRequestAutonomousStart}
+        />
       )}
     </>
   );

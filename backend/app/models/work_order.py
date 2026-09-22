@@ -238,6 +238,12 @@ class WorkOrderUpdate(BaseModel):
     # and never persisted as work_order columns. See CP-OP01.
     source: Optional[WorkOrderTransitionSourceLiteral] = None
     reason: Optional[str] = Field(None, max_length=2000)
+    # The autonomous-start trigger signal (supabase/migrations/016_...sql) —
+    # set (ISO timestamp) by "Autonom starten" in LifecycleControls.tsx at
+    # status='queued'; cleared back to None by scripts/run_work_order_daemon.py
+    # as its claim, before it invokes run_work_order.py. A plain field, not a
+    # status transition — never routed through transition_work_order().
+    daemon_run_requested_at: Optional[str] = None
 
 
 class WorkOrderResponse(BaseModel):
@@ -260,6 +266,7 @@ class WorkOrderResponse(BaseModel):
     created_at: str
     target_repo_name: Optional[str] = None
     target_repo_path: Optional[str] = None
+    daemon_run_requested_at: Optional[str] = None
 
 
 class WorkOrderDetailResponse(WorkOrderResponse):

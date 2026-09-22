@@ -324,21 +324,32 @@ not speculation.
    this — CommandPilot does not initiate it itself. Execution stays fully
    on Serkan's own machine (the Execution Plane); CommandPilot never
    executes a shell command (the Control Plane boundary from §13).
-3b. **A triggered (not autonomous) runner — not yet built.** Something (a
-   button in the UI, a scheduled check) that picks up a `queued` work order
-   and starts a Claude Code/Codex session with the generated prompt
-   *without a human running a command* — the harness in 3a is the
-   execution mechanics this would reuse, but the *trigger* would move from
-   "Serkan runs a script" to "CommandPilot (or something it calls) decides
-   to." This is the actual first point where "background" becomes literal,
-   still stopping hard at `needs_approval`/`blocked` and still requiring a
-   human to move `review_ready → accepted`. It's also the point where the
-   safety-rules enforcement in §5/§12 needs to go further than keyword
-   matching on free-text scope fields: a real runner-side execution
-   sandbox/allowlist that can't be bypassed by phrasing an action
-   differently — §13's local harness deliberately doesn't attempt this yet
-   either (it validates the *scope declaration*, not what a runner
-   actually *does*).
+3b. **A triggered (not autonomous) runner — DONE (22.09.2026).**
+   `scripts/run_work_order_daemon.py`: a local poll loop the human starts
+   once (with a fixed `--adapter`/`--max-budget-usd`/`--per-step`
+   configuration), which then watches for work orders flagged via the
+   "Autonom starten" button in `LifecycleControls.tsx`
+   (`work_orders.daemon_run_requested_at`, see
+   `supabase/migrations/016_work_orders_daemon_run_requested.sql`), claims
+   the oldest one (clears the field back to `null` before starting anything
+   — no double-start on a crash or re-poll), and invokes
+   `run_work_order.py --mode execute` exactly as a human would type it. The
+   *trigger* really has moved from "Serkan runs a script per work order" to
+   "Serkan clicks a button, a daemon he already started decides to" — this
+   is the first point where "background" becomes literal. Still stops hard
+   at `needs_approval`/`blocked`, still ends at `review_ready` (never
+   auto-`accepted` — that stays a human click), and for
+   `claude_code_sandboxed` a run's diff still only ever lands as an
+   artifact to review, never applied automatically. The daemon itself
+   duplicates NONE of 3a's safety logic (preconditions, scope checks,
+   budget gate, bounded retry, interrupt) — it is pure orchestration
+   (poll → claim → `subprocess.run()`) around the unchanged, already-hardened
+   harness from 3a. The runner-side execution sandbox/allowlist gap noted
+   below (real technical enforcement of what a runner *does*, not just
+   scope *declarations*) is unchanged by this — `claude_code_sandboxed`'s
+   Docker+worktree isolation (see that adapter's own module docstring) is
+   the closest thing built so far, but that's a separate feature (the
+   Docker sandbox), not something this daemon adds.
 
 Multi-agent parallelism, cross-repo work orders, and any real external
 integration (CampsPilot, Signalübertragung, email, calendar, Stripe) are all

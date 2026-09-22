@@ -368,6 +368,47 @@ something to default to blindly.
 - `codex`/`openclaw` — still named placeholders only; not implemented, not
   evaluated. See `docs/runner-adapter-contract.md`.
 
+## Autonomer Daemon (kein Terminal-Befehl pro Work Order)
+
+`scripts/run_work_order_daemon.py` schließt die letzte manuelle Lücke im
+Fast Path: statt für jede Work Order `--mode execute` von Hand zu tippen,
+startest du den Daemon EINMAL mit einer festen Konfiguration, danach klickst
+du nur noch "Autonom starten" im Operator-UI pro Work Order.
+
+```powershell
+python scripts/run_work_order_daemon.py --adapter claude_code --max-budget-usd 0.20 --token $env:COMMANDPILOT_API_TOKEN
+# oder mit Sandbox + Step-für-Step:
+python scripts/run_work_order_daemon.py --adapter claude_code_sandboxed --max-budget-usd 0.50 --per-step --token $env:COMMANDPILOT_API_TOKEN
+```
+
+Der Daemon pollt alle 15 Sekunden (`--poll-interval`) `GET /api/work-orders/me`,
+sucht Work Orders mit Status `queued` UND gesetztem
+`daemon_run_requested_at` (das Signal, das "Autonom starten" in
+`LifecycleControls.tsx` setzt), claimt die älteste zuerst (löscht das Feld,
+BEVOR irgendetwas startet), und ruft dann exakt denselben
+`run_work_order.py --mode execute`-Befehl auf, den du sonst selbst tippen
+würdest — mit dem Adapter/Budget/`--per-step`, das der Daemon beim Start
+bekommen hat, nicht pro Work Order.
+
+**Wichtig — bewusst, kein Versehen:** ein Klick auf "Autonom starten" führt
+dazu, dass die Work Order KOMPLETT automatisch bis `review_ready` läuft,
+sobald der Daemon sie abholt — jeder Ticketplan-Step, ohne weitere
+Rückfrage. Genau das ist der Zweck. Was bleibt, ist bewusst gleich
+geblieben: `needs_approval`/`blocked` stoppen weiterhin hart, "Akzeptieren"
+bleibt ein menschlicher Klick, und bei `claude_code_sandboxed` bleibt der
+Diff ein Artefact zum Prüfen. Der Stop-Button in der UI funktioniert
+unverändert — er killt den laufenden Subprozess genau wie beim manuellen
+Pfad.
+
+Läuft kein Daemon, passiert nach dem Klick nichts außer einem Hinweistext
+("Wartet auf lokalen Daemon …") — kein Fehler, kein stiller Fallback.
+
+Migration vor erster Nutzung nötig (wie jede Migration hier manuell im
+Supabase SQL Editor):
+```
+supabase/migrations/016_work_orders_daemon_run_requested.sql
+```
+
 ## 3. Check it in the UI
 
 If you created the work order via the UI form, you're already here

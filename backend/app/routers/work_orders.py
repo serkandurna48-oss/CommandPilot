@@ -63,6 +63,16 @@ def update_work_order(
 ):
     require_owned_record("work_orders", work_order_id, user)
     updates = data.model_dump(exclude_none=True)
+    # daemon_run_requested_at must support being explicitly cleared to null
+    # — scripts/run_work_order_daemon.py's claim signal (see migration 016)
+    # PATCHes it to null before starting a run, so a crash mid-claim or a
+    # later requeue never stale-retriggers. exclude_none=True above would
+    # otherwise silently drop an explicit null the same way it drops "field
+    # not sent at all" — model_fields_set distinguishes the two, so this
+    # re-injects it only when the client actually included the key.
+    if "daemon_run_requested_at" in data.model_fields_set:
+        updates["daemon_run_requested_at"] = data.daemon_run_requested_at
+
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 

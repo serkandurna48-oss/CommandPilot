@@ -338,6 +338,12 @@ export interface WorkOrder {
   // frontend/components/operator/LocalRunnerPanel.tsx.
   targetRepoName?: string;
   targetRepoPath?: string;
+  // The autonomous-start trigger signal (supabase/migrations/016_...sql) —
+  // set by "Autonom starten" in LifecycleControls.tsx, cleared by
+  // scripts/run_work_order_daemon.py as its claim before it invokes
+  // run_work_order.py. Set + status still "queued" means "waiting for a
+  // local daemon to pick this up" — see LocalRunnerPanel.tsx's hint text.
+  daemonRunRequestedAt?: string;
 }
 
 // ─── Jarvis (second-brain chat) ──────────────────────────────────────────────────

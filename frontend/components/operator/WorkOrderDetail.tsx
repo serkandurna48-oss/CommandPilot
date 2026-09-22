@@ -44,6 +44,7 @@ function attemptFailureLabel(retryReason: string | undefined, t: (key: string) =
 interface WorkOrderDetailProps extends WorkOrderDetailBundle {
   isLive?: boolean;
   onStatusChange?: (status: WorkOrderStatus) => Promise<void> | void;
+  onRequestAutonomousStart?: () => Promise<void> | void;
 }
 
 /**
@@ -71,6 +72,7 @@ export function WorkOrderDetail({
   reviewPackage,
   isLive = false,
   onStatusChange,
+  onRequestAutonomousStart,
 }: WorkOrderDetailProps) {
   const t = useT();
 
@@ -144,7 +146,12 @@ export function WorkOrderDetail({
 
           {onStatusChange && (
             <div className="mt-4">
-              <LifecycleControls status={order.status} isLive={isLive} onStatusChange={onStatusChange} />
+              <LifecycleControls
+                status={order.status}
+                isLive={isLive}
+                onStatusChange={onStatusChange}
+                onRequestAutonomousStart={onRequestAutonomousStart}
+              />
             </div>
           )}
         </div>

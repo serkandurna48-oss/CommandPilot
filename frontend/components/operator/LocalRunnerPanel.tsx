@@ -6,7 +6,7 @@ import { useT } from "@/lib/i18n";
 import type { AgentRun, ReviewPackage, WorkOrder } from "@/types";
 import { isExternalRepoWorkOrder } from "@/lib/workOrderMapper";
 import { cn } from "@/lib/utils";
-import { Copy, Check, AlertTriangle, Coins, ShieldCheck, FolderGit2, FolderOpen, Container } from "lucide-react";
+import { Copy, Check, AlertTriangle, Coins, ShieldCheck, FolderGit2, FolderOpen, Container, Loader2 } from "lucide-react";
 
 // Which of these five mutually-exclusive phases we're in — never more than
 // one at a time (OP-Workflow-UI-001: "keine widersprüchlichen Zustände").
@@ -177,6 +177,18 @@ export function LocalRunnerPanel({
         </span>
         <span className="text-[var(--text-tertiary)] text-xs">{t(`operator.runner.phase.${phase}_hint`)}</span>
       </div>
+
+      {/* Pure derivation from already-loaded data (order.daemonRunRequestedAt +
+          order.status) — no new polling. Disappears on its own once a local
+          daemon (scripts/run_work_order_daemon.py) picks the request up and
+          run_work_order.py flips status away from "queued" — the existing
+          Realtime subscription on this page already re-renders on that. */}
+      {order.status === "queued" && order.daemonRunRequestedAt && (
+        <div className="rounded-lg bg-status-info/10 border border-status-info/30 px-3 py-2 flex items-start gap-2">
+          <Loader2 className="h-3.5 w-3.5 text-status-info/90 shrink-0 mt-0.5 motion-safe:animate-spin" />
+          <p className="text-status-info/90 text-xs">{t("operator.runner.waiting_for_daemon_hint")}</p>
+        </div>
+      )}
 
       <div className="flex items-center gap-2 text-xs">
         <FolderOpen className="h-3.5 w-3.5 text-[var(--text-tertiary)] shrink-0" />

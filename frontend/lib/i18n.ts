@@ -598,6 +598,12 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.lifecycle.stop":               { en: "Stop",                   de: "Stoppen" },
   "operator.lifecycle.stop_confirm_message": { en: "Stop this work order? The local runner checks for this roughly every 15 seconds and will kill its process as soon as it sees it — any work from this run that wasn't already saved is lost.", de: "Dieses Work Order stoppen? Der lokale Runner prüft das etwa alle 15 Sekunden und beendet seinen Prozess, sobald er es sieht — noch nicht gespeicherte Arbeit aus diesem Lauf geht dabei verloren." },
   "operator.lifecycle.stop_confirm_yes":   { en: "Yes, stop",              de: "Ja, stoppen" },
+  "operator.lifecycle.autonomous_start":   { en: "Start autonomously",     de: "Autonom starten" },
+  "operator.lifecycle.autonomous_start_confirm_message": {
+    en: "Runs fully automatically until review_ready — every ticketplan step, no further clicks — using whatever adapter/budget your local daemon (scripts/run_work_order_daemon.py) is configured with. \"Accept\" afterwards stays your call, and a sandbox run's diff always stays an artifact to review, never applied automatically. Nothing happens if no daemon is currently running.",
+    de: "Läuft komplett automatisch bis review_ready — jeder Ticketplan-Step, ohne weitere Klicks — mit dem Adapter/Budget, das dein lokaler Daemon (scripts/run_work_order_daemon.py) gerade konfiguriert hat. \"Akzeptieren\" bleibt danach deine Entscheidung, und der Diff eines Sandbox-Laufs bleibt immer ein Artefact zum Prüfen, wird nie automatisch angewendet. Passiert nichts, falls gerade kein Daemon läuft.",
+  },
+  "operator.lifecycle.autonomous_start_confirm_yes": { en: "Yes, start autonomously", de: "Ja, autonom starten" },
 
   // Agent run attempts (CP-OP02 bounded auto-retry)
   "operator.agent_run.attempt_label":        { en: "Attempt",                             de: "Attempt" },
@@ -659,6 +665,10 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.runner.sandbox_docker_required_hint": {
     en: "Requires Docker (one-time: docker build -t commandpilot-sandbox:latest scripts/sandbox).",
     de: "Braucht Docker (einmalig: docker build -t commandpilot-sandbox:latest scripts/sandbox).",
+  },
+  "operator.runner.waiting_for_daemon_hint": {
+    en: "Waiting for a local daemon — start scripts/run_work_order_daemon.py if it isn't already running; it'll pick this up automatically.",
+    de: "Wartet auf einen lokalen Daemon — scripts/run_work_order_daemon.py starten, falls er nicht schon läuft; er holt das automatisch ab.",
   },
 
   // Runner phase indicator + current run folder (OP-Workflow-UI-001)
