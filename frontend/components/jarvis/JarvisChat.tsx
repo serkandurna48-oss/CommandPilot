@@ -20,7 +20,7 @@ import type {
   JarvisSuggestedAction,
   JarvisSuggestedActionDecisionRequest,
 } from "@/types";
-import { ArrowRight, Check, X, ChevronRight, FileText, FolderOpen, Sparkles } from "lucide-react";
+import { ArrowRight, Check, X, ChevronRight, FileText, FolderOpen, Sparkles, Calendar, ListChecks, ClipboardList } from "lucide-react";
 
 // One suggested_action as shown in the UI, tagged with a stable client-side
 // idempotency token (JARVIS-C1, Phase 6) generated once when the proposal
@@ -35,6 +35,9 @@ interface DisplaySuggestedAction extends JarvisSuggestedAction {
 interface DisplayMessage extends JarvisChatMessage {
   sources?: JarvisSourceRef[];
   baseSources?: JarvisSourceRef[];
+  calendarSources?: JarvisSourceRef[];
+  taskSources?: JarvisSourceRef[];
+  workOrderSources?: JarvisSourceRef[];
   suggestedActions?: DisplaySuggestedAction[];
   // Set only when this reply came from a quick-intelligence action that
   // defines a resultLabel (e.g. "Risk analysis") — replaces the generic
@@ -257,6 +260,9 @@ export function JarvisChat() {
           content: res.reply,
           sources: res.sources,
           baseSources: res.base_sources,
+          calendarSources: res.calendar_sources,
+          taskSources: res.task_sources,
+          workOrderSources: res.work_order_sources,
           suggestedActions,
           modeLabel: opts?.resultLabel,
         },
@@ -408,6 +414,21 @@ export function JarvisChat() {
             {msg.role === "assistant" && msg.baseSources && msg.baseSources.length > 0 && (
               <div className="mt-2">
                 <SourcesDisclosure title={t("jarvis.base_context")} icon={FolderOpen} sources={msg.baseSources} />
+              </div>
+            )}
+            {msg.role === "assistant" && msg.calendarSources && msg.calendarSources.length > 0 && (
+              <div className="mt-2">
+                <SourcesDisclosure title={t("jarvis.calendar_sources")} icon={Calendar} sources={msg.calendarSources} />
+              </div>
+            )}
+            {msg.role === "assistant" && msg.taskSources && msg.taskSources.length > 0 && (
+              <div className="mt-2">
+                <SourcesDisclosure title={t("jarvis.task_sources")} icon={ListChecks} sources={msg.taskSources} />
+              </div>
+            )}
+            {msg.role === "assistant" && msg.workOrderSources && msg.workOrderSources.length > 0 && (
+              <div className="mt-2">
+                <SourcesDisclosure title={t("jarvis.work_order_sources")} icon={ClipboardList} sources={msg.workOrderSources} />
               </div>
             )}
 

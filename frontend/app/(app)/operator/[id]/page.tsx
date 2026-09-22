@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { PageLoader } from "@/components/ui/Spinner";
 import { WorkOrderDetail } from "@/components/operator/WorkOrderDetail";
 import { api } from "@/lib/api";
+import { supabase } from "@/lib/supabase";
 import { mapWorkOrderDetailFromApi, type WorkOrderDetailBundle } from "@/lib/workOrderMapper";
 import {
   getWorkOrder,
@@ -67,6 +68,51 @@ export default function WorkOrderPage({ params }: Props) {
   }, [id]);
 
   useEffect(() => { load(); }, [load]);
+
+  // Live view (CP live-execution feature): while a work order is actually
+  // running, subscribe to Realtime postgres_changes on the three tables the
+  // run touches and re-run the same load() the initial fetch already uses —
+  // reusing load() (rather than hand-merging raw Realtime row shapes into
+  // state) means every field this page ever renders always goes through the
+  // same trusted mapWorkOrderDetailFromApi() path, with no risk of a
+  // partial/incorrectly-shaped Realtime payload silently clobbering a field
+  // (e.g. order.approvalScopeId, which the API computes but isn't a literal
+  // column on the `work_orders` row Realtime would otherwise hand us).
+  // Debounced: a single harness action (e.g. a step PATCH alongside an
+  // activity-log POST) can fire multiple change events almost
+  // simultaneously — coalesce them into one reload instead of one per event.
+  // Only subscribed for a real (isLive), currently-running order; a
+  // completed/demo view has nothing left to watch.
+  const reloadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isRunning = isLive && bundle?.order.status === "running";
+  useEffect(() => {
+    if (!isRunning) return;
+
+    const scheduleReload = () => {
+      if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
+      reloadTimerRef.current = setTimeout(() => { load(); }, 400);
+    };
+
+    // Topic name includes a per-mount-instance random suffix, not just id —
+    // in React 18 dev Strict Mode (mount -> cleanup -> mount), removeChannel()
+    // below tears the previous channel down asynchronously, so a same-named
+    // channel() call from the second mount can otherwise race and return the
+    // still-subscribed first instance, which then throws on .on() ("cannot
+    // add postgres_changes callbacks ... after subscribe()") — reproduced
+    // live during verification of this feature. A unique topic per instance
+    // sidesteps the race entirely rather than depending on teardown timing.
+    const channel = supabase
+      .channel(`work-order-${id}-${Math.random().toString(36).slice(2)}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "work_orders", filter: `id=eq.${id}` }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "work_order_steps", filter: `work_order_id=eq.${id}` }, scheduleReload)
+      .on("postgres_changes", { event: "*", schema: "public", table: "activity_logs", filter: `work_order_id=eq.${id}` }, scheduleReload)
+      .subscribe();
+
+    return () => {
+      if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
+      supabase.removeChannel(channel);
+    };
+  }, [isRunning, id, load]);
 
   async function handleStatusChange(status: WorkOrderStatus) {
     if (!isLive) return; // lifecycle controls are display-only against seed data

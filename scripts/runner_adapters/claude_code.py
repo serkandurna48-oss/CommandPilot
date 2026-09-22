@@ -44,6 +44,7 @@ from pathlib import Path
 from .base import (
     AdapterInfo,
     ExecuteOutcome,
+    ProgressReporter,
     RunnerAdapter,
     RESULT_JSON_SCHEMA,
     build_result_example,
@@ -146,7 +147,7 @@ class ClaudeCodeAdapter(RunnerAdapter):
         name="claude_code",
         capabilities=["read_repo", "write_local_files", "execute_shell", "modify_files"],
         safety_level="supervised",
-        supports_live_events=False,  # would require Claude Code to call back into CommandPilot mid-session
+        supports_live_events=True,  # execute()'s poll loop reports progress and honors should_stop()
         supports_auto_execute="semi_auto",
         consumes_paid_credits=True,  # execute() calls the real, paid claude CLI
         command_template="claude --print --output-format json < {prompt_file}",
@@ -179,6 +180,7 @@ class ClaudeCodeAdapter(RunnerAdapter):
         session_path: Path,
         runner_command: str | None,
         max_budget_usd: float | None = None,
+        progress: ProgressReporter | None = None,
     ) -> ExecuteOutcome:
         prompt_path = session_path / "prompt.md"
         if not prompt_path.exists():
@@ -243,8 +245,29 @@ class ClaudeCodeAdapter(RunnerAdapter):
                             encoding="utf-8",
                         )
                         return ExecuteOutcome(exit_code=returncode, output_log_path=output_log_path, result=None)
+                    # should_stop() is checked on the same tick as the progress
+                    # print/report below (both rate-limited by the harness to
+                    # _PROGRESS_MIN_INTERVAL_S) — a user hitting Stop in the UI
+                    # sets the work order to 'cancelled'; the next tick here
+                    # kills this subprocess rather than letting it run to the
+                    # full time_limit_s.
+                    if progress is not None and progress.should_stop():
+                        proc.kill()
+                        stdout, stderr = proc.communicate()
+                        returncode = proc.returncode
+                        output_log_path.write_text(
+                            f"VOM NUTZER UNTERBROCHEN nach {int(elapsed)}s.\n\n"
+                            f"stdout bis dahin:\n{stdout}\n\nstderr bis dahin:\n{stderr}",
+                            encoding="utf-8",
+                        )
+                        return ExecuteOutcome(
+                            exit_code=returncode, output_log_path=output_log_path, result=None, interrupted=True,
+                        )
                     if elapsed >= next_progress_at:
-                        print(f"  ... Claude Code arbeitet noch ({int(elapsed)}s vergangen, Limit {time_limit_s}s)")
+                        message = f"Claude Code arbeitet noch ({int(elapsed)}s vergangen, Limit {time_limit_s}s)"
+                        print(f"  ... {message}")
+                        if progress is not None:
+                            progress.report_progress(message)
                         next_progress_at += progress_every_s
         finally:
             # Popen doesn't auto-close stdin/stdout/stderr pipe handles the

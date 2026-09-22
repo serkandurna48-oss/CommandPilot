@@ -6,5 +6,12 @@ pydantic-settings==2.6.1
 supabase==2.30.0
 python-dotenv==1.0.1
 
-openai==1.54.4
+# composio==0.22.0 hard-requires openai>=2.48.0 (imports the OpenAI provider
+# unconditionally at `import composio` time — see CLAUDE.md § Jarvis, external
+# context). Bumped from 1.54.4 for that reason. ai_service.py's chat.completions
+# + response_format=json_schema surface is unaffected (verified: full pytest
+# suite green on 3.17.0); still worth one manual live chat/plan smoke test
+# before this goes out, since no test in this repo hits the real OpenAI API.
+openai==3.17.0
 httpx==0.27.2
+composio==0.22.0

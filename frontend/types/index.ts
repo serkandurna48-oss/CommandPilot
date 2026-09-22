@@ -378,6 +378,17 @@ export interface JarvisChatResponse {
   // `sources` but not themselves the basis for the answer. Not rendered by
   // default — present for transparency/debugging.
   base_sources: JarvisSourceRef[];
+  // Live Google Calendar events / Notion "My Tasks" rows fed into the same
+  // prompt as `sources`, but kept as separate lists since they're a
+  // different kind of provenance (live external data, not a vault file) —
+  // see backend/app/models/jarvis.py. Empty when Composio isn't configured.
+  calendar_sources: JarvisSourceRef[];
+  task_sources: JarvisSourceRef[];
+  // The user's real CommandPilot Work Orders (Operator Control Plane), via
+  // work_orders_context_service — the one source that reads CommandPilot's
+  // own database, not an external system. Empty when the user has no work
+  // orders on file.
+  work_order_sources: JarvisSourceRef[];
   suggested_actions: JarvisSuggestedAction[];
 }
 

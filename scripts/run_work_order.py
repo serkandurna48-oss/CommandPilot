@@ -60,6 +60,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
@@ -80,7 +81,12 @@ for _stream in (sys.stdout, sys.stderr):
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from import_work_order_result import ImportError_, call_api, import_result  # noqa: E402
 from runner_adapters import ADAPTERS, RunnerAdapter, get_adapter  # noqa: E402
-from runner_adapters.base import extract_json_result, find_blocked_keyword, validate_result_against_order  # noqa: E402
+from runner_adapters.base import (  # noqa: E402
+    ProgressReporter,
+    extract_json_result,
+    find_blocked_keyword,
+    validate_result_against_order,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -274,6 +280,54 @@ def _current_status(args: argparse.Namespace) -> str | None:
         return None
 
 
+# How often (seconds) a live progress tick / cancellation poll is actually
+# allowed through to the API per adapter.execute() call — matches the
+# adapter-side (claude_code.py) poll cadence this replaces/extends. Adapters
+# may call report_progress()/should_stop() far more often than this; rate-
+# limiting is the harness's job (ProgressReporter contract), not theirs.
+_PROGRESS_MIN_INTERVAL_S = 15.0
+
+
+def make_progress_reporter(args: argparse.Namespace, session_path: Path, agent_run_id: str | None) -> ProgressReporter:
+    """Builds the ProgressReporter passed into adapter.execute() (CP live-
+    execution feature) out of the existing POST .../activity-log and
+    GET /work-orders/{id} endpoints — no new endpoints needed. Rate-limited
+    to _PROGRESS_MIN_INTERVAL_S so an adapter's own tight poll loop can call
+    both freely without flooding the API. Both callables are best-effort and
+    never raise into the adapter: a report failure just logs a local
+    warning; a status-check failure conservatively reports "not stopped"
+    (an unreachable API must never itself be interpreted as a stop request).
+    """
+    state = {"last_report": 0.0, "last_stop_check": 0.0, "cached_stop": False}
+
+    def report_progress(message: str) -> None:
+        now = time.monotonic()
+        if now - state["last_report"] < _PROGRESS_MIN_INTERVAL_S:
+            return
+        state["last_report"] = now
+        log_line(session_path, f"[progress] {message}")
+        payload: dict[str, Any] = {"level": "info", "event_type": "progress_tick", "message": message[:2000]}
+        if agent_run_id:
+            payload["agent_run_id"] = agent_run_id
+        try:
+            call_api(
+                args.api_url, args.token, "POST", f"/api/work-orders/{args.work_order_id}/activity-log",
+                payload, dry_run=args.dry_run,
+            )
+        except ImportError_ as exc:
+            log_line(session_path, f"WARNUNG: konnte Progress-ActivityLog nicht schreiben: {exc}")
+
+    def should_stop() -> bool:
+        now = time.monotonic()
+        if now - state["last_stop_check"] < _PROGRESS_MIN_INTERVAL_S:
+            return state["cached_stop"]
+        state["last_stop_check"] = now
+        state["cached_stop"] = _current_status(args) == "cancelled"
+        return state["cached_stop"]
+
+    return ProgressReporter(report_progress=report_progress, should_stop=should_stop)
+
+
 def _target_worktree() -> Path:
     """Where the adapter's subprocess actually runs — for the CP-OP02
     working-tree-safety check, this is deliberately NOT REPO_ROOT.
@@ -397,6 +451,28 @@ def _terminalize_cancelled_run(args: argparse.Namespace, session_path: Path, run
         log_line(session_path, f"WARNUNG: konnte AgentRun {run_id} nach Cancellation nicht auf failed setzen: {exc}")
 
 
+def _mark_running_step_interrupted(args: argparse.Namespace, session_path: Path, order: dict, detail: str) -> None:
+    """Best-effort: marks the step cmd_prompt_file() set to 'running' (the
+    first ticketplan step — the only one this harness tracks individually;
+    the rest are only ever resolved via the runner's own result.json) as
+    'failed' with a blocked_reason explaining the user-requested stop, so
+    the UI's step list doesn't show a step stuck on 'running' forever after
+    an interrupt. Never raises — a failure here is logged only, matching
+    every other best-effort PATCH in this file."""
+    steps = order.get("steps") or []
+    if not steps:
+        return
+    first_step = steps[0]
+    try:
+        call_api(
+            args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}/steps/{first_step['id']}",
+            {"status": "failed", "blocked_reason": "Vom Nutzer unterbrochen"}, dry_run=args.dry_run,
+        )
+        log_line(session_path, f"Step '{first_step['title']}' ({first_step['id']}) -> failed (Vom Nutzer unterbrochen)")
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte Step nach Unterbrechung nicht auf failed setzen: {exc}")
+
+
 def _run_adapter_with_bounded_retry(
     args: argparse.Namespace,
     adapter: RunnerAdapter,
@@ -452,10 +528,12 @@ def _run_adapter_with_bounded_retry(
         budget_note = f" (Budget verbleibend: ${remaining_budget})" if remaining_budget is not None else ""
         log_line(session_path, f"Attempt {attempt}/{_MAX_TECHNICAL_ATTEMPTS} — starte adapter.execute(){budget_note}")
 
+        progress = make_progress_reporter(args, session_path, run_id)
+
         outcome = None
         exec_error: Exception | None = None
         try:
-            outcome = adapter.execute(order, session_path, None, max_budget_usd=remaining_budget)
+            outcome = adapter.execute(order, session_path, None, max_budget_usd=remaining_budget, progress=progress)
         except NotImplementedError as exc:
             print(f"ERROR: {exc}", file=sys.stderr)
             return 1
@@ -467,6 +545,14 @@ def _run_adapter_with_bounded_retry(
             log_line(session_path, f"adapter.execute() beendet (Attempt {attempt}), exit_code={outcome.exit_code}")
             if remaining_budget is not None:
                 spent_so_far += outcome.cost_usd if outcome.cost_usd is not None else remaining_budget
+
+        if outcome is not None and outcome.interrupted:
+            detail = "Vom Nutzer unterbrochen (Stop-Button) während adapter.execute()."
+            log_line(session_path, detail)
+            print("Work Order wurde vom Nutzer gestoppt — kein weiterer Runner-Start.")
+            _mark_running_step_interrupted(args, session_path, order, detail)
+            _terminalize_cancelled_run(args, session_path, run_id, detail)
+            return 0
 
         if outcome is not None and outcome.result is not None:
             (session_path / "result.json").write_text(

@@ -1,4 +1,5 @@
 import { ExecutionPlan } from "@/components/operator/ExecutionPlan";
+import { LiveExecutionView } from "@/components/operator/LiveExecutionView";
 import { LifecycleControls } from "@/components/operator/LifecycleControls";
 import { RunnerPromptPanel } from "@/components/operator/RunnerPromptPanel";
 import { LocalRunnerPanel } from "@/components/operator/LocalRunnerPanel";
@@ -223,7 +224,11 @@ export function WorkOrderDetail({
         </div>
 
         <SurfaceSection title={t("operator.section.execution_plan")}>
-          <ExecutionPlan steps={steps} />
+          {order.status === "running" ? (
+            <LiveExecutionView steps={steps} activityLog={log} />
+          ) : (
+            <ExecutionPlan steps={steps} />
+          )}
         </SurfaceSection>
 
         <SurfaceSection title={t("operator.section.acceptance_criteria")}>

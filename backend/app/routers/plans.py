@@ -18,6 +18,7 @@ from app.services.plan_service import (
     normalize_plan_date,
     save_plan,
 )
+from app.services import google_calendar_service, notion_tasks_service, outlook_calendar_service
 from app.services.project_service import get_active_projects_for_morning
 from app.services.review_service import get_recent_review_for_user
 from app.services.usage_service import (
@@ -207,6 +208,47 @@ async def generate_plan(
             type(exc).__name__,
             str(exc)[:100],
         )
+
+    # ── Step 3.8: Retrieve external context: calendars + tasks (non-fatal) ───
+    # Same source, same merge pattern as routers/jarvis.py's chat endpoint —
+    # see CLAUDE.md § Jarvis, external context. Only the formatted block is
+    # used here (not the structured sources) — the daily plan has no
+    # per-source UI disclosure the way Jarvis chat does. Google and Outlook
+    # are independent calendar sources; each is fetched and merged regardless
+    # of whether the other has a connected account.
+    try:
+        google_calendar_context, _ = google_calendar_service.get_context()
+    except Exception as exc:
+        google_calendar_context = ""
+        logger.warning(
+            "Google Calendar context fetch failed | %s: %s — continuing without it",
+            type(exc).__name__,
+            str(exc)[:100],
+        )
+
+    try:
+        outlook_calendar_context, _ = outlook_calendar_service.get_context()
+    except Exception as exc:
+        outlook_calendar_context = ""
+        logger.warning(
+            "Outlook Calendar context fetch failed | %s: %s — continuing without it",
+            type(exc).__name__,
+            str(exc)[:100],
+        )
+
+    calendar_context = "\n\n".join(b for b in (google_calendar_context, outlook_calendar_context) if b)
+
+    try:
+        tasks_context, _ = notion_tasks_service.get_context()
+    except Exception as exc:
+        tasks_context = ""
+        logger.warning(
+            "Notion tasks context fetch failed | %s: %s — continuing without task context",
+            type(exc).__name__,
+            str(exc)[:100],
+        )
+
+    vault_context = "\n\n".join(b for b in (vault_context, calendar_context, tasks_context) if b)
 
     # ── Step 4: Generate plan via AI ─────────────────────────────────────────
     logger.info("Calling AI service | language=%s", effective_language)

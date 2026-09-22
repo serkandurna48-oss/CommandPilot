@@ -14,7 +14,14 @@ from app.models.jarvis import (
     SuggestedActionDecisionRequest,
     SuggestedActionDecisionResponse,
 )
-from app.services import suggested_action_service, vault_service
+from app.services import (
+    google_calendar_service,
+    notion_tasks_service,
+    outlook_calendar_service,
+    suggested_action_service,
+    vault_service,
+    work_orders_context_service,
+)
 from app.services.ai_service import AIGenerationError, generate_chat_reply
 from app.services.suggested_action_service import AlreadyDecidedError
 from app.services.usage_service import (
@@ -111,6 +118,69 @@ async def chat(
             str(exc)[:100],
         )
 
+    # ── Retrieve external context: calendars + tasks (non-fatal) ─────────────
+    # Same "never raises" contract as vault_service above — all services
+    # already return "" on missing Composio config, so this try/except only
+    # guards against an unexpected failure inside them (defense in depth, not
+    # the primary empty-on-missing-config path). Google and Outlook are two
+    # independent calendar sources (CLAUDE.md § Jarvis) — either, both, or
+    # neither may have a connected account; each is fetched and merged
+    # regardless of whether the other succeeded.
+    google_calendar_block = ""
+    google_calendar_sources: list[dict] = []
+    try:
+        google_calendar_block, google_calendar_sources = google_calendar_service.get_context()
+    except Exception as exc:
+        logger.warning(
+            "Google Calendar context fetch failed | %s: %s — continuing without it",
+            type(exc).__name__,
+            str(exc)[:100],
+        )
+
+    outlook_calendar_block = ""
+    outlook_calendar_sources: list[dict] = []
+    try:
+        outlook_calendar_block, outlook_calendar_sources = outlook_calendar_service.get_context()
+    except Exception as exc:
+        logger.warning(
+            "Outlook Calendar context fetch failed | %s: %s — continuing without it",
+            type(exc).__name__,
+            str(exc)[:100],
+        )
+
+    calendar_block = "\n\n".join(b for b in (google_calendar_block, outlook_calendar_block) if b)
+    calendar_sources = google_calendar_sources + outlook_calendar_sources
+
+    tasks_block = ""
+    task_sources: list[dict] = []
+    try:
+        tasks_block, task_sources = notion_tasks_service.get_context()
+    except Exception as exc:
+        logger.warning(
+            "Notion tasks context fetch failed | %s: %s — continuing without task context",
+            type(exc).__name__,
+            str(exc)[:100],
+        )
+
+    # ── Retrieve work orders: CommandPilot's own DB, not an external source
+    # (non-fatal) ──────────────────────────────────────────────────────────
+    # Without this, Jarvis had no way to know about real Work Orders at all
+    # and would answer "work order" questions from whatever happened to be
+    # worded similarly in the vault/Notion tasks — wrong source, wrong
+    # answer (see CLAUDE.md § Jarvis, "KSV Baunatal" mix-up, 22.09.2026).
+    work_orders_block = ""
+    work_order_sources: list[dict] = []
+    try:
+        work_orders_block, work_order_sources = work_orders_context_service.get_context(user.id)
+    except Exception as exc:
+        logger.warning(
+            "Work orders context fetch failed | %s: %s — continuing without it",
+            type(exc).__name__,
+            str(exc)[:100],
+        )
+
+    context_block = "\n\n".join(b for b in (context_block, calendar_block, tasks_block, work_orders_block) if b)
+
     # ── Generate reply via AI ─────────────────────────────────────────────────
     history = [turn.model_dump() for turn in req.history]
     try:
@@ -192,6 +262,9 @@ async def chat(
         reply=chat_ai.reply,
         sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in hit_sources],
         base_sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in base_sources],
+        calendar_sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in calendar_sources],
+        task_sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in task_sources],
+        work_order_sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in work_order_sources],
         # Proposals only — nothing is written here. See suggested_action_service
         # and the confirm/reject endpoints below for the only place a
         # suggestion can become a real work order (JARVIS-C1).

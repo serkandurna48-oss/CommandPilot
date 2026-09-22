@@ -18,7 +18,7 @@ import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Callable, Literal
 
 # "yes": prepare()+execute() are both real and fully unattended.
 # "no": no native execution at all (manual_prompt; also the honest default
@@ -502,6 +502,35 @@ class ExecuteOutcome:
     # so a cumulative budget ceiling across retries can never be exceeded
     # even for an adapter that doesn't report cost.
     cost_usd: float | None = None
+    # True iff this outcome exists because progress.should_stop() returned
+    # True mid-run (user hit Stop) rather than a natural failure/timeout/
+    # crash. run_work_order.py uses this to write a "Vom Nutzer
+    # unterbrochen" blocked_reason instead of a generic failure message.
+    interrupted: bool = False
+
+
+@dataclass
+class ProgressReporter:
+    """Optional live-progress/interrupt channel passed into execute().
+
+    run_work_order.py (the harness) owns real CommandPilot credentials and
+    implements both callables against the existing activity-log/work-order
+    endpoints; an adapter never talks to those endpoints directly. Both
+    calls are safe to make often — the harness is responsible for its own
+    rate-limiting (e.g. the existing ~15s tick), not the adapter.
+
+    An adapter that ignores this entirely (or is called without one, e.g.
+    from a test) behaves exactly as before: no live progress, no interrupt
+    support.
+    """
+
+    # Post a short human-readable status line (e.g. "Schritt 2/5: Tests
+    # laufen") as an activity-log entry visible in the live UI.
+    report_progress: Callable[[str], None]
+    # True once the user has requested a stop (running -> cancelled). An
+    # adapter with a long-running subprocess should poll this on the same
+    # cadence as report_progress and kill the subprocess if it flips True.
+    should_stop: Callable[[], bool]
 
 
 class RunnerAdapter(ABC):
@@ -572,6 +601,7 @@ class RunnerAdapter(ABC):
         session_path: Path,
         runner_command: str | None,
         max_budget_usd: float | None = None,
+        progress: ProgressReporter | None = None,
     ) -> ExecuteOutcome:
         """Adapter-native execution — only meaningful if
         info.supports_auto_execute. Base implementation refuses; adapters
@@ -585,7 +615,11 @@ class RunnerAdapter(ABC):
         calling this — that value is passed here and should be honored as
         (or combined with, whichever is more restrictive) any per-work-order
         `approval_scope.max_cost_usd`. An adapter that ignores this
-        parameter while spending real money is not meeting the contract."""
+        parameter while spending real money is not meeting the contract.
+
+        `progress`: optional live-progress/interrupt channel, see
+        ProgressReporter. Only adapters with `info.supports_live_events`
+        True are expected to actually call it; others may ignore it."""
         raise NotImplementedError(
             f"Adapter '{self.info.name}' does not support native --mode execute "
             f"(supports_auto_execute={self.info.supports_auto_execute!r})."

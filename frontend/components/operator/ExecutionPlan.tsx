@@ -13,7 +13,7 @@ const STEP_STATUS_COLORS: Record<WorkOrderStepStatus, string> = {
   skipped:   "bg-slate-800 border border-slate-800 text-slate-600",
 };
 
-function progressPercent(steps: WorkOrderStep[]): number {
+export function progressPercent(steps: WorkOrderStep[]): number {
   if (steps.length === 0) return 0;
   const done = steps.filter((s) => s.status === "completed" || s.status === "skipped").length;
   return Math.round((done / steps.length) * 100);

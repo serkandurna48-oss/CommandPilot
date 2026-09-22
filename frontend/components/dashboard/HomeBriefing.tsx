@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { useT } from "@/lib/i18n";
@@ -7,7 +8,14 @@ import { cn, formatDate, formatDateShort, getUserLanguage } from "@/lib/utils";
 import { WORK_ORDER_STATUS_COLORS } from "@/lib/operatorStyles";
 import { ProductWebsites } from "@/components/dashboard/ProductWebsites";
 import type { DailyPlan, Project, ProjectStatus, WorkOrder } from "@/types";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, X } from "lucide-react";
+
+// Dismissed once, stays dismissed — this is a one-line orientation for
+// someone seeing Home for the first time (a demo, a new account), not a
+// permanent fixture the daily user has to look past. localStorage, not a
+// backend field: purely a client-side "have I seen this" flag, nothing
+// worth persisting server-side or syncing across devices.
+const INTRO_DISMISSED_KEY = "cp_home_intro_dismissed";
 
 export function getGreetingKey(): string {
   const h = new Date().getHours();
@@ -142,19 +150,47 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
   const priority = plan?.top_priorities?.[0];
   const activeProjects = projects.filter((p) => p.status !== "archived" && p.status !== "done").slice(0, 7);
 
+  const [introDismissed, setIntroDismissed] = useState(false);
+  useEffect(() => {
+    setIntroDismissed(localStorage.getItem(INTRO_DISMISSED_KEY) === "1");
+  }, []);
+  function dismissIntro() {
+    localStorage.setItem(INTRO_DISMISSED_KEY, "1");
+    setIntroDismissed(true);
+  }
+
   return (
     <div>
       {/* Compact masthead: one line, greeting sets tone, date/wordmark
           belongs on the same baseline instead of floating in a corner. */}
-      <div className="flex items-baseline justify-between gap-4 mb-5 pb-4 border-b border-white/[0.06]">
-        <h1 className="font-serif text-[22px] md:text-[26px] font-semibold text-[var(--text-primary)]">
-          {t(getGreetingKey())}
-        </h1>
-        <div className="hidden md:flex items-baseline gap-2 text-xs font-mono text-[var(--text-tertiary)] whitespace-nowrap">
-          <span>{formatDate(new Date().toISOString())}</span>
-          <span className="text-[var(--border-heavy)]">·</span>
-          <span className="font-serif text-[13px] not-italic">CommandPilot</span>
+      <div className="mb-5 pb-4 border-b border-white/[0.06]">
+        <div className="flex items-baseline justify-between gap-4">
+          <h1 className="font-serif text-[22px] md:text-[26px] font-semibold text-[var(--text-primary)]">
+            {t(getGreetingKey())}
+          </h1>
+          <div className="hidden md:flex items-baseline gap-2 text-xs font-mono text-[var(--text-tertiary)] whitespace-nowrap">
+            <span>{formatDate(new Date().toISOString())}</span>
+            <span className="text-[var(--border-heavy)]">·</span>
+            <span className="font-serif text-[13px] not-italic">CommandPilot</span>
+          </div>
         </div>
+        {/* One-line orientation for a first-time viewer (demo, new account)
+            — see INTRO_DISMISSED_KEY above. Muted, no card, no icon: reads
+            as a caption under the greeting, not a banner competing with the
+            hero below it. */}
+        {!introDismissed && (
+          <div className="flex items-start justify-between gap-3 mt-1.5">
+            <p className="text-[var(--text-tertiary)] text-sm max-w-xl">{t("dashboard.intro")}</p>
+            <button
+              type="button"
+              onClick={dismissIntro}
+              aria-label={t("dashboard.intro.dismiss")}
+              className="text-[var(--text-placeholder)] hover:text-[var(--text-tertiary)] shrink-0 p-0.5 motion-safe:transition-colors"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ROW 1 — TODAY stays the dominant editorial moment, now alongside

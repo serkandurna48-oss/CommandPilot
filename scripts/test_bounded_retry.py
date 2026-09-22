@@ -25,7 +25,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import run_work_order as harness  # noqa: E402
-from runner_adapters.base import ExecuteOutcome  # noqa: E402
+from runner_adapters.base import ExecuteOutcome, ProgressReporter  # noqa: E402
 
 
 class FakeAdapter:
@@ -37,8 +37,9 @@ class FakeAdapter:
         self._results = list(results)
         self.execute_calls: list[float | None] = []
 
-    def execute(self, order, session_path, runner_command, max_budget_usd=None):
+    def execute(self, order, session_path, runner_command, max_budget_usd=None, progress=None):
         self.execute_calls.append(max_budget_usd)
+        self.progress_seen = progress
         item = self._results.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -99,6 +100,51 @@ class BoundedRetryTests(unittest.TestCase):
         self.assertEqual(len(adapter.execute_calls), 1)
         mock_import.assert_called_once()
         self.assertEqual(rc, 0)
+
+    def test_a_progress_reporter_is_always_passed_to_execute(self):
+        outcome = ExecuteOutcome(exit_code=0, output_log_path=Path("log"), result={"finalStatus": "review_ready"})
+        adapter = FakeAdapter([outcome])
+        self._run(
+            adapter,
+            call_api_side_effect=lambda *a, **k: {},
+            status_sequence=["running", "running"],
+            git_snapshots=[UNCHANGED],
+        )
+        self.assertIsInstance(adapter.progress_seen, ProgressReporter)
+
+    def test_interrupted_outcome_marks_step_failed_and_never_retries(self):
+        # should_stop()==True mid-execute() (user hit Stop) must be treated
+        # as neither a technical failure (no retry) nor a normal cancel-
+        # before-attempt (the running step needs its own failed+blocked_reason
+        # PATCH, on top of the existing AgentRun-terminalization path).
+        outcome = ExecuteOutcome(
+            exit_code=124, output_log_path=Path("log"), result=None, interrupted=True,
+        )
+        adapter = FakeAdapter([outcome])
+        calls = []
+
+        def call_api_side_effect(api_url, token, method, path, payload, dry_run):
+            calls.append((method, path, payload))
+            return {}
+
+        rc, mock_import = self._run(
+            adapter,
+            call_api_side_effect=call_api_side_effect,
+            status_sequence=["running"],  # only the top-of-loop check before the one attempt
+            git_snapshots=[UNCHANGED],
+        )
+        self.assertEqual(len(adapter.execute_calls), 1)  # no retry attempted
+        self.assertEqual(rc, 0)
+        mock_import.assert_not_called()
+
+        step_patches = [p for (m, path, p) in calls if m == "PATCH" and path == "/api/work-orders/wo-1/steps/s1"]
+        self.assertEqual(len(step_patches), 1)
+        self.assertEqual(step_patches[0]["status"], "failed")
+        self.assertEqual(step_patches[0]["blocked_reason"], "Vom Nutzer unterbrochen")
+
+        run_patches = [p for (m, path, p) in calls if m == "PATCH" and path == "/api/work-orders/wo-1/agent-runs/run-1"]
+        self.assertEqual(len(run_patches), 1)
+        self.assertEqual(run_patches[0]["status"], "failed")
 
     def test_technical_failure_with_unchanged_worktree_retries_up_to_max(self):
         adapter = FakeAdapter([RuntimeError("boom 1"), RuntimeError("boom 2"), RuntimeError("boom 3")])

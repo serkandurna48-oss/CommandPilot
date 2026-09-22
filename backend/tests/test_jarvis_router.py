@@ -72,6 +72,7 @@ class JarvisChatEndpointTests(unittest.TestCase):
                      [{"file": "00-Index.md", "heading": ""}],
                  ),
              ), \
+             patch.object(jarvis_router.work_orders_context_service, "get_context", return_value=("", [])), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
                  return_value=(
@@ -96,6 +97,129 @@ class JarvisChatEndpointTests(unittest.TestCase):
         # user_id must never be taken from the client — only from get_current_user
         mock_generate.assert_called_once()
 
+    def test_calendar_and_notion_context_are_merged_into_context_block(self):
+        # 22.09.2026: google_calendar_service/outlook_calendar_service/
+        # notion_tasks_service/work_orders_context_service were added
+        # alongside vault_service — this asserts all five are actually
+        # folded into the same context_block generate_chat_reply receives,
+        # not silently unused.
+        app.dependency_overrides[get_current_user] = _override_get_current_user
+
+        with patch.object(jarvis_router, "ensure_user_workspace", return_value={"workspace_id": "ws-1", "profile": {}}), \
+             patch.object(jarvis_router, "check_daily_cap", return_value=None), \
+             patch.object(
+                 jarvis_router.vault_service, "get_context_for_query",
+                 return_value=("### Quelle: 00-Index.md\n...", [], []),
+             ), \
+             patch.object(
+                 jarvis_router.google_calendar_service, "get_context",
+                 return_value=(
+                     "### Quelle: Kalender – Google (Google Calendar, 2026-09-21 – 2026-09-24)\n- Termin heute (Google)",
+                     [{"file": "Kalender – Google", "heading": "Termin heute (Google)"}],
+                 ),
+             ), \
+             patch.object(
+                 jarvis_router.outlook_calendar_service, "get_context",
+                 return_value=(
+                     "### Quelle: Kalender – Outlook (2026-09-21 – 2026-09-24)\n- Termin heute (Outlook)",
+                     [{"file": "Kalender – Outlook", "heading": "Termin heute (Outlook)"}],
+                 ),
+             ), \
+             patch.object(
+                 jarvis_router.notion_tasks_service, "get_context",
+                 return_value=(
+                     "### Quelle: Notion — Offene Aufgaben\n- Bewerbung schreiben",
+                     [{"file": "Notion — Offene Aufgaben", "heading": "Bewerbung schreiben"}],
+                 ),
+             ), \
+             patch.object(
+                 jarvis_router.work_orders_context_service, "get_context",
+                 return_value=(
+                     "### Quelle: Work Orders (CommandPilot)\n- Update KSV Baunatal — Status: needs_approval",
+                     [{"file": "Work Orders (CommandPilot)", "heading": "Update KSV Baunatal — Status: needs_approval"}],
+                 ),
+             ), \
+             patch.object(
+                 jarvis_router, "generate_chat_reply",
+                 return_value=(JarvisChatAI(reply="ok", suggested_actions=[]), 10, 5),
+             ) as mock_generate, \
+             patch.object(jarvis_router, "log_ai_usage", return_value=None):
+            resp = self.client.post(
+                "/api/jarvis/chat",
+                json={"message": "Was ist heute los?", "history": []},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        # Third positional arg to generate_chat_reply is context_block.
+        merged_context = mock_generate.call_args.args[2]
+        self.assertIn("00-Index.md", merged_context)
+        self.assertIn("Termin heute (Google)", merged_context)
+        self.assertIn("Termin heute (Outlook)", merged_context)
+        self.assertIn("Bewerbung schreiben", merged_context)
+        self.assertIn("Update KSV Baunatal", merged_context)
+
+        body = resp.json()
+        self.assertEqual(
+            body["calendar_sources"],
+            [
+                {"source_file": "Kalender – Google", "source_heading": "Termin heute (Google)"},
+                {"source_file": "Kalender – Outlook", "source_heading": "Termin heute (Outlook)"},
+            ],
+        )
+        self.assertEqual(
+            body["task_sources"],
+            [{"source_file": "Notion — Offene Aufgaben", "source_heading": "Bewerbung schreiben"}],
+        )
+        self.assertEqual(
+            body["work_order_sources"],
+            [{"source_file": "Work Orders (CommandPilot)", "source_heading": "Update KSV Baunatal — Status: needs_approval"}],
+        )
+
+    def test_calendar_and_notion_failures_do_not_break_chat(self):
+        # Same non-fatal contract as vault_service's fetch failure below —
+        # a broken Composio call must degrade to "no external context", not
+        # a 500.
+        app.dependency_overrides[get_current_user] = _override_get_current_user
+
+        with patch.object(jarvis_router, "ensure_user_workspace", return_value={"workspace_id": "ws-1", "profile": {}}), \
+             patch.object(jarvis_router, "check_daily_cap", return_value=None), \
+             patch.object(
+                 jarvis_router.vault_service, "get_context_for_query",
+                 return_value=("", [], []),
+             ), \
+             patch.object(
+                 jarvis_router.google_calendar_service, "get_context",
+                 side_effect=RuntimeError("composio down"),
+             ), \
+             patch.object(
+                 jarvis_router.outlook_calendar_service, "get_context",
+                 side_effect=RuntimeError("composio down"),
+             ), \
+             patch.object(
+                 jarvis_router.notion_tasks_service, "get_context",
+                 side_effect=RuntimeError("composio down"),
+             ), \
+             patch.object(
+                 jarvis_router.work_orders_context_service, "get_context",
+                 side_effect=RuntimeError("db down"),
+             ), \
+             patch.object(
+                 jarvis_router, "generate_chat_reply",
+                 return_value=(JarvisChatAI(reply="ok", suggested_actions=[]), 10, 5),
+             ) as mock_generate, \
+             patch.object(jarvis_router, "log_ai_usage", return_value=None):
+            resp = self.client.post(
+                "/api/jarvis/chat",
+                json={"message": "Was ist heute los?", "history": []},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(mock_generate.call_args.args[2], "")
+        body = resp.json()
+        self.assertEqual(body["calendar_sources"], [])
+        self.assertEqual(body["task_sources"], [])
+        self.assertEqual(body["work_order_sources"], [])
+
     def test_profile_language_is_resolved_and_passed_to_ai_call(self):
         # Regression test: generate_chat_reply used to always be called
         # without a language, hardcoding German inside the prompt regardless
@@ -112,6 +236,7 @@ class JarvisChatEndpointTests(unittest.TestCase):
                  jarvis_router.vault_service, "get_context_for_query",
                  return_value=("", [], []),
              ), \
+             patch.object(jarvis_router.work_orders_context_service, "get_context", return_value=("", [])), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
                  return_value=(JarvisChatAI(reply="Your project is active.", suggested_actions=[]), 10, 5),
@@ -139,6 +264,7 @@ class JarvisChatEndpointTests(unittest.TestCase):
                  jarvis_router.vault_service, "get_context_for_query",
                  return_value=("", [], []),
              ), \
+             patch.object(jarvis_router.work_orders_context_service, "get_context", return_value=("", [])), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
                  return_value=(JarvisChatAI(reply="ok", suggested_actions=[]), 10, 5),

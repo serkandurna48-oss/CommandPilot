@@ -23,6 +23,19 @@ class Settings(BaseSettings):
     # owner's notes. Empty/unset (default) → no gate, behaves as before this
     # was introduced. Not a per-user vault system — one vault, one owner.
     VAULT_OWNER_USER_ID: str = ""
+    # Composio-managed access to external context sources (Google Calendar,
+    # Outlook, Notion) for Jarvis chat — see app/services/google_calendar_service.py,
+    # outlook_calendar_service.py, and notion_tasks_service.py. Empty/unset
+    # (default) -> all return empty context, no network calls, chat behaves
+    # exactly as before this existed.
+    COMPOSIO_API_KEY: str = ""
+    # The Composio user_id whose Google Calendar / Notion accounts are
+    # connected. Single-tenant, mirrors VAULT_OWNER_USER_ID: one set of
+    # external accounts, one owner — not a per-Supabase-user mapping.
+    COMPOSIO_USER_ID: str = ""
+    # Notion database id of the "My Tasks" database queried by
+    # notion_tasks_service. Empty -> notion_tasks_service returns empty context.
+    NOTION_TASKS_DATABASE_ID: str = ""
 
 
 settings = Settings()

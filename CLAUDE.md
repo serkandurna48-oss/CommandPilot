@@ -42,6 +42,10 @@ CommandPilot ist der Kern, nicht das einzige System:
 Source of Truth für externe Information bleibt außerhalb dieses Systems: Notion,
 GitHub, Kalender, Mail. Nichts davon wird nach CommandPilot gespiegelt oder
 dupliziert — es wird referenziert, wenn gebraucht, nicht vorab synchronisiert.
+Seit 22.09.2026 gilt das auch technisch für Kalender/Notion: `google_calendar_service.py`,
+`outlook_calendar_service.py` und `notion_tasks_service.py` fragen live über
+Composio ab, bei jedem Jarvis-Chat neu — kein Sync-Job, keine Kopie in
+Supabase. Siehe Abschnitt "Jarvis" unten.
 
 ## Produktrichtung
 
@@ -56,7 +60,14 @@ Bindende Reihenfolge für die nächsten Ausbaustufen:
    `docs/aufträge/JARVIS-C1 — Command Layer, der nächste sichtbare Ablauf.md`.
 4. Dashboard.
 5. Sprache.
-6. Integrationen.
+6. **Teilweise vorgezogen (22.09.2026)** — Integrationen: Kalender (Google
+   Calendar UND Outlook, unabhängig voneinander — Serkan nutzt Outlook
+   tatsächlich mehr) und Notion (My Tasks) sind für Jarvis-Chat UND
+   Tagesplan-Generierung angebunden (alle über denselben Composio-Zugriff,
+   `routers/jarvis.py` bzw. `routers/plans.py`), auf expliziten Wunsch
+   außerhalb dieser Reihenfolge. Siehe Abschnitt "Jarvis" unten. Weitere
+   Integrationen (Mail, GitHub)
+   bleiben offen.
 7. Hintergrundagenten — innerhalb der bestehenden Safety Rules
    (`backend/app/core/safety_rules.py`, Approval Scopes), nicht als
    Erweiterung, die sie umgeht.
@@ -121,7 +132,86 @@ Pro-Nutzer-Vault-System — ein Vault, ein Eigentümer, keine Migration.
   Prompt-Konstruktion in `prompts/jarvis_chat.py`: Systemprompt zwingt
   Deutsch, verbietet Erfindung, verlangt offenes Eingeständnis bei fehlendem
   Wissen — und verbietet dem Modell explizit, selbst eine "Quellen:"-Zeile in
-  den Antworttext zu schreiben (das übernimmt die UI separat).
+  den Antworttext zu schreiben (das übernimmt die UI separat). Ton-Regel
+  (seit 22.09.2026, nach Nutzer-Feedback zweimal nachjustiert): locker/
+  Bro-Style, aber Substanz und Präzision bleiben — kein Widerspruch, siehe
+  Beispielsatz direkt im Prompt. Erste Version war zu steif, zweite zu
+  slang-lastig für ernste Themen (Business-Strategie); aktueller Stand ist
+  bewusst "locker im Ton, scharf im Inhalt", nicht die Mitte zwischen beidem.
+  Zusätzlich: Regel, den Mehrwert einer Antwort explizit zu benennen (WARUM
+  etwas zählt), nicht nur WAS im Kontext steht.
+
+**Externer Kontext (Kalender ×2 + Notion, seit 22.09.2026)**:
+`backend/app/services/google_calendar_service.py`,
+`outlook_calendar_service.py` und `notion_tasks_service.py` — drei
+unabhängige Quellen, alle mit demselben Nie-wirft-Vertrag wie
+`vault_service.py`: fehlende Config, kein verbundener Account oder ein
+Composio-Fehler ergeben `("", [])`, nie eine Exception. Google und Outlook
+sind bewusst zwei getrennte Kalender-Services statt einem — Serkan nutzt
+beide, keiner weiß vom anderen, ihre Aufrufer (`routers/jarvis.py`,
+`routers/plans.py`) mergen die Ergebnisse. Alle drei laufen über
+`backend/app/services/composio_client.py` (schlanker
+`Composio(api_key=...)`-Singleton). Gate: `COMPOSIO_API_KEY` +
+`COMPOSIO_USER_ID` (Composio-eigene User-ID, an die die Accounts angebunden
+sind — Single-Tenant wie `VAULT_OWNER_USER_ID`, keine
+Per-Supabase-Nutzer-Zuordnung, dieselbe User-ID für alle drei Quellen).
+Notion zusätzlich `NOTION_TASKS_DATABASE_ID` (die "My Tasks"-Datenbank).
+`google_calendar_service` deckt ein festes Fenster gestern–übermorgen ab
+(`GOOGLECALENDAR_EVENTS_LIST`), `outlook_calendar_service` dasselbe Fenster
+über `OUTLOOK_GET_CALENDAR_VIEW` (Response unter `data.value[]`, nicht
+`data.items`/`data.events` wie bei Google — beide Services haben deshalb
+eigene, nicht geteilte Extraktionslogik), `notion_tasks_service` liest offene
+Zeilen aus der Tasks-Datenbank (`NOTION_QUERY_DATABASE`). Alle drei
+formatieren ihre Treffer im selben `### Quelle: ...`-Stil wie
+`vault_service.format_context_block`, mit unterscheidbaren Labels
+("Kalender – Google" / "Kalender – Outlook" / "Notion — Offene Aufgaben") und
+werden in `routers/jarvis.py::chat()` direkt an den vom Vault gelieferten
+`context_block` angehängt (`"\n\n".join(...)`, leere Blöcke rausgefiltert) —
+die Prompt-Schicht (`prompts/jarvis_chat.py`) sieht dadurch weiterhin nur
+einen einzigen Kontext-String, keine Signaturänderung nötig. Seit 22.09.2026
+genauso in `routers/plans.py` (Tagesplan-Generierung) verdrahtet — direkt im
+Router nach demselben Muster, NICHT in
+`plan_service.get_vault_context_for_checkin` selbst (die bleibt vault-only,
+unverändert). Für den Tagesplan wird nur der formatierte Block verwendet,
+nicht die strukturierten `sources` — dort gibt es keine Pro-Quelle-UI wie im
+Jarvis-Chat.
+Alle drei `get_context()`-Funktionen geben `(block, sources)` zurück, nicht
+nur einen String — `sources` im selben `[{"file": ..., "heading": ...}]`-Shape
+wie `vault_service`s `hit_sources`, aber eigenständig: `JarvisChatResponse`
+hat dafür eigene Felder `calendar_sources` (Google+Outlook zusammengeführt)
+und `task_sources` (`app/models/jarvis.py`), getrennt von `sources`/
+`base_sources` (bleiben vault-only). Anders als vault_service budgetiert die
+Kappung hier ganze Zeilen, nie mitten im Text — ein abgeschnittenes
+Kalender-Event wäre irreführend, ein weggelassenes nicht.
+Frontend: `components/jarvis/JarvisChat.tsx` zeigt beide Feldgruppen als
+eigene `SourcesDisclosure`-Blöcke ("Kalender" / "Offene Aufgaben (Notion)"),
+gleiches Muster wie `sources`/`base_sources` — die Google/Outlook-Herkunft
+steckt nur im `file`-Label je Eintrag, nicht in eigenen UI-Sektionen.
+
+**Work Orders als vierte Kontextquelle (seit 22.09.2026)**:
+`backend/app/services/work_orders_context_service.py` — anders als die drei
+oben liest diese Quelle CommandPilots eigene Datenbank direkt
+(`work_order_service.get_work_orders_for_user`), kein externer Dienst, kein
+Composio. Entstanden aus einem echten Fehlfund: Serkan fragte Jarvis "geh die
+neueste Work Order mit mir durch", und Jarvis antwortete anhand einer
+ähnlich klingenden Notion-Aufgabe ("Update KSV Baunatal", Status "Next"),
+weil es schlicht keine Work-Order-Kontextquelle gab. Gleicher Vertrag wie die
+anderen: `get_context(user_id, token_budget=500) -> (block, sources)`,
+`("", [])` bei fehlender user_id oder DB-Fehler, nie eine Exception. Zeigt
+die neuesten 10 Work Orders (`created_at desc`, bereits so aus
+`get_work_orders_for_user`), Format `- <Titel> [<Repo>, falls ≠ commandpilot]
+— Status: <status>`. Nur in `routers/jarvis.py::chat()` verdrahtet, NICHT in
+`routers/plans.py` (Tagesplan) — naheliegende Erweiterung, aber bewusst nicht
+Teil dieser Änderung. Eigenes Response-Feld `work_order_sources`
+(`app/models/jarvis.py`), eigener `SourcesDisclosure`-Block in
+`JarvisChat.tsx` ("Work Orders", `ClipboardList`-Icon).
+**Test-Falle**: Jeder Test, der `POST /api/jarvis/chat` real durchläuft, MUSS
+`jarvis_router.work_orders_context_service.get_context` mocken (typischerweise
+`return_value=("", [])`) — sonst versucht der Service einen echten
+Supabase-Call gegen die Test-Fake-URL und die Test-Suite wird spürbar
+langsamer (bei diesem Fund: 3s → 20s), ohne dass ein Test fehlschlägt. Siehe
+`test_jarvis_router.py` und `test_jarvis_quality.py` für die aktuelle
+Mock-Liste.
 
 **Frontend**: `/jarvis` (`frontend/app/jarvis/page.tsx` +
 `components/jarvis/JarvisChat.tsx`), geschützte Route im bestehenden
@@ -139,8 +229,12 @@ noch nicht implementiert. Kein Auto-Ausführen von Aktionen aus dem Chat.
 
 **Tests**: `backend/tests/test_vault_service.py`,
 `test_daily_plan_vault_context.py`, `test_jarvis_router.py`,
-`test_jarvis_chat_prompt.py` — vier Dateien, pytest-discoverbar, laufen über
-`scripts/check.ps1` mit.
+`test_jarvis_chat_prompt.py`, plus (22.09.2026) `test_google_calendar_service.py`,
+`test_outlook_calendar_service.py` und `test_notion_tasks_service.py` — alle
+pytest-discoverbar, laufen über `scripts/check.ps1` mit. `test_jarvis_router.py`
+enthält seit 22.09.2026
+zusätzlich zwei Fälle für den externen Kontext: Kalender/Notion landen im
+`context_block`, und ein Composio-Fehler bricht den Chat nicht ab (200 statt 500).
 
 **Prüfen**: `scripts/check.ps1` — ein Befehl, ohne Argumente, aus dem
 Repo-Root. Läuft nacheinander Backend-Pytest (`backend/tests`),
@@ -163,7 +257,8 @@ bekannt und kein Regressionssignal.
 | Validation | Pydantic v2 | 2.13.4 |
 | Supabase Client | supabase-py | 2.30.0 |
 | Database/Auth | Supabase (Postgres + Auth) | — |
-| AI | OpenAI GPT-4o, JSON-Mode | openai==1.54.4 |
+| AI | OpenAI GPT-4o, JSON-Mode | openai==3.17.0 (22.09.2026 von 1.54.4 hochgezogen — composio zwingt openai>=2.48.0, siehe unten) |
+| Externer Kontext | Composio SDK (Google Calendar, Outlook, Notion) | composio==0.22.0 |
 
 ## Wichtige Befehle
 
@@ -218,15 +313,19 @@ backend/
   app/routers/    # auth, health, checkins, plans, projects, reviews, rules,
                   # work_orders, jarvis
   app/services/   # ai_service, checkin_service, plan_service, project_service,
-                  # review_service, usage_service, work_order_service, vault_service
+                  # review_service, usage_service, work_order_service, vault_service,
+                  # google_calendar_service, outlook_calendar_service,
+                  # notion_tasks_service, composio_client, work_orders_context_service
+                  # (22.09.2026)
   app/models/     # checkin, plan, project, review, rules, work_order, jarvis
   app/core/       # config.py, safety_rules.py
   app/prompts/    # daily_plan.py, jarvis_chat.py — isolierte AI-Prompt-Konstruktion
   app/db/         # client.py — Supabase-Client-Singleton
-  tests/          # pytest-Suite, 6 Dateien: test_work_order_transitions.py,
-                  # test_result_import_idempotency.py, test_vault_service.py,
-                  # test_daily_plan_vault_context.py, test_jarvis_router.py,
-                  # test_jarvis_chat_prompt.py
+  tests/          # pytest-Suite (Dateizahl hier vor 22.09.2026 schon nicht
+                  # aktuell gepflegt — nicht als exakte Quelle nehmen, siehe
+                  # tatsächliches Verzeichnis). Neu am 22.09.2026:
+                  # test_google_calendar_service.py, test_outlook_calendar_service.py,
+                  # test_notion_tasks_service.py, test_work_orders_context_service.py
   requirements.txt, requirements-dev.txt  # dev-only: pytest
 
 supabase/
@@ -344,12 +443,42 @@ sind zum Zeitpunkt dieses CLAUDE.md-Updates noch nicht bearbeitet.
 - **Mock-Fallback-Risiko**: `frontend/lib/mockWorkOrders.ts` kann bei API-Fehlern
   still auf Mock-Daten zurückfallen und echte Fehler verdecken — nie ohne
   sichtbaren Fehlerzustand.
-- **CLI-Runner-Pfad nicht live gegen `claude` getestet**: `scripts/run_work_order.py
-  --mode execute --adapter claude_code` (echter Subprocess, echtes Budget-Limit)
-  wurde bisher nur über Unit-Tests mit gefaktem Adapter verifiziert
-  (`scripts/test_bounded_retry.py`), nicht als echter CLI-Lauf mit einem
-  User-Bearer-Token — siehe `docs/manual-e2e-checklist.md`, Abschnitt
-  "Verifizierungsstatus".
+- **CLI-Runner-Pfad jetzt live gegen `claude` getestet (22.09.2026)**: `scripts/
+  run_work_order.py --mode execute --adapter claude_code` lief mehrfach echt
+  (reale, budget-gedeckelte Claude-Kosten, u.a. ein $1.40/24-Turn-Lauf) — dabei
+  drei reale Bugs gefunden und gefixt: ein Windows-`shutil.which()`-Auflösungsfehler
+  (`claude`-Shim führte zu stillem Hang), ein Budget-Gap zwischen
+  `--max-budget-usd` und ungesetztem `approval_scope.max_cost_usd` (führte zum
+  unbegrenzten $1.40-Charge, der den Fix motivierte) und ein False-Positive beim
+  Trust-Dialog-Scan (schnitt einen echten, erfolgreichen Lauf ab, weil sein
+  eigener Ergebnistext die Trust-Phrase zitierte). Siehe Kommentare in
+  `scripts/runner_adapters/claude_code.py`. `--mode prompt-file` lief ebenfalls
+  echt gegen eine laufende Work Order. Live-Progress/Stop (`ProgressReporter`,
+  22.09.2026 ergänzt) wurde per echtem Browser-Test verifiziert: Stop-Button
+  löst reale `running -> cancelled`-Transition aus, inkl. Activity-Log-Eintrag.
+  **Weiterhin offen**: Supabase-Realtime-Cross-Tab-Sync (siehe nächster Punkt)
+  und ein echter `--mode execute`-Lauf, der über den Stop-Button während eines
+  laufenden `claude`-Subprozesses unterbrochen wird (bisher nur der reine
+  Status-Transition-Pfad ohne aktiven Subprozess verifiziert).
+- ~~Migration 015 (Supabase Realtime) nicht gegen das Live-Projekt ausgeführt~~ —
+  **behoben (22.09.2026).** Ein erster Zwei-Tab-Test zeigte, dass ein `Stop`-Klick
+  in Tab 1 nicht automatisch in Tab 2 ankam, weil `015_enable_realtime_work_orders.sql`
+  noch nicht im Supabase SQL Editor ausgeführt war (Migrationen sind hier bewusst
+  nie automatisiert). Serkan hat die Migration danach manuell ausgeführt; ein
+  wiederholter Zwei-Tab-Test bestätigt: ein `Stop`-Klick in einem Tab propagiert
+  jetzt ohne Reload in einen komplett unberührten zweiten Tab (`work_orders`-Status
+  wechselt dort automatisch von `running` auf `cancelled`).
+- **`openai`-Sprung 1.54.4 → 3.17.0 (22.09.2026), erzwungen durch `composio`**:
+  `import composio` zieht unconditional `composio.core.provider._openai` und
+  damit ein reales `openai>=2.48.0` — es gibt keine Möglichkeit, das SDK zu
+  nutzen ohne diesen Sprung mitzunehmen. Volle Pytest-Suite ist grün, und die
+  von `ai_service.py` genutzte Fläche (`AsyncOpenAI`, `chat.completions.create`,
+  `response_format: json_schema`-Dict-Form, die vier Exception-Klassen) ist laut
+  offiziellem Changelog vom bekannten 2.0.0-Breaking-Change (Responses-API
+  `output`-Typing) nicht betroffen — aber kein Test in diesem Repo ruft die
+  echte OpenAI-API auf. Vor dem nächsten Merge einmal Tagesplan **und**
+  Jarvis-Chat live im Browser gegen die echte OpenAI-API durchklicken, nicht
+  nur `scripts/check.ps1` vertrauen.
 - Details und vollständige Risikoliste: siehe
   `docs/commandpilot-current-state-and-business-roadmap.md`.
 

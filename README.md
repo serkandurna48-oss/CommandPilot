@@ -52,6 +52,7 @@ After running `supabase/schema.sql` for the first time, apply any incremental mi
 | `supabase/migrations/012_result_import_dedup_keys.sql` | Adds `activity_logs.dedup_key`/`artifacts.dedup_key` + UNIQUE indexes on `(work_order_id, dedup_key)` | Before deploying the CP-OP03 idempotent result import (`scripts/import_work_order_result.py`) |
 | `supabase/migrations/013_suggested_action_decisions.sql` | Adds `suggested_action_decisions` table (+ unique `(user_id, request_id)` index + RLS) — audit trail and idempotency guard for confirming/rejecting a Jarvis chat proposal | Before deploying the JARVIS-C1 Command Layer (`POST /api/jarvis/suggested-actions/confirm`\|`reject`) |
 | `supabase/migrations/014_projects_website_url.sql` | Adds nullable `projects.website_url` | Before deploying the "Product Websites" card grid on Home (`frontend/components/dashboard/ProductWebsites.tsx`) |
+| `supabase/migrations/015_enable_realtime_work_orders.sql` | Adds `work_orders`, `work_order_steps`, `activity_logs` to the `supabase_realtime` publication | Before deploying the live Operator Control Plane view (`frontend/components/operator/LiveExecutionView.tsx`, Supabase Realtime `postgres_changes` subscription on the operator detail page) |
 
 Run each file in the Supabase SQL Editor. Migrations are idempotent — safe to re-run, except `006_work_orders.sql` and `013_suggested_action_decisions.sql` (their `CREATE POLICY` statements have no `IF NOT EXISTS` guard, matching the existing `004_ai_usage_log.sql` precedent) — run those once.
 

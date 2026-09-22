@@ -20,7 +20,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[settings.FRONTEND_URL, "http://localhost:3000"],
+    # localhost:3001 alongside :3000 — CampPilot (Sommercamps) commonly
+    # occupies :3000 on this machine during local dev (separate project,
+    # not part of this repo), so CommandPilot's frontend runs on :3001
+    # instead when that happens.
+    allow_origins=[settings.FRONTEND_URL, "http://localhost:3000", "http://localhost:3001"],
     # Covers all Vercel preview deployments for this project/team.
     # Exact pattern: command-pilot-<hash>-serkans-projects-a49183cd.vercel.app
     allow_origin_regex=r"^https://command-pilot-[a-z0-9-]+-serkans-projects-a49183cd\.vercel\.app$",

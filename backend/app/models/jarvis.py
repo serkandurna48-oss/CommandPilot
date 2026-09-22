@@ -51,6 +51,25 @@ class JarvisChatResponse(BaseModel):
     # not themselves feed the answer. Not shown by default — present for
     # transparency/debugging and for a future "show more" affordance.
     base_sources: list[SourceRef] = []
+    # Live calendar events for the query window (yesterday through the day
+    # after tomorrow), merged from google_calendar_service and
+    # outlook_calendar_service — see CLAUDE.md § Jarvis, external context.
+    # Empty when Composio isn't configured, no account of either kind is
+    # connected, or no events matched. Kept separate from `sources` (vault
+    # hits): different provenance, own "Kalender" disclosure in the UI.
+    calendar_sources: list[SourceRef] = []
+    # Live open tasks from the Notion "My Tasks" database, via
+    # notion_tasks_service. Same empty-on-not-configured contract as
+    # calendar_sources, own "Notion" disclosure in the UI.
+    task_sources: list[SourceRef] = []
+    # The user's real CommandPilot Work Orders (Operator Control Plane —
+    # work_order_service.py), via work_orders_context_service. The one
+    # context source that reads CommandPilot's own database, not an external
+    # system — added 22.09.2026 after Jarvis answered a "go through my
+    # newest work order" question from a similarly-worded Notion task
+    # instead of an actual work order, because no work-order context existed
+    # at all. Empty when the user has no work orders on file.
+    work_order_sources: list[SourceRef] = []
     # JARVIS-C1: populated with exactly two entries when the message
     # described a goal, empty for ordinary knowledge questions. Never
     # persisted by the chat endpoint itself — see JarvisChatAI below and

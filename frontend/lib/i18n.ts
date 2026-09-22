@@ -54,6 +54,8 @@ const dict: Record<string, Record<Lang, string>> = {
   "dashboard.subtitle":       { en: "Here's what's on your plate today.", de: "Das steht heute für dich an." },
   "dashboard.hero.standby":   { en: "Awaiting mission brief.", de: "Kein Tagesplan bisher." },
   "dashboard.no_plan_sub":    { en: "Start your morning check-in and get your AI-generated daily strategy in under 30 seconds.", de: "Starte deinen Tagesstart und erhalte in wenigen Sekunden einen klaren Tagesplan." },
+  "dashboard.intro":          { en: "Jarvis knows your projects, calendar, and tasks — and helps you plan the day before you even ask.", de: "Jarvis kennt deine Projekte, deinen Kalender und deine Aufgaben — und hilft dir, den Tag zu planen, bevor du überhaupt fragst." },
+  "dashboard.intro.dismiss":  { en: "Dismiss",              de: "Ausblenden" },
   "dashboard.start_checkin":  { en: "Start Morning Check-in", de: "Tagesstart beginnen" },
   "dashboard.view_plan":      { en: "View full plan",     de: "Tagesplan öffnen" },
   "dashboard.new_checkin":    { en: "New Check-in",       de: "Neuer Tagesstart" },
@@ -163,6 +165,9 @@ const dict: Record<string, Record<Lang, string>> = {
   "jarvis.thinking":          { en: "Thinking...",        de: "Denkt nach..." },
   "jarvis.sources":           { en: "Sources used",       de: "Verwendete Quellen" },
   "jarvis.base_context":      { en: "Base context",       de: "Basiskontext" },
+  "jarvis.calendar_sources":  { en: "Calendar",           de: "Kalender" },
+  "jarvis.task_sources":      { en: "Open tasks (Notion)", de: "Offene Aufgaben (Notion)" },
+  "jarvis.work_order_sources": { en: "Work Orders",         de: "Work Orders" },
   "jarvis.you_label":         { en: "You",                de: "Du" },
   "jarvis.error_banner":      { en: "Jarvis could not answer:", de: "Jarvis konnte nicht antworten:" },
   "jarvis.retry":             { en: "Retry",              de: "Nochmal versuchen" },
@@ -564,6 +569,10 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.section.no_scope_warning":    { en: "No approval scope — this work order has no defined boundaries. Treat with extra caution.", de: "Kein Approval Scope — dieses Work Order hat keine definierten Grenzen. Besondere Vorsicht geboten." },
   "operator.section.no_blocked_actions_warning": { en: "This approval scope has no blocked-actions list.", de: "Dieser Approval Scope hat keine Liste blockierter Aktionen." },
 
+  // Live execution view (running state only) — see components/operator/LiveExecutionView.tsx
+  "operator.live.badge":         { en: "Live",            de: "Live" },
+  "operator.live.stream_title":  { en: "Activity Stream", de: "Activity Stream" },
+
   // Work order step status (7 states)
   "operator.step_status.pending":   { en: "Pending",   de: "Ausstehend" },
   "operator.step_status.queued":    { en: "Queued",    de: "Eingereiht" },
@@ -586,6 +595,9 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.lifecycle.cancel_confirm_message": { en: "Cancel this work order? This cannot be undone. If a runner is currently executing it, cancelling here does not stop that process immediately — it only marks the work order withdrawn so its eventual result can no longer be imported.", de: "Dieses Work Order abbrechen? Das kann nicht rückgängig gemacht werden. Falls gerade ein Runner läuft, wird dieser Prozess dadurch nicht sofort gestoppt — nur der Work-Order-Status wird zurückgezogen, sodass ein späteres Ergebnis nicht mehr importiert werden kann." },
   "operator.lifecycle.cancel_confirm_yes": { en: "Yes, cancel",             de: "Ja, abbrechen" },
   "operator.lifecycle.cancel_confirm_no":  { en: "No, keep it",            de: "Nein, behalten" },
+  "operator.lifecycle.stop":               { en: "Stop",                   de: "Stoppen" },
+  "operator.lifecycle.stop_confirm_message": { en: "Stop this work order? The local runner checks for this roughly every 15 seconds and will kill its process as soon as it sees it — any work from this run that wasn't already saved is lost.", de: "Dieses Work Order stoppen? Der lokale Runner prüft das etwa alle 15 Sekunden und beendet seinen Prozess, sobald er es sieht — noch nicht gespeicherte Arbeit aus diesem Lauf geht dabei verloren." },
+  "operator.lifecycle.stop_confirm_yes":   { en: "Yes, stop",              de: "Ja, stoppen" },
 
   // Agent run attempts (CP-OP02 bounded auto-retry)
   "operator.agent_run.attempt_label":        { en: "Attempt",                             de: "Attempt" },

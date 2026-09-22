@@ -37,13 +37,15 @@ const TRANSITIONS: Partial<Record<WorkOrderStatus, { action: WorkOrderStatus; la
     { action: "cancelled", labelKey: "operator.lifecycle.cancel", variant: "secondary" },
   ],
   running: [
-    // Cancelling a running work order does not stop the local harness
-    // process — it only marks the work order as withdrawn so a later
-    // result import can no longer land on it (running -> cancelled means
-    // the harness's eventual running -> review_ready/blocked/failed import
-    // attempt is rejected as an illegal_transition instead of clobbering a
-    // cancelled work order).
-    { action: "cancelled", labelKey: "operator.lifecycle.cancel", variant: "secondary" },
+    // "Stop", not "Cancel" — this is the same running -> cancelled PATCH as
+    // every other cancel button, but for a running order it's no longer
+    // inert: a local runner harness (scripts/run_work_order.py) polls
+    // status via its ProgressReporter.should_stop() roughly every 15s and
+    // kills its own subprocess the moment it sees 'cancelled', marking the
+    // in-flight step failed with "Vom Nutzer unterbrochen". See
+    // scripts/runner_adapters/base.py's ProgressReporter and
+    // claude_code.py's execute() poll loop.
+    { action: "cancelled", labelKey: "operator.lifecycle.stop", variant: "secondary" },
   ],
   needs_approval: [
     { action: "queued", labelKey: "operator.lifecycle.requeue", variant: "primary" },
@@ -71,11 +73,12 @@ const TRANSITIONS: Partial<Record<WorkOrderStatus, { action: WorkOrderStatus; la
 export function LifecycleControls({ status, isLive, onStatusChange }: Props) {
   const t = useT();
   const [pending, setPending] = useState<WorkOrderStatus | null>(null);
-  // Inline confirm — no new modal/dialog component introduced. Cancel is the
-  // one irreversible-feeling action here (every other transition can itself
-  // be undone or re-driven; cancelling a work order withdraws it for good,
-  // see the "running" case comment above), so it gets a lightweight
-  // "really cancel? yes/no" step instead of firing immediately on click.
+  // Inline confirm — no new modal/dialog component introduced. Cancel/Stop is
+  // the one irreversible-feeling action here (every other transition can
+  // itself be undone or re-driven; cancelling a work order withdraws it for
+  // good, and stopping a running one kills real in-progress work — see the
+  // "running" case comment above), so it gets a lightweight "really do this?
+  // yes/no" step instead of firing immediately on click.
   const [confirmingCancel, setConfirmingCancel] = useState(false);
   const options = TRANSITIONS[status];
 
@@ -95,12 +98,16 @@ export function LifecycleControls({ status, isLive, onStatusChange }: Props) {
     }
   }
 
+  const isStop = status === "running"; // real interrupt, not just a withdrawal — see stop_confirm_message
+
   return (
     <div className="space-y-2">
       {!isLive && <p className="text-[var(--text-tertiary)] text-xs">{t("operator.lifecycle.demo_note")}</p>}
       {confirmingCancel && (
         <div className="rounded-lg bg-status-danger/10 border border-status-danger/30 px-3 py-2 space-y-2">
-          <p className="text-status-danger text-xs">{t("operator.lifecycle.cancel_confirm_message")}</p>
+          <p className="text-status-danger text-xs">
+            {t(isStop ? "operator.lifecycle.stop_confirm_message" : "operator.lifecycle.cancel_confirm_message")}
+          </p>
           <div className="flex gap-2">
             <Button
               size="sm"
@@ -109,7 +116,7 @@ export function LifecycleControls({ status, isLive, onStatusChange }: Props) {
               loading={pending === "cancelled"}
               onClick={() => handleClick("cancelled")}
             >
-              {t("operator.lifecycle.cancel_confirm_yes")}
+              {t(isStop ? "operator.lifecycle.stop_confirm_yes" : "operator.lifecycle.cancel_confirm_yes")}
             </Button>
             <Button size="sm" variant="ghost" disabled={pending !== null} onClick={() => setConfirmingCancel(false)}>
               {t("operator.lifecycle.cancel_confirm_no")}
