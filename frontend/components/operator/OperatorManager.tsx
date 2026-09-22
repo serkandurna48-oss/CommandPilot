@@ -2,8 +2,6 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import { Card, CardContent } from "@/components/ui/Card";
-import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/Spinner";
 import { SafetyRulesPanel } from "@/components/operator/SafetyRulesPanel";
 import { MOCK_WORK_ORDERS } from "@/lib/mockWorkOrders";
@@ -15,35 +13,50 @@ import type { WorkOrder } from "@/types";
 import { Clock, FolderTree, ChevronRight, Plus } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+// Mission Control redesign (/operator, /operator/[id] only — see
+// WorkOrderDetail.tsx's docstring for the full rationale/scope). Plain
+// dark cards instead of components/ui/Card, for the same reason
+// LifecycleControls.tsx's MissionButton bypasses components/ui/Button:
+// avoids gambling on Tailwind class-order specificity against the shared
+// component's own bg/border utilities, and keeps that shared component
+// (used by every non-Operator page) completely untouched.
 function WorkOrderCard({ order }: { order: WorkOrder }) {
   const t = useT();
+  const isRunning = order.status === "running";
 
   return (
     <Link href={`/operator/${order.id}`}>
-      <Card className="hover:border-slate-600 transition-colors cursor-pointer">
-        <CardContent className="py-3">
-          <div className="flex gap-3 items-start">
-            <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap mb-1.5">
-                <p className="text-slate-200 text-sm font-medium">{order.title}</p>
-                <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-mono", WORK_ORDER_STATUS_COLORS[order.status])}>
-                  {t(`operator.status.${order.status}`)}
+      <div className={cn(
+        "rounded-lg border bg-black/40 hover:bg-black/60 motion-safe:transition-colors px-4 py-3",
+        isRunning ? "border-emerald-800/50" : "border-slate-800"
+      )}>
+        <div className="flex gap-3 items-start">
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap mb-1.5">
+              {isRunning && (
+                <span className="relative flex h-1.5 w-1.5 shrink-0">
+                  <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-emerald-400" />
                 </span>
-              </div>
-              <p className="text-slate-400 text-xs mb-1.5 line-clamp-2">{order.goal}</p>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-500">
-                <span className="flex items-center gap-1">
-                  <FolderTree className="h-3 w-3" /> {order.repo}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Clock className="h-3 w-3" /> {order.timeLimitMinutes} {t("operator.section.minutes")}
-                </span>
-              </div>
+              )}
+              <p className="text-slate-200 text-sm font-medium">{order.title}</p>
+              <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-mono uppercase tracking-wide", WORK_ORDER_STATUS_COLORS[order.status])}>
+                {t(`operator.status.${order.status}`)}
+              </span>
             </div>
-            <ChevronRight className="h-4 w-4 text-slate-600 shrink-0 mt-1" />
+            <p className="text-slate-500 text-xs mb-1.5 line-clamp-2">{order.goal}</p>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-slate-600 font-mono">
+              <span className="flex items-center gap-1">
+                <FolderTree className="h-3 w-3" /> {order.repo}
+              </span>
+              <span className="flex items-center gap-1">
+                <Clock className="h-3 w-3" /> {order.timeLimitMinutes} {t("operator.section.minutes")}
+              </span>
+            </div>
           </div>
-        </CardContent>
-      </Card>
+          <ChevronRight className="h-4 w-4 text-slate-700 shrink-0 mt-1" />
+        </div>
+      </div>
     </Link>
   );
 }
@@ -84,16 +97,19 @@ export function OperatorManager() {
           {usingMocks ? t("operator.mock_banner") : t("operator.live_banner")}
         </div>
         <Link href="/operator/new">
-          <Button size="sm">
-            <Plus className="h-4 w-4" />
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400 bg-emerald-500 hover:bg-emerald-400 text-black font-mono text-[11px] uppercase tracking-wide px-3 py-2"
+          >
+            <Plus className="h-3.5 w-3.5" />
             {t("operator.list.new_button")}
-          </Button>
+          </button>
         </Link>
       </div>
 
       {loading ? (
         <div className="py-8 flex justify-center">
-          <div className="h-6 w-6 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
+          <div className="h-6 w-6 rounded-full border-2 border-emerald-500 border-t-transparent animate-spin" />
         </div>
       ) : orders.length === 0 ? (
         <EmptyState
@@ -101,10 +117,13 @@ export function OperatorManager() {
           description={t("operator.empty_desc")}
           action={
             <Link href="/operator/new">
-              <Button size="sm">
-                <Plus className="h-4 w-4" />
+              <button
+                type="button"
+                className="inline-flex items-center gap-1.5 rounded-md border border-emerald-400 bg-emerald-500 hover:bg-emerald-400 text-black font-mono text-[11px] uppercase tracking-wide px-3 py-2"
+              >
+                <Plus className="h-3.5 w-3.5" />
                 {t("operator.empty_cta")}
-              </Button>
+              </button>
             </Link>
           }
         />
