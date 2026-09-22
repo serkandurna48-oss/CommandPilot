@@ -339,15 +339,32 @@ JSON."
   Create Work Order form now pre-fills sensible default paths for
   `development` work orders specifically so you don't hit this — see §2.)
 
-**Honesty check:** neither adapter streams *live* step-by-step updates
-while Claude Code is actually thinking — the harness sets one step to
-`running` at the start and then waits for the final result JSON. True live
-updates need the runner to call back into CommandPilot mid-session, which
-is future work — see system design doc §13/§14.
+**Honesty check (updated):** by default, an adapter still runs the whole
+ticketplan in one call — the harness sets the first step to `running` at
+the start and waits for the final result JSON, same as before. Pass
+`--per-step` to change that: the harness then calls the adapter once PER
+ticketplan step, writing that step's status back immediately after it
+finishes (see `scripts/run_work_order.py`'s `_run_step_by_step()`) — this
+is the genuinely live, step-by-step behavior the previous version of this
+note called "future work." Only adapters with `supports_step_execution=True`
+(`claude_code`, `claude_code_sandboxed`) accept the flag; it's a no-op
+refusal otherwise. `--per-step` costs more (N calls instead of 1) in
+exchange for real incremental visibility — a deliberate tradeoff, not
+something to default to blindly.
 
 **`--adapter` flag (OP-Runner-003 / OP-ClaudeAdapter-001):**
 - `manual_prompt` (default) — fully manual, always works, no dependencies.
 - `claude_code` — semi-automatic, see Step B2 above.
+- `claude_code_sandboxed` — the same `claude` CLI, fully unattended
+  (`supports_auto_execute="yes"`), run inside a disposable Docker container
+  against a disposable `git worktree` — never the real working tree.
+  Requires Docker (`docker build -t commandpilot-sandbox:latest
+  scripts/sandbox` once, before first use). Changes land as a `diff`
+  artifact on the work order, never applied to your real repo automatically
+  — see `scripts/runner_adapters/claude_code_sandboxed.py`'s module
+  docstring for the full safety argument (why
+  `--dangerously-skip-permissions` is actually safe here, unlike for
+  `claude_code`).
 - `codex`/`openclaw` — still named placeholders only; not implemented, not
   evaluated. See `docs/runner-adapter-contract.md`.
 

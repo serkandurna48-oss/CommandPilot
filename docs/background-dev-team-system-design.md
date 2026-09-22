@@ -546,6 +546,21 @@ result JSON, exactly like the fully-manual path; genuinely live updates
 need the runner itself to call back into CommandPilot mid-session, which
 is a different (harder) integration than wrapping an opaque CLI call.
 
+**Update — the live step-by-step gap above is closed, opt-in.** A
+`--per-step` flag on `--mode execute` (`_run_step_by_step()` in
+`run_work_order.py`) does exactly the "call back into CommandPilot
+mid-session" integration this paragraph originally called out of scope:
+the harness calls the adapter once per ticketplan step instead of once for
+the whole order, writing that step's real status back immediately via the
+same `PATCH .../steps/{id}` endpoint, before starting the next step.
+`build_step_prompt()` (`scripts/runner_adapters/base.py`) is the
+single-step sibling of `build_runner_prompt()` — each step's prompt gets
+the prior steps' `outputSummary`s as context, never the full remaining
+plan or full prior transcripts (cost stays bounded, not compounding). Off
+by default (whole-order-in-one-call is still the default, unchanged
+behavior) — only adapters declaring `supports_step_execution=True`
+(`claude_code`, `claude_code_sandboxed`) accept the flag at all.
+
 **RunnerAdapter contract v0.** The interface a runner needs to satisfy is
 now stable enough to name: read a prompt (`prompt.md` / the UI's copy-paste
 prompt — same content), do the work within its stated approval scope, emit

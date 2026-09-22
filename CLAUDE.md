@@ -468,6 +468,48 @@ sind zum Zeitpunkt dieses CLAUDE.md-Updates noch nicht bearbeitet.
   wiederholter Zwei-Tab-Test bestätigt: ein `Stop`-Klick in einem Tab propagiert
   jetzt ohne Reload in einen komplett unberührten zweiten Tab (`work_orders`-Status
   wechselt dort automatisch von `running` auf `cancelled`).
+- **Per-Step-Ausführung (`--per-step`) + Sandbox-Adapter (`claude_code_sandboxed`,
+  22.09.2026)**: echte Step-für-Step-Ausführung mit sofortigem Status-Write-back
+  (`scripts/run_work_order.py::_run_step_by_step()`) und ein Docker-isolierter
+  Autonomie-Modus (`scripts/runner_adapters/claude_code_sandboxed.py`), beide
+  durch gemockte Tests abgedeckt (`scripts/test_step_execution.py`,
+  `scripts/test_sandbox_adapter.py`, beide grün).
+  **Sandbox-Adapter live gegen echtes Docker getestet (ohne `claude`-Aufruf,
+  kein Geld ausgegeben)** — dabei zwei reale Bugs gefunden und gefixt:
+  1. `git worktree add` (ursprünglicher Ansatz) erzeugt eine `.git`-DATEI mit
+     absolutem Windows-Hostpfad zurück zum Hauptrepo — im Linux-Container
+     nicht auflösbar, jedes `git`-Kommando DES AGENTEN im Container schlägt
+     fehl ("not a git repository"), obwohl die Dateien sichtbar/editierbar
+     sind. Fix: `git clone --local` statt `git worktree add` — eigenständiges
+     `.git`-Verzeichnis, kein Hostpfad-Bezug, funktioniert identisch im
+     Container. `_extract_diff()` (läuft immer auf dem Host, nie im
+     Container) war davon nie betroffen.
+  2. `shutil.rmtree(..., ignore_errors=True)` beim Cleanup gab bei
+     schreibgeschützten Git-Objektdateien (Windows markiert Git-Pack-/Object-
+     Dateien read-only) still auf und ließ das Sandbox-Verzeichnis
+     zurück — genau das "verwaiste Sandbox-Verzeichnis"-Risiko, vor dem der
+     Modul-Docstring warnt. Fix: `onexc`-Hook, der die Read-only-Flag löscht
+     und den Löschversuch wiederholt — live verifiziert, dass danach
+     wirklich nichts mehr übrig bleibt.
+  **Bekannte, live verifizierte Einschränkung (CRLF)**: `_extract_diff()`s
+  eigener Diff ist nachweislich sauber (läuft immer mit dem Host-Git gegen
+  den Host-Checkout). Führt der Agent aber selbst `git status`/`git diff`
+  IM Container aus, sieht er jede getrackte Datei als "modifiziert" mit
+  symmetrischer +/− Zeilenzahl — echte CRLF/LF-Normalisierungs-Drift
+  zwischen Windows-Host-Git (Checkout) und Linux-Container-Git (keine
+  Konvertierung konfiguriert). Harmlos fürs eigentliche Ergebnis (der
+  extrahierte Diff), aber potenziell verwirrend für den Agenten selbst —
+  nicht gefixt in diesem Durchgang, siehe Adapter-Docstring.
+  `scripts/sandbox/Dockerfile` baut lokal erfolgreich und wurde real
+  hochgefahren (Node v20.20.2, Python 3.11.2, git 2.39.5, `claude` CLI
+  2.1.197 — alle vier Versionen live per `docker run` bestätigt, nicht nur
+  build-erfolgreich).
+  **Weiterhin offen (braucht echtes Geld/Token, nicht in diesem Durchgang
+  gemacht)**: ein echter `--per-step`-Lauf gegen die reale `claude`-CLI
+  (braucht `COMMANDPILOT_API_TOKEN`), und ein echter `claude_code_sandboxed`-
+  Lauf, der `claude` tatsächlich im Container aufruft (bisher nur die
+  Container-Mechanik selbst — Mount, Git, Cleanup — ohne echten `claude`-
+  Aufruf verifiziert). Siehe `docs/manual-e2e-checklist.md`.
 - **`openai`-Sprung 1.54.4 → 3.17.0 (22.09.2026), erzwungen durch `composio`**:
   `import composio` zieht unconditional `composio.core.provider._openai` und
   damit ein reales `openai>=2.48.0` — es gibt keine Möglichkeit, das SDK zu

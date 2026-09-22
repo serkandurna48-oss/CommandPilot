@@ -214,14 +214,26 @@ def fetch_work_order(api_url: str, token: str, work_order_id: str) -> dict[str, 
         return json.loads(resp.read().decode("utf-8"))
 
 
-def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: bool, agent_run_id: str | None = None) -> int:
+def import_result(
+    result: dict[str, Any], api_url: str, token: str, dry_run: bool,
+    agent_run_id: str | None = None, require_all_steps: bool = True,
+) -> int:
     """`agent_run_id`: the AgentRun this import session belongs to, if the
     runner harness created one at `--mode prompt-file` time (OP-Runner-
     Session-001) — see run_work_order.py's cmd_import_result(), which reads
     it from the session's agent_run.json. None for a standalone/manual
     import (e.g. this script run directly outside run_work_order.py, or an
     older session predating this feature) — in that case AgentRun handling
-    is skipped entirely, matching this script's existing behavior."""
+    is skipped entirely, matching this script's existing behavior.
+
+    `require_all_steps`: forwarded to validate_result_against_order() —
+    True (default) preserves the original whole-order-result invariant for
+    every existing caller. run_work_order.py's --per-step path is the only
+    caller that passes False, since a single step's result is correctly
+    missing updates for every OTHER step in the order — everything else
+    about this function (writing steps/activityLogs/artifacts, the
+    finalStatus/reviewPackage gate) already works unchanged on a partial,
+    single-step result, since those are all `dict.get()`-based."""
     work_order_id = result.get("workOrderId")
     work_order_id = result.get("workOrderId")
     if not work_order_id:
@@ -238,7 +250,7 @@ def import_result(result: dict[str, Any], api_url: str, token: str, dry_run: boo
     if not dry_run:
         try:
             order = fetch_work_order(api_url, token, work_order_id)
-            validate_result_against_order(result, order, f"result JSON for {work_order_id}")
+            validate_result_against_order(result, order, f"result JSON for {work_order_id}", require_all_steps=require_all_steps)
         except (urllib.error.URLError, urllib.error.HTTPError) as exc:
             print(f"WARNUNG: konnte Work Order für Cross-Validation nicht laden ({exc}) — überspringe Step-ID/Vollständigkeits-Check.", file=sys.stderr)
         except ValueError as exc:

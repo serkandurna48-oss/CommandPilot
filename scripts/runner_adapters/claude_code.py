@@ -47,8 +47,10 @@ from .base import (
     ProgressReporter,
     RunnerAdapter,
     RESULT_JSON_SCHEMA,
+    StepExecuteOutcome,
     build_result_example,
     build_runner_prompt,
+    build_step_prompt,
     extract_json_result,
     parse_and_validate_result,
 )
@@ -142,6 +144,163 @@ def _build_cli_args(scope: dict, claude_path: str, budget_override: float | None
     return args
 
 
+def _run_claude_subprocess(
+    args: list[str],
+    prompt_text: str,
+    time_limit_s: float,
+    time_limit_minutes: float,
+    output_log_path: Path,
+    session_path: Path,
+    progress: ProgressReporter | None,
+) -> tuple[int, dict | None, float | None, bool]:
+    """Runs one `claude` CLI invocation (Popen + a communicate()-with-timeout
+    poll loop) and returns (exit_code, result_json, cost_usd, interrupted).
+    Shared by execute() (whole-order prompt) and execute_step() (single-step
+    prompt, see build_step_prompt()) — the subprocess lifecycle (timeout,
+    interrupt, progress reporting, JSON-wrapper parsing, the
+    untrusted-workspace detection) is identical at either granularity; only
+    which prompt text goes in, and what the caller does with the returned
+    `result_json` (validate as a whole-order result vs. a single-step
+    result), differs.
+
+    `result_json` is UNVALIDATED — the caller runs whichever of
+    parse_and_validate_result()/parse_and_validate_step_result() matches
+    what it asked for. `interrupted=True` means should_stop() fired
+    mid-run; `result_json` is always None in that case (nothing to
+    validate, the run was cut short).
+
+    A real work order can legitimately take minutes (multi-turn tool use),
+    so Popen + polling instead of a single blocking subprocess.run() — a
+    silent terminal for that long is indistinguishable from a genuine
+    hang. Python's docs explicitly support calling communicate(timeout=...)
+    repeatedly after a TimeoutExpired — buffered output isn't lost between
+    calls.
+    """
+    # Minimal, explicit env for the child process — never pass
+    # CommandPilot's own API token through to the runner's runtime; it has
+    # no legitimate use for it and shouldn't be able to log it.
+    child_env = {k: v for k, v in os.environ.items() if k != "COMMANDPILOT_API_TOKEN"}
+
+    proc = subprocess.Popen(
+        args,  # argument list — never shell=True, no shell-metacharacter risk from prompt content
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=child_env,
+    )
+    start = time.monotonic()
+    poll_interval_s = 2
+    progress_every_s = 15
+    next_progress_at = progress_every_s
+    stdout = stderr = ""
+    returncode: int | None = None
+    try:
+        proc.stdin.write(prompt_text)
+        proc.stdin.close()
+        while True:
+            try:
+                stdout, stderr = proc.communicate(timeout=poll_interval_s)
+                returncode = proc.returncode
+                break
+            except subprocess.TimeoutExpired:
+                elapsed = time.monotonic() - start
+                if elapsed >= time_limit_s:
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                    returncode = 124
+                    output_log_path.write_text(
+                        f"TIMEOUT nach {time_limit_minutes} Minuten.\n\n"
+                        f"stdout bis dahin:\n{stdout}\n\nstderr bis dahin:\n{stderr}",
+                        encoding="utf-8",
+                    )
+                    return returncode, None, None, False
+                # should_stop() is checked on the same tick as the progress
+                # print/report below (both rate-limited by the harness to
+                # _PROGRESS_MIN_INTERVAL_S) — a user hitting Stop in the UI
+                # sets the work order to 'cancelled'; the next tick here
+                # kills this subprocess rather than letting it run to the
+                # full time_limit_s.
+                if progress is not None and progress.should_stop():
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                    returncode = proc.returncode
+                    output_log_path.write_text(
+                        f"VOM NUTZER UNTERBROCHEN nach {int(elapsed)}s.\n\n"
+                        f"stdout bis dahin:\n{stdout}\n\nstderr bis dahin:\n{stderr}",
+                        encoding="utf-8",
+                    )
+                    return returncode, None, None, True
+                if elapsed >= next_progress_at:
+                    message = f"Claude Code arbeitet noch ({int(elapsed)}s vergangen, Limit {int(time_limit_s)}s)"
+                    print(f"  ... {message}")
+                    if progress is not None:
+                        progress.report_progress(message)
+                    next_progress_at += progress_every_s
+    finally:
+        # Popen doesn't auto-close stdin/stdout/stderr pipe handles the
+        # way subprocess.run's context management did — close explicitly
+        # so a crash mid-loop (or the timeout-kill path above, which
+        # returns early) never leaks file descriptors.
+        for stream in (proc.stdin, proc.stdout, proc.stderr):
+            try:
+                if stream:
+                    stream.close()
+            except Exception:
+                pass
+
+    combined = stdout + (("\n--- stderr ---\n" + stderr) if stderr else "")
+    output_log_path.write_text(combined, encoding="utf-8")
+
+    result_json: dict | None = None
+    cost_usd: float | None = None
+    try:
+        wrapper = json.loads(stdout)
+    except json.JSONDecodeError:
+        wrapper = None
+
+    if wrapper is None:
+        # stdout wasn't valid JSON at all — this is how a genuine
+        # CLI-level rejection (e.g. an untrusted workspace) actually
+        # manifests: Claude Code prints a plain-text warning instead of
+        # the --output-format json wrapper, so json.loads(stdout) fails.
+        # ONLY check for the trust phrase here, in the unparseable case —
+        # a real run confirmed this the hard way: once stdout genuinely
+        # parses as our JSON wrapper, its own `result` text can
+        # legitimately quote/describe this exact phrase (e.g. reporting
+        # on a PRIOR trust failure it found in run.log) without THIS run
+        # having failed for that reason. An earlier version of this
+        # check scanned the entire combined output regardless, which
+        # threw away a real, successful, $1.40 / 24-turn run because its
+        # own analysis text happened to mention "has not been trusted."
+        if "has not been trusted" in combined:
+            raise RuntimeError(
+                "Claude Code meldet: dieser Workspace ist nicht 'trusted'. Öffne einmalig `claude` "
+                "interaktiv in diesem Repo-Verzeichnis und akzeptiere den Trust-Dialog — erst danach "
+                "gelten die Projekt-Permissions auch non-interactive. Dieser Adapter setzt bewusst "
+                "NICHT --dangerously-skip-permissions, um das zu umgehen (siehe Moduldoku). "
+                f"Rohausgabe: {output_log_path}."
+            )
+        # Not JSON, and not a recognized trust error either — fall back
+        # to scanning raw stdout directly in case a result JSON is
+        # embedded in otherwise-unstructured output.
+        result_json = extract_json_result(stdout)
+    else:
+        denials = wrapper.get("permission_denials")
+        if denials:
+            (session_path / "permission_denials.json").write_text(
+                json.dumps(denials, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+        result_text = wrapper.get("result", "")
+        if isinstance(result_text, str):
+            result_json = extract_json_result(result_text)
+        cost_usd = wrapper.get("total_cost_usd")
+
+    return returncode, result_json, cost_usd, False
+
+
 class ClaudeCodeAdapter(RunnerAdapter):
     info = AdapterInfo(
         name="claude_code",
@@ -151,6 +310,7 @@ class ClaudeCodeAdapter(RunnerAdapter):
         supports_auto_execute="semi_auto",
         consumes_paid_credits=True,  # execute() calls the real, paid claude CLI
         command_template="claude --print --output-format json < {prompt_file}",
+        supports_step_execution=True,  # execute_step() — see run_work_order.py --per-step
     )
 
     def prepare(self, order: dict, session_path: Path) -> Path:
@@ -191,144 +351,47 @@ class ClaudeCodeAdapter(RunnerAdapter):
         args = _build_cli_args(scope, claude_path, budget_override=max_budget_usd)
         prompt_text = prompt_path.read_text(encoding="utf-8")
 
-        # Minimal, explicit env for the child process — never pass
-        # CommandPilot's own API token through to the runner's runtime; it
-        # has no legitimate use for it and shouldn't be able to log it.
-        child_env = {k: v for k, v in os.environ.items() if k != "COMMANDPILOT_API_TOKEN"}
-
-        time_limit_s = (order.get("time_limit_minutes") or 90) * 60
+        time_limit_minutes = order.get("time_limit_minutes") or 90
         output_log_path = session_path / "execute_output.log"
 
-        # Popen + a communicate()-with-timeout polling loop instead of a single
-        # blocking subprocess.run() — a real work order can legitimately take
-        # minutes (multi-turn tool use), and a silent terminal for that long
-        # is indistinguishable from a genuine hang. Printing progress here is
-        # purely local terminal feedback; it does not change what's sent to
-        # Claude Code and adds no new capability — see collect_result()'s
-        # docstring/module docs for what "semi_auto" does and doesn't cover.
-        # Python's docs explicitly support calling communicate(timeout=...)
-        # repeatedly after a TimeoutExpired — buffered output isn't lost
-        # between calls.
-        proc = subprocess.Popen(
-            args,  # argument list — never shell=True, no shell-metacharacter risk from prompt content
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=child_env,
+        returncode, result_json, cost_usd, interrupted = _run_claude_subprocess(
+            args, prompt_text, time_limit_minutes * 60, time_limit_minutes,
+            output_log_path, session_path, progress,
         )
-        start = time.monotonic()
-        poll_interval_s = 2
-        progress_every_s = 15
-        next_progress_at = progress_every_s
-        stdout = stderr = ""
-        returncode: int | None = None
-        try:
-            proc.stdin.write(prompt_text)
-            proc.stdin.close()
-            while True:
-                try:
-                    stdout, stderr = proc.communicate(timeout=poll_interval_s)
-                    returncode = proc.returncode
-                    break
-                except subprocess.TimeoutExpired:
-                    elapsed = time.monotonic() - start
-                    if elapsed >= time_limit_s:
-                        proc.kill()
-                        stdout, stderr = proc.communicate()
-                        returncode = 124
-                        output_log_path.write_text(
-                            f"TIMEOUT nach {order.get('time_limit_minutes', 90)} Minuten.\n\n"
-                            f"stdout bis dahin:\n{stdout}\n\nstderr bis dahin:\n{stderr}",
-                            encoding="utf-8",
-                        )
-                        return ExecuteOutcome(exit_code=returncode, output_log_path=output_log_path, result=None)
-                    # should_stop() is checked on the same tick as the progress
-                    # print/report below (both rate-limited by the harness to
-                    # _PROGRESS_MIN_INTERVAL_S) — a user hitting Stop in the UI
-                    # sets the work order to 'cancelled'; the next tick here
-                    # kills this subprocess rather than letting it run to the
-                    # full time_limit_s.
-                    if progress is not None and progress.should_stop():
-                        proc.kill()
-                        stdout, stderr = proc.communicate()
-                        returncode = proc.returncode
-                        output_log_path.write_text(
-                            f"VOM NUTZER UNTERBROCHEN nach {int(elapsed)}s.\n\n"
-                            f"stdout bis dahin:\n{stdout}\n\nstderr bis dahin:\n{stderr}",
-                            encoding="utf-8",
-                        )
-                        return ExecuteOutcome(
-                            exit_code=returncode, output_log_path=output_log_path, result=None, interrupted=True,
-                        )
-                    if elapsed >= next_progress_at:
-                        message = f"Claude Code arbeitet noch ({int(elapsed)}s vergangen, Limit {time_limit_s}s)"
-                        print(f"  ... {message}")
-                        if progress is not None:
-                            progress.report_progress(message)
-                        next_progress_at += progress_every_s
-        finally:
-            # Popen doesn't auto-close stdin/stdout/stderr pipe handles the
-            # way subprocess.run's context management did — close explicitly
-            # so a crash mid-loop (or the timeout-kill path above, which
-            # returns early) never leaks file descriptors.
-            for stream in (proc.stdin, proc.stdout, proc.stderr):
-                try:
-                    if stream:
-                        stream.close()
-                except Exception:
-                    pass
+        return ExecuteOutcome(
+            exit_code=returncode, output_log_path=output_log_path,
+            result=result_json, cost_usd=cost_usd, interrupted=interrupted,
+        )
 
-        combined = stdout + (("\n--- stderr ---\n" + stderr) if stderr else "")
-        output_log_path.write_text(combined, encoding="utf-8")
+    def execute_step(
+        self,
+        order: dict,
+        step: dict,
+        prior_steps: list[dict],
+        session_path: Path,
+        max_budget_usd: float | None = None,
+        progress: ProgressReporter | None = None,
+    ) -> StepExecuteOutcome:
+        scope = order.get("approval_scope") or {}
+        claude_path = _resolve_claude_executable()
+        args = _build_cli_args(scope, claude_path, budget_override=max_budget_usd)
+        prompt_text = build_step_prompt(order, step, prior_steps)
+        # Persisted for the same debugging/audit reasons prepare() writes
+        # the whole-order prompt.md — one file per step, not overwritten by
+        # the next step's call.
+        (session_path / f"step_{step['id']}_prompt.md").write_text(prompt_text, encoding="utf-8")
 
-        result_json: dict | None = None
-        cost_usd: float | None = None
-        try:
-            wrapper = json.loads(stdout)
-        except json.JSONDecodeError:
-            wrapper = None
+        time_limit_minutes = order.get("time_limit_minutes") or 90
+        output_log_path = session_path / f"execute_output_step_{step['id']}.log"
 
-        if wrapper is None:
-            # stdout wasn't valid JSON at all — this is how a genuine
-            # CLI-level rejection (e.g. an untrusted workspace) actually
-            # manifests: Claude Code prints a plain-text warning instead of
-            # the --output-format json wrapper, so json.loads(stdout) fails.
-            # ONLY check for the trust phrase here, in the unparseable case —
-            # a real run confirmed this the hard way: once stdout genuinely
-            # parses as our JSON wrapper, its own `result` text can
-            # legitimately quote/describe this exact phrase (e.g. reporting
-            # on a PRIOR trust failure it found in run.log) without THIS run
-            # having failed for that reason. An earlier version of this
-            # check scanned the entire combined output regardless, which
-            # threw away a real, successful, $1.40 / 24-turn run because its
-            # own analysis text happened to mention "has not been trusted."
-            if "has not been trusted" in combined:
-                raise RuntimeError(
-                    "Claude Code meldet: dieser Workspace ist nicht 'trusted'. Öffne einmalig `claude` "
-                    "interaktiv in diesem Repo-Verzeichnis und akzeptiere den Trust-Dialog — erst danach "
-                    "gelten die Projekt-Permissions auch non-interactive. Dieser Adapter setzt bewusst "
-                    "NICHT --dangerously-skip-permissions, um das zu umgehen (siehe Moduldoku). "
-                    f"Rohausgabe: {output_log_path}."
-                )
-            # Not JSON, and not a recognized trust error either — fall back
-            # to scanning raw stdout directly in case a result JSON is
-            # embedded in otherwise-unstructured output.
-            result_json = extract_json_result(stdout)
-        else:
-            denials = wrapper.get("permission_denials")
-            if denials:
-                (session_path / "permission_denials.json").write_text(
-                    json.dumps(denials, indent=2, ensure_ascii=False), encoding="utf-8"
-                )
-            result_text = wrapper.get("result", "")
-            if isinstance(result_text, str):
-                result_json = extract_json_result(result_text)
-            cost_usd = wrapper.get("total_cost_usd")
-
-        return ExecuteOutcome(exit_code=returncode, output_log_path=output_log_path, result=result_json, cost_usd=cost_usd)
+        returncode, result_json, cost_usd, interrupted = _run_claude_subprocess(
+            args, prompt_text, time_limit_minutes * 60, time_limit_minutes,
+            output_log_path, session_path, progress,
+        )
+        return StepExecuteOutcome(
+            exit_code=returncode, output_log_path=output_log_path,
+            step_result=result_json, cost_usd=cost_usd, interrupted=interrupted,
+        )
 
     def collect_result(self, session_path: Path, result_file: str | None) -> dict:
         path_arg = result_file or str(session_path / "result.json")

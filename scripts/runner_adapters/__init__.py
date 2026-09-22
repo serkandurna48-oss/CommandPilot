@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from .base import AdapterInfo, ExecuteOutcome, RunnerAdapter
 from .claude_code import ClaudeCodeAdapter
+from .claude_code_sandboxed import ClaudeCodeSandboxedAdapter
 from .codex import CodexAdapter
 from .manual_prompt import ManualPromptAdapter
 from .openclaw import OpenClawAdapter
@@ -11,6 +12,7 @@ from .openclaw import OpenClawAdapter
 ADAPTERS: dict[str, type[RunnerAdapter]] = {
     "manual_prompt": ManualPromptAdapter,
     "claude_code": ClaudeCodeAdapter,
+    "claude_code_sandboxed": ClaudeCodeSandboxedAdapter,
     "codex": CodexAdapter,
     "openclaw": OpenClawAdapter,
 }

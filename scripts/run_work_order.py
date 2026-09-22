@@ -4,10 +4,14 @@
 CommandPilot is the Control Plane (work orders, approval scopes, steps,
 activity log, review packages — all persisted server-side). It orchestrates
 RunnerAdapters; it does not become a coding agent itself. Execution always
-happens on the Execution Plane — today that's a human running this script
-on their own machine (via the manual_prompt adapter), later possibly
-Claude Code / Codex / OpenClaw adapters, or an isolated worker sandbox. See
-scripts/runner_adapters/ and docs/runner-adapter-contract.md.
+happens on the Execution Plane — a human running this script on their own
+machine, whether that's fully manual (manual_prompt), the local `claude`
+CLI directly (claude_code, semi_auto), or the same CLI fully unattended
+inside a disposable Docker container + git worktree
+(claude_code_sandboxed, supports_auto_execute="yes" — see that adapter's
+module docstring for the safety argument). Codex/OpenClaw adapters are
+still architectural placeholders. See scripts/runner_adapters/ and
+docs/runner-adapter-contract.md.
 
 Three modes, each delegating the adapter-specific parts to whichever
 --adapter was chosen (default: manual_prompt):
@@ -79,12 +83,13 @@ for _stream in (sys.stdout, sys.stderr):
 # Import the existing recorder script as a module — reuse its call_api/
 # import_result logic rather than duplicating it.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from import_work_order_result import ImportError_, call_api, import_result  # noqa: E402
+from import_work_order_result import ImportError_, call_api, import_result, review_package_payload  # noqa: E402
 from runner_adapters import ADAPTERS, RunnerAdapter, get_adapter  # noqa: E402
 from runner_adapters.base import (  # noqa: E402
     ProgressReporter,
     extract_json_result,
     find_blocked_keyword,
+    parse_and_validate_step_result,
     validate_result_against_order,
 )
 
@@ -473,6 +478,21 @@ def _mark_running_step_interrupted(args: argparse.Namespace, session_path: Path,
         log_line(session_path, f"WARNUNG: konnte Step nach Unterbrechung nicht auf failed setzen: {exc}")
 
 
+def _mark_step_interrupted(args: argparse.Namespace, session_path: Path, step: dict, detail: str) -> None:
+    """Per-step sibling of _mark_running_step_interrupted() — the --per-step
+    path (_run_step_by_step()) always knows exactly which step was running
+    when should_stop() fired, so no first-step-only heuristic is needed
+    here, unlike the whole-order path this mirrors."""
+    try:
+        call_api(
+            args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}/steps/{step['id']}",
+            {"status": "failed", "blocked_reason": "Vom Nutzer unterbrochen"}, dry_run=args.dry_run,
+        )
+        log_line(session_path, f"Step '{step['title']}' ({step['id']}) -> failed (Vom Nutzer unterbrochen)")
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte Step nach Unterbrechung nicht auf failed setzen: {exc}")
+
+
 def _run_adapter_with_bounded_retry(
     args: argparse.Namespace,
     adapter: RunnerAdapter,
@@ -635,6 +655,396 @@ def _run_adapter_with_bounded_retry(
     # Unreachable: the loop always returns on its final iteration
     # (attempt >= _MAX_TECHNICAL_ATTEMPTS is guaranteed to be true then).
     return 1
+
+
+def _run_one_step_with_bounded_retry(
+    args: argparse.Namespace,
+    adapter: RunnerAdapter,
+    order: dict,
+    step: dict,
+    prior_steps: list[dict],
+    session_path: Path,
+    total_budget: float | None,
+    spent_so_far: float,
+) -> tuple[int | None, dict | None, float]:
+    """Step-granular sibling of _run_adapter_with_bounded_retry() — same
+    bounded-retry/worktree-safety/cancellation contract, scoped to ONE
+    ticketplan step's attempts instead of the whole order's. Called once
+    per step, in order, by _run_step_by_step().
+
+    Returns (rc, step_entry, new_spent_so_far):
+      - rc is None on a genuine step result (the caller continues the
+        per-step loop with step_entry — the validated single-entry
+        `steps[0]` dict from the step's result).
+      - rc is an int (0 or 1) when the WHOLE run should stop now (technical
+        failure exhausted, budget exhausted, or cancellation) — everything
+        that needed finalizing (AgentRun/work-order state) has already
+        been done by the time this returns; the caller just propagates rc.
+    """
+    run_id: str | None = None
+    try:
+        created = call_api(
+            args.api_url, args.token, "POST", f"/api/work-orders/{args.work_order_id}/agent-runs",
+            {
+                "role": step["assigned_role"],
+                "status": "running",
+                "input_summary": f"Step '{step['title']}' ({adapter.info.name}, --per-step)"[:2000],
+                "model": f"{adapter.info.name} (execute, per-step)",
+            },
+            dry_run=args.dry_run,
+        )
+        run_id = created.get("id") if created else None
+        if run_id:
+            log_line(session_path, f"AgentRun für Step '{step['title']}' angelegt: {run_id}")
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte AgentRun für Step '{step['title']}' nicht anlegen: {exc}")
+
+    try:
+        call_api(
+            args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}/steps/{step['id']}",
+            {"status": "running"}, dry_run=args.dry_run,
+        )
+        log_line(session_path, f"Step '{step['title']}' ({step['id']}) -> running")
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte Step '{step['title']}' nicht auf running setzen: {exc}")
+
+    for attempt in range(1, _MAX_TECHNICAL_ATTEMPTS + 1):
+        if _current_status(args) == "cancelled":
+            detail = f"Work Order ist cancelled — kein weiterer Versuch für Step '{step['title']}' (vor Attempt {attempt})."
+            log_line(session_path, detail)
+            print("Work Order wurde cancelled — breche ab, kein weiterer Step-Versuch.")
+            _terminalize_cancelled_run(args, session_path, run_id, detail)
+            return 0, None, spent_so_far
+
+        remaining_budget: float | None = None
+        if total_budget is not None:
+            remaining_budget = round(max(total_budget - spent_so_far, 0.0), 4)
+            if remaining_budget <= 0:
+                detail = (
+                    f"Gesamtbudget ${total_budget} durch vorherige Steps/Versuche aufgebraucht — "
+                    f"Step '{step['title']}' Attempt {attempt}/{_MAX_TECHNICAL_ATTEMPTS} wird nicht mehr gestartet."
+                )
+                log_line(session_path, detail)
+                _finalize_technical_failure(args, session_path, run_id, "technical_failure_budget_exhausted", detail)
+                return 1, None, spent_so_far
+
+        before = _git_snapshot(_target_worktree())
+        budget_note = f" (Budget verbleibend: ${remaining_budget})" if remaining_budget is not None else ""
+        log_line(
+            session_path,
+            f"Step '{step['title']}' Attempt {attempt}/{_MAX_TECHNICAL_ATTEMPTS} — starte adapter.execute_step(){budget_note}",
+        )
+
+        progress = make_progress_reporter(args, session_path, run_id)
+
+        outcome = None
+        exec_error: Exception | None = None
+        try:
+            outcome = adapter.execute_step(
+                order, step, prior_steps, session_path, max_budget_usd=remaining_budget, progress=progress,
+            )
+        except NotImplementedError as exc:
+            print(f"ERROR: {exc}", file=sys.stderr)
+            return 1, None, spent_so_far
+        except Exception as exc:  # noqa: BLE001 — any adapter failure here is a technical failure by definition
+            exec_error = exc
+            log_line(session_path, f"FEHLER bei adapter.execute_step() für Step '{step['title']}' (Attempt {attempt}): {exc}")
+
+        if outcome is not None:
+            log_line(
+                session_path,
+                f"adapter.execute_step() für Step '{step['title']}' beendet (Attempt {attempt}), exit_code={outcome.exit_code}",
+            )
+            if remaining_budget is not None:
+                spent_so_far += outcome.cost_usd if outcome.cost_usd is not None else remaining_budget
+
+        if outcome is not None and outcome.interrupted:
+            detail = f"Vom Nutzer unterbrochen (Stop-Button) während Step '{step['title']}'."
+            log_line(session_path, detail)
+            print("Work Order wurde vom Nutzer gestoppt — kein weiterer Step-Start.")
+            _mark_step_interrupted(args, session_path, step, detail)
+            _terminalize_cancelled_run(args, session_path, run_id, detail)
+            return 0, None, spent_so_far
+
+        validated: dict | None = None
+        if outcome is not None and outcome.step_result is not None:
+            try:
+                validated = parse_and_validate_step_result(
+                    json.dumps(outcome.step_result), f"execute_step() result for step {step['id']}",
+                )
+            except ValueError as exc:
+                exec_error = exc
+                log_line(session_path, f"FEHLER: Step-Ergebnis für '{step['title']}' hat ungültige Form: {exc}")
+
+        if validated is not None:
+            (session_path / f"result_step_{step['id']}.json").write_text(
+                json.dumps(validated, indent=2, ensure_ascii=False), encoding="utf-8"
+            )
+            log_line(session_path, f"Ergebnis-JSON für Step '{step['title']}' gespeichert.")
+
+            if _current_status(args) == "cancelled":
+                detail = f"Work Order wurde cancelled — Step-Ergebnis für '{step['title']}' liegt lokal vor, wird NICHT importiert."
+                log_line(session_path, detail)
+                print("Work Order wurde inzwischen cancelled — Step-Ergebnis-Import wird übersprungen.")
+                _terminalize_cancelled_run(args, session_path, run_id, detail)
+                return 0, None, spent_so_far
+
+            import_rc = import_result(
+                validated, args.api_url, args.token, dry_run=args.dry_run,
+                agent_run_id=run_id, require_all_steps=False,
+            )
+            if import_rc != 0:
+                log_line(
+                    session_path,
+                    f"WARNUNG: Import des Step-Ergebnisses für '{step['title']}' hatte Fehler (exit {import_rc}) "
+                    "— Step-Status könnte trotzdem gesetzt sein, siehe Log oben.",
+                )
+            return None, validated["steps"][0], spent_so_far
+
+        # Technical failure: an exception, an invalid-shape result, or no
+        # result at all — same three-way branch as
+        # _run_adapter_with_bounded_retry(), just per-step.
+        after = _git_snapshot(_target_worktree())
+        failure_detail = f"Fehler: {exec_error}" if exec_error else f"exit_code={outcome.exit_code if outcome else 'unbekannt'}"
+
+        if _worktree_changed(before, after):
+            detail = (
+                f"Technischer Fehler bei Step '{step['title']}' Attempt {attempt} UND der Working Tree hat sich "
+                "seitdem verändert (oder war nicht feststellbar) — kein Auto-Retry, menschliches Eingreifen nötig. "
+                + failure_detail
+            )
+            log_line(session_path, detail)
+            _finalize_technical_failure(args, session_path, run_id, "technical_failure_with_worktree_changes", detail)
+            return 1, None, spent_so_far
+
+        if attempt >= _MAX_TECHNICAL_ATTEMPTS:
+            detail = (
+                f"Technischer Fehler bei Step '{step['title']}', {attempt}/{_MAX_TECHNICAL_ATTEMPTS} Versuche "
+                "ausgeschöpft, Working Tree unverändert — kein weiterer Retry mehr erlaubt. " + failure_detail
+            )
+            log_line(session_path, detail)
+            _finalize_technical_failure(args, session_path, run_id, "technical_failure_retries_exhausted", detail)
+            return 1, None, spent_so_far
+
+        if _current_status(args) == "cancelled":
+            detail = f"Work Order wurde cancelled — kein weiterer Retry für Step '{step['title']}'."
+            log_line(session_path, detail)
+            print(detail)
+            _terminalize_cancelled_run(args, session_path, run_id, detail)
+            return 0, None, spent_so_far
+
+        next_attempt = attempt + 1
+        if run_id:
+            try:
+                call_api(
+                    args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}/agent-runs/{run_id}",
+                    {
+                        "status": "failed",
+                        "output_summary": f"Attempt {attempt} technischer Fehler — wird retried. {failure_detail}"[:2000],
+                    },
+                    dry_run=args.dry_run,
+                )
+            except ImportError_ as exc:
+                log_line(session_path, f"WARNUNG: konnte AgentRun {run_id} nicht auf failed setzen: {exc}")
+
+        retry_reason = f"technical_failure_attempt_{attempt}"
+        try:
+            created = call_api(
+                args.api_url, args.token, "POST", f"/api/work-orders/{args.work_order_id}/agent-runs",
+                {
+                    "role": step["assigned_role"],
+                    "status": "running",
+                    "input_summary": f"Step '{step['title']}' Auto-Retry Attempt {next_attempt}/{_MAX_TECHNICAL_ATTEMPTS} ({adapter.info.name})"[:2000],
+                    "model": f"{adapter.info.name} (execute, per-step retry)",
+                    "attempt_number": next_attempt,
+                    "retry_reason": retry_reason,
+                },
+                dry_run=args.dry_run,
+            )
+            run_id = created.get("id") if created else run_id
+            log_line(session_path, f"AgentRun für Step '{step['title']}' Attempt {next_attempt} angelegt: {run_id}")
+        except ImportError_ as exc:
+            log_line(session_path, f"WARNUNG: konnte AgentRun für Step '{step['title']}' Attempt {next_attempt} nicht anlegen: {exc}")
+
+    # Unreachable: the loop always returns on its final iteration.
+    return 1, None, spent_so_far
+
+
+def _final_status_from_steps(steps_results: list[dict]) -> str:
+    if any(s["status"] == "failed" for s in steps_results):
+        return "failed"
+    if any(s["status"] == "blocked" for s in steps_results):
+        return "blocked"
+    return "review_ready"
+
+
+def _synthesize_review_package(steps_results: list[dict]) -> dict:
+    """Deterministic reviewPackage assembly from per-step outputSummaries —
+    no extra LLM call (per Serkan's explicit choice: --per-step should stay
+    at exactly the N calls the per-step model already costs, not N+1). Less
+    polished than a model-written summary, but every line traces to a real
+    step result — nothing invented."""
+    completed = [s for s in steps_results if s["status"] in ("completed", "skipped")]
+    blocked = [s for s in steps_results if s["status"] == "blocked"]
+    failed = [s for s in steps_results if s["status"] == "failed"]
+
+    summary_parts = [f"{len(completed)}/{len(steps_results)} Steps abgeschlossen (Per-Step-Ausführung)."]
+    if blocked:
+        summary_parts.append(f"{len(blocked)} blockiert.")
+    if failed:
+        summary_parts.append(f"{len(failed)} fehlgeschlagen.")
+
+    if failed:
+        verdict = "needs_fix"
+        recommended = "Fehlgeschlagene(n) Step(s) prüfen, ggf. Work Order requeuen."
+    elif blocked:
+        verdict = "blocked"
+        recommended = "Blockierte(n) Step(s) prüfen — Approval nötig oder Scope anpassen."
+    else:
+        verdict = "ready_for_review"
+        recommended = "Review Package prüfen und freigeben."
+
+    risks = [
+        f"Step '{s['title']}': {s.get('outputSummary') or s.get('blockedReason') or '(kein Detail gemeldet)'}"
+        for s in steps_results if s["status"] in ("blocked", "failed")
+    ]
+
+    return {
+        "summary": " ".join(summary_parts),
+        "filesChanged": [],
+        "testsRun": [],
+        "risks": risks,
+        "openQuestions": [],
+        "needsHumanReview": True,
+        "recommendedNextStep": recommended,
+        "verdict": verdict,
+    }
+
+
+def _finalize_step_by_step_run(args: argparse.Namespace, session_path: Path, steps_results: list[dict]) -> int:
+    """Called once after the --per-step loop ends (every step resolved
+    cleanly, or the loop stopped early on the first blocked/failed step).
+    Writes a deterministically-synthesized reviewPackage and the work
+    order's final status via the same endpoints the whole-order path uses.
+    Remaining un-started steps (if the loop stopped early) are left at
+    their existing 'pending' status — not touched here, matching the
+    plan's explicit choice that 'skipped' means a considered runner
+    decision, not "we didn't get there".
+
+    Return code follows the same convention as import_result(): 0 means
+    the writes themselves succeeded, independent of whether the semantic
+    outcome was review_ready/blocked/failed — a clean 'blocked' finalize
+    is exit 0, exactly like a genuine blocked result import is today."""
+    final_status = _final_status_from_steps(steps_results)
+    review_package = _synthesize_review_package(steps_results)
+
+    had_failure = False
+    try:
+        call_api(
+            args.api_url, args.token, "PUT", f"/api/work-orders/{args.work_order_id}/review-package",
+            review_package_payload(review_package), dry_run=args.dry_run,
+        )
+        log_line(session_path, f"Review Package geschrieben (verdict={review_package['verdict']})")
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte Review Package nicht schreiben: {exc}")
+        had_failure = True
+
+    try:
+        call_api(
+            args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}",
+            {"status": final_status, "source": "harness"}, dry_run=args.dry_run,
+        )
+        log_line(session_path, f"Work Order -> {final_status} (Per-Step-Lauf abgeschlossen)")
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte finalen Work-Order-Status nicht setzen: {exc}")
+        print(f"WARNUNG: {exc}", file=sys.stderr)
+        had_failure = True
+
+    return 1 if had_failure else 0
+
+
+def _run_step_by_step(
+    args: argparse.Namespace,
+    adapter: RunnerAdapter,
+    order: dict,
+    session_path: Path,
+    total_budget: float | None,
+    initial_agent_run_id: str | None,
+) -> int:
+    """--per-step: drives adapter.execute_step() once per ticketplan step,
+    in order_index order, writing each step's result back IMMEDIATELY
+    (PATCH step status + POST activityLogs/artifacts via import_result())
+    instead of waiting for one final whole-order result — this is what
+    actually makes LiveExecutionView show real, individual step
+    transitions instead of only the first step ever leaving 'pending'.
+
+    Each step gets its own AgentRun (role = the step's own assigned_role)
+    with its own bounded retry — see _run_one_step_with_bounded_retry().
+    `total_budget` stays ONE cumulative ceiling across every step × every
+    retry in this whole run, same conservative accounting as
+    _run_adapter_with_bounded_retry().
+
+    cmd_prompt_file() (called by cmd_execute() before this) already created
+    one session-level AgentRun anchored on the first step's role — that
+    row is immediately closed out here as 'completed' (a no-op session
+    marker) since per-step mode creates its own real AgentRun per step;
+    leaving it open would be exactly the "stuck on running forever" bug
+    OP-Runner-Session-001 already fixed once for the whole-order path.
+    """
+    if initial_agent_run_id:
+        try:
+            call_api(
+                args.api_url, args.token, "PATCH",
+                f"/api/work-orders/{args.work_order_id}/agent-runs/{initial_agent_run_id}",
+                {
+                    "status": "completed",
+                    "output_summary": "Session-Start-AgentRun — Ausführung läuft im Per-Step-Modus, "
+                                       "siehe die AgentRun-Zeile pro Step für den echten Verlauf.",
+                },
+                dry_run=args.dry_run,
+            )
+            log_line(session_path, f"Session-AgentRun {initial_agent_run_id} -> completed (Per-Step-Modus übernimmt eigene AgentRuns pro Step)")
+        except ImportError_ as exc:
+            log_line(session_path, f"WARNUNG: konnte Session-AgentRun {initial_agent_run_id} nicht schließen: {exc}")
+
+    steps = sorted(order.get("steps") or [], key=lambda s: s.get("order_index", 0))
+    prior_steps: list[dict] = []
+    steps_results: list[dict] = []
+    spent_so_far = 0.0
+
+    for step in steps:
+        if _current_status(args) == "cancelled":
+            detail = f"Work Order ist cancelled — kein weiterer Step-Start (vor Step '{step['title']}')."
+            log_line(session_path, detail)
+            print("Work Order wurde cancelled — breche ab, kein weiterer Step-Start.")
+            _terminalize_cancelled_run(args, session_path, None, detail)
+            return 0
+
+        rc, step_entry, spent_so_far = _run_one_step_with_bounded_retry(
+            args, adapter, order, step, prior_steps, session_path, total_budget, spent_so_far,
+        )
+        if rc is not None:
+            return rc
+
+        prior_steps.append({
+            "id": step["id"], "title": step["title"],
+            "status": step_entry["status"], "outputSummary": step_entry.get("outputSummary"),
+        })
+        # step_entry (from the validated STEP_RESULT_JSON_SCHEMA result) has
+        # no 'title' — the model is never asked to restate it. Merge in the
+        # ticketplan's own title here so _synthesize_review_package() can
+        # produce a readable risks list without re-deriving it.
+        steps_results.append({**step_entry, "title": step["title"]})
+
+        if step_entry["status"] in ("blocked", "failed"):
+            log_line(
+                session_path,
+                f"Step '{step['title']}' meldet {step_entry['status']} — Lauf wird beendet, "
+                "verbleibende Steps bleiben 'pending'.",
+            )
+            break
+
+    return _finalize_step_by_step_run(args, session_path, steps_results)
 
 
 def cmd_prompt_file(args: argparse.Namespace, adapter: RunnerAdapter) -> int:
@@ -899,12 +1309,25 @@ def cmd_execute(args: argparse.Namespace, adapter: RunnerAdapter) -> int:
             "Ein Fehlschlag hier ist erwartbar, kein Bug."
         )
 
+    initial_agent_run_id = read_agent_run_id(session_path)
+
+    if args.per_step:
+        if not adapter.info.supports_step_execution:
+            print(
+                f"ERROR: Adapter '{adapter.info.name}' unterstützt --per-step nicht "
+                f"(supports_step_execution={adapter.info.supports_step_execution!r}).",
+                file=sys.stderr,
+            )
+            return 1
+        return _run_step_by_step(
+            args, adapter, order, session_path, effective_budget, initial_agent_run_id
+        )
+
     # CP-OP02: bounded, harness-driven retry — up to _MAX_TECHNICAL_ATTEMPTS
     # calls to adapter.execute(), retried only on a technical failure with
     # an unchanged working tree. See _run_adapter_with_bounded_retry()'s
     # docstring for the full contract; cmd_prompt_file() above already
     # created the first AgentRun (status=running), which is attempt 1.
-    initial_agent_run_id = read_agent_run_id(session_path)
     return _run_adapter_with_bounded_retry(
         args, adapter, order, session_path, effective_budget, initial_agent_run_id
     )
@@ -917,8 +1340,11 @@ def main() -> int:
     parser.add_argument("--adapter", default="manual_prompt", choices=list(ADAPTERS.keys()),
                           help="RunnerAdapter to use. Default: manual_prompt (fully manual — copy/paste). "
                                "claude_code is semi-automatic (see docs/runner-adapter-contract.md for the "
-                               "one-time workspace-trust step it depends on); codex/openclaw are still "
-                               "architectural placeholders only.")
+                               "one-time workspace-trust step it depends on); claude_code_sandboxed runs the "
+                               "same CLI fully unattended inside a disposable Docker container + git worktree "
+                               "(requires Docker; see scripts/sandbox/Dockerfile and that adapter's module "
+                               "docstring for the safety argument); codex/openclaw are still architectural "
+                               "placeholders only.")
     parser.add_argument("--api-url", default=os.environ.get("COMMANDPILOT_API_URL", "http://localhost:8000"))
     parser.add_argument("--token", default=os.environ.get("COMMANDPILOT_API_TOKEN"))
     parser.add_argument("--force", action="store_true",
@@ -935,6 +1361,12 @@ def main() -> int:
                                "assumed — this is a deliberate hard stop, not a formality. Has no effect on "
                                "--mode prompt-file (writes files only, never spends anything) or on "
                                "manual_prompt (never calls a paid API itself).")
+    parser.add_argument("--per-step", action="store_true",
+                          help="--mode execute only: run one adapter call PER ticketplan step (status written "
+                               "back immediately after each step) instead of one call for the whole order. "
+                               "Opt-in — only adapters with supports_step_execution=True (currently "
+                               "claude_code and claude_code_sandboxed) accept this. Genuinely more expensive "
+                               "(N calls instead of 1) in exchange for real live step-by-step visibility.")
     parser.add_argument("--dry-run", action="store_true",
                           help="Print the API calls that would be made without making them.")
     args = parser.parse_args()

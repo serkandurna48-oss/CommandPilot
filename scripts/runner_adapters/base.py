@@ -123,6 +123,67 @@ RESULT_JSON_SCHEMA = """{
 }"""
 
 
+def _render_scope_block(scope: dict) -> list[str]:
+    """The "## Approval Scope" section — shared verbatim by
+    build_runner_prompt() (whole-order prompt) and build_step_prompt()
+    (single-step prompt) so the two never drift the way
+    BLOCKED_ACTION_KEYWORDS' three copies already do by necessity (that one
+    spans languages/processes; this one doesn't need to)."""
+    lines: list[str] = []
+    lines.append("## Approval Scope (dieses Work Orders)")
+    lines.append("")
+    lines.append("**Autonom erlaubt (kein Nachfragen nötig):**")
+    for a in scope.get("allowed_actions", []):
+        lines.append(f"- {a}")
+    lines.append("")
+    lines.append('**Braucht Approval (stoppen, activityLogs-Eintrag mit level="approval_required", betroffenen Step auf status="blocked"):**')
+    for a in scope.get("requires_approval", []):
+        lines.append(f"- {a}")
+    lines.append("")
+    lines.append("**Blockiert (niemals ausführen, auch nicht mit Approval in dieser Session):**")
+    for a in scope.get("blocked_actions", []):
+        lines.append(f"- {a}")
+    lines.append("")
+    return lines
+
+
+def _render_safety_block() -> list[str]:
+    """The "## Harte Safety-Regeln" section — order-independent, identical
+    regardless of scope/step, shared by both prompt builders."""
+    lines: list[str] = []
+    lines.append("## Harte Safety-Regeln (gelten IMMER, unabhängig vom Approval Scope oben)")
+    lines.append("")
+    lines.append("Autonom erlaubt:")
+    for a in SAFETY_AUTONOMOUS_ALLOWED:
+        lines.append(f"- {a}")
+    lines.append("")
+    lines.append("Braucht Approval:")
+    for a in SAFETY_NEEDS_APPROVAL:
+        lines.append(f"- {a}")
+    lines.append("")
+    lines.append("Blockiert — niemals, unter keinen Umständen:")
+    for a in SAFETY_BLOCKED_ALWAYS:
+        lines.append(f"- {a}")
+    lines.append("")
+    return lines
+
+
+def _render_hard_stop_block() -> list[str]:
+    """The "## HARTER STOPP bei Scope-Verletzung" section — shared by both
+    prompt builders, unchanged regardless of whether the model sees the
+    whole ticketplan or just one step."""
+    lines: list[str] = []
+    lines.append("## HARTER STOPP bei Scope-Verletzung")
+    lines.append('Wenn eine Aktion nötig wird, die oben als "Braucht Approval" oder "Blockiert" gelistet ist:')
+    lines.append("1. SOFORT stoppen. Keinen weiteren Code ändern, keine weitere Aktion ausführen.")
+    lines.append('2. Den aktuellen Step auf status="blocked" setzen, blockedReason mit der konkreten Aktion füllen, die den Stopp ausgelöst hat.')
+    lines.append('3. Einen activityLogs-Eintrag mit level="approval_required" hinzufügen, der die Aktion und den Grund benennt.')
+    lines.append('4. Im finalen Ergebnis-JSON finalStatus="blocked" setzen — niemals "review_ready" vortäuschen, um weiterzukommen.')
+    lines.append("Ein blockierter Step ist ein gutes, erwartetes Ergebnis — kein Fehler, den es zu vermeiden gilt.")
+    lines.append("")
+    return lines
+
+
 def build_runner_prompt(order: dict) -> str:
     """Renders a work order (raw snake_case API aggregate) into the
     complete runner prompt text. Adapter-agnostic — every adapter that
@@ -211,49 +272,15 @@ def build_runner_prompt(order: dict) -> str:
                     lines.append(f"- [ ] {c}")
             lines.append("")
 
-    lines.append("## Approval Scope (dieses Work Orders)")
-    lines.append("")
-    lines.append("**Autonom erlaubt (kein Nachfragen nötig):**")
-    for a in scope.get("allowed_actions", []):
-        lines.append(f"- {a}")
-    lines.append("")
-    lines.append('**Braucht Approval (stoppen, activityLogs-Eintrag mit level="approval_required", betroffenen Step auf status="blocked"):**')
-    for a in scope.get("requires_approval", []):
-        lines.append(f"- {a}")
-    lines.append("")
-    lines.append("**Blockiert (niemals ausführen, auch nicht mit Approval in dieser Session):**")
-    for a in scope.get("blocked_actions", []):
-        lines.append(f"- {a}")
-    lines.append("")
+    lines.extend(_render_scope_block(scope))
 
     lines.append("## Agentenrollen (nacheinander durchlaufen, pro Ticketplan-Step)")
     for r in AGENT_ROLES:
         lines.append(f"- {r}")
     lines.append("")
 
-    lines.append("## Harte Safety-Regeln (gelten IMMER, unabhängig vom Approval Scope oben)")
-    lines.append("")
-    lines.append("Autonom erlaubt:")
-    for a in SAFETY_AUTONOMOUS_ALLOWED:
-        lines.append(f"- {a}")
-    lines.append("")
-    lines.append("Braucht Approval:")
-    for a in SAFETY_NEEDS_APPROVAL:
-        lines.append(f"- {a}")
-    lines.append("")
-    lines.append("Blockiert — niemals, unter keinen Umständen:")
-    for a in SAFETY_BLOCKED_ALWAYS:
-        lines.append(f"- {a}")
-    lines.append("")
-
-    lines.append("## HARTER STOPP bei Scope-Verletzung")
-    lines.append('Wenn eine Aktion nötig wird, die oben als "Braucht Approval" oder "Blockiert" gelistet ist:')
-    lines.append("1. SOFORT stoppen. Keinen weiteren Code ändern, keine weitere Aktion ausführen.")
-    lines.append('2. Den aktuellen Step auf status="blocked" setzen, blockedReason mit der konkreten Aktion füllen, die den Stopp ausgelöst hat.')
-    lines.append('3. Einen activityLogs-Eintrag mit level="approval_required" hinzufügen, der die Aktion und den Grund benennt.')
-    lines.append('4. Im finalen Ergebnis-JSON finalStatus="blocked" setzen — niemals "review_ready" vortäuschen, um weiterzukommen.')
-    lines.append("Ein blockierter Step ist ein gutes, erwartetes Ergebnis — kein Fehler, den es zu vermeiden gilt.")
-    lines.append("")
+    lines.extend(_render_safety_block())
+    lines.extend(_render_hard_stop_block())
 
     lines.append("## Reporting-Anforderung")
     lines.append("- Jede Aktion (auch Zwischenschritte) als activityLogs-Eintrag.")
@@ -275,6 +302,131 @@ def build_runner_prompt(order: dict) -> str:
     lines.append(f"Dieser Prompt wurde vom lokalen Runner-Harness (scripts/run_work_order.py) erzeugt und liegt unter tmp/work-order-runs/{order['id']}/prompt.md.")
     lines.append("Speichere das Ergebnis-JSON dort als result.json und importiere es mit:")
     lines.append(f"  python scripts/run_work_order.py {order['id']} --mode import-result")
+
+    return "\n".join(lines)
+
+
+# Deliberately smaller than RESULT_JSON_SCHEMA: a per-step prompt asks for
+# exactly what one step's run can honestly report. finalStatus/reviewPackage
+# are asked for on the WHOLE-order prompt only — asking a single-step call
+# to also judge whether the ENTIRE work order is review-ready would either
+# be meaningless (it hasn't seen the other steps' real outcomes) or invite
+# exactly the kind of premature "review_ready" claim
+# parse_and_validate_result() already guards against on the whole-order
+# path. The harness (run_work_order.py's _run_step_by_step()) synthesizes
+# finalStatus/reviewPackage itself once every step has actually run.
+STEP_RESULT_JSON_SCHEMA = """{
+  "workOrderId": "string — exactly the id from '## Work Order Kontext' below",
+  "steps": [
+    {
+      "id": "string — exactly the id of THIS step from '## Dieser Step' below, exactly one entry",
+      "status": "completed | blocked | failed | skipped",
+      "outputSummary": "string | null",
+      "blockedReason": "string | null — required if status is 'blocked'"
+    }
+  ],
+  "activityLogs": [
+    {
+      "level": "info | warning | error | approval_required",
+      "eventType": "string — short machine-readable label, e.g. \\"run_completed\\"",
+      "message": "string",
+      "agentRunId": "string | null"
+    }
+  ],
+  "artifacts": [
+    {
+      "type": "plan | diff | test_output | review | summary | screenshot | prompt",
+      "title": "string",
+      "content": "string | null"
+    }
+  ]
+}"""
+
+
+def build_step_prompt(order: dict, step: dict, prior_steps: list[dict]) -> str:
+    """Single-step sibling of build_runner_prompt() — used by the per-step
+    execution path (run_work_order.py's _run_step_by_step(), adapters'
+    execute_step()). Renders the SAME work-order/scope/safety context as
+    the whole-order prompt (via the shared _render_*_block() helpers above,
+    so the two never drift on what's allowed/blocked), but only THIS step's
+    detail plus a compact summary of prior steps already run — never the
+    full remaining ticketplan, and never prior steps' full transcripts,
+    only their outputSummary. This is the deliberate cost control: prompt
+    size per call grows with the number of PRIOR STEPS' short summaries,
+    not with total conversation history.
+
+    `prior_steps`: the subset of order['steps'] that already ran, each with
+    at least id/title/status/outputSummary populated by the harness from
+    what it already wrote back to the API — the model is never asked to
+    re-derive or re-state what earlier steps did.
+    """
+    scope = order.get("approval_scope") or {}
+    lines: list[str] = []
+
+    lines.append(f"# Work Order: {order['title']} — Step: {step['title']}")
+    lines.append("")
+    lines.append("Du bist ein autonomer Coding-Agent (Judge + Executor-Team) mit einem klar begrenzten Arbeitsauftrag.")
+    lines.append("Halte dich strikt an den Approval Scope unten.")
+    lines.append("Bearbeite AUSSCHLIESSLICH den unten beschriebenen Step. Nicht vorgreifen, nicht andere Steps anfassen.")
+    lines.append("")
+
+    lines.append("## Work Order Kontext")
+    lines.append(f"workOrderId: {order['id']}")
+    lines.append(f"Ziel (gesamtes Work Order): {order['goal']}")
+    lines.append(f"Repo: {order['repo']}")
+
+    target_repo_path = order.get("target_repo_path")
+    if target_repo_path:
+        lines.append("Control Plane Repo: CommandPilot (hier läuft scripts/run_work_order.py, hier läuft auch der Result-Import)")
+        target_line = f"Target Repo: {order.get('target_repo_name') or order['repo']}"
+        target_line += f" (Pfad-Hinweis, rein informativ: {target_repo_path})"
+        lines.append(target_line)
+        lines.append("")
+        lines.append("WICHTIG — Cross-Repo-Kontext, unbedingt beachten:")
+        lines.append("- You are working in the target repository.")
+        lines.append("- Do not expect CommandPilot scripts to exist here.")
+    else:
+        lines.append("Control Plane Repo: CommandPilot (kein separates Target Repo — Control Plane und Execution Context sind dasselbe Repo)")
+
+    if scope.get("allowed_paths"):
+        lines.append(f"Erlaubte Pfade: {', '.join(scope['allowed_paths'])}")
+    if scope.get("blocked_paths"):
+        lines.append(f"Gesperrte Pfade (niemals anfassen): {', '.join(scope['blocked_paths'])}")
+    lines.append("")
+
+    if prior_steps:
+        lines.append("## Bereits erledigte Steps (Kontext, nicht erneut bearbeiten)")
+        for p in prior_steps:
+            summary = p.get("outputSummary") or p.get("output_summary") or "(kein outputSummary)"
+            lines.append(f"- {p['title']} (`id: {p['id']}`, Status: {p['status']}): {summary}")
+        lines.append("")
+
+    lines.append("## Dieser Step")
+    lines.append(f"### {step['title']}  `id: {step['id']}`  (Rolle: {step['assigned_role']})")
+    if step.get("description"):
+        lines.append(step["description"])
+    crit = step.get("acceptance_criteria") or []
+    if crit:
+        lines.append("Akzeptanzkriterien für diesen Step:")
+        for c in crit:
+            lines.append(f"- [ ] {c}")
+    lines.append("")
+
+    lines.extend(_render_scope_block(scope))
+    lines.extend(_render_safety_block())
+    lines.extend(_render_hard_stop_block())
+
+    lines.append("## Reporting-Anforderung")
+    lines.append("- Jede Aktion (auch Zwischenschritte) als activityLogs-Eintrag.")
+    lines.append(f"- Der Step im steps-Array des Ergebnis-JSON trägt exakt die id `{step['id']}` — genau ein Eintrag.")
+    lines.append('- Am Ende IMMER das komplette Ergebnis-JSON ausgeben — auch bei "blocked" oder "failed".')
+    lines.append("- Keine Secrets lesen, ausgeben oder ins Log schreiben — auch nicht auszugsweise oder maskiert.")
+    lines.append("")
+
+    lines.append("## Ergebnis-JSON (Pflicht als letzte Ausgabe der Session, NUR dieser eine Step)")
+    lines.append("```json")
+    lines.append(STEP_RESULT_JSON_SCHEMA)
+    lines.append("```")
 
     return "\n".join(lines)
 
@@ -398,18 +550,73 @@ def parse_and_validate_result(raw_text: str, source_desc: str) -> dict:
     return data
 
 
-def validate_result_against_order(result: dict, order: dict, source_desc: str) -> None:
+# A per-step result never carries finalStatus/reviewPackage (see
+# STEP_RESULT_JSON_SCHEMA's docstring for why) — a separate required-key set
+# from REQUIRED_RESULT_KEYS, not a subset check on it.
+REQUIRED_STEP_RESULT_KEYS = ["workOrderId", "steps", "activityLogs", "artifacts"]
+
+
+def parse_and_validate_step_result(raw_text: str, source_desc: str) -> dict:
+    """Sibling of parse_and_validate_result() for the per-step execution
+    path (run_work_order.py's _run_step_by_step()) — deliberately a
+    separate function rather than a parameterized version of
+    parse_and_validate_result(): the two validate different required-key
+    sets (no finalStatus/reviewPackage here) and different invariants (a
+    step result must contain EXACTLY one step, not "at least the real
+    ones"). Keeping them separate means neither function's error messages
+    have to hedge about which calling context produced them."""
+    try:
+        data = json.loads(raw_text)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid JSON in {source_desc} at line {exc.lineno}, column {exc.colno}: {exc.msg}") from exc
+
+    if not isinstance(data, dict):
+        raise ValueError(f"{source_desc} must contain a JSON object at the top level, got {type(data).__name__}")
+
+    missing = [k for k in REQUIRED_STEP_RESULT_KEYS if k not in data]
+    if missing:
+        raise ValueError(f"{source_desc} is missing required field(s): {', '.join(missing)}")
+
+    if not isinstance(data["steps"], list) or len(data["steps"]) != 1:
+        raise ValueError(
+            f"{source_desc}: 'steps' must be a list with exactly one entry for a per-step result, "
+            f"got {data['steps'] if isinstance(data['steps'], list) else type(data['steps']).__name__}"
+        )
+
+    step = data["steps"][0]
+    if not isinstance(step, dict):
+        raise ValueError(f"{source_desc}: steps[0] must be an object, got {type(step).__name__}")
+    status = step.get("status")
+    if status not in VALID_STEP_STATUSES:
+        raise ValueError(f"{source_desc}: steps[0].status must be one of {'|'.join(VALID_STEP_STATUSES)}, got {status!r}")
+    if status == "blocked" and not step.get("blockedReason"):
+        raise ValueError(f"{source_desc}: steps[0] has status='blocked' but no blockedReason")
+
+    return data
+
+
+def validate_result_against_order(
+    result: dict, order: dict, source_desc: str, require_all_steps: bool = True
+) -> None:
     """Cross-checks an already shape-validated result (see
-    parse_and_validate_result(), which must run first) against the real
-    work order it claims to belong to. Only the checks that genuinely need
-    `order` live here: whether step ids are real, and — as of
-    OP-Import-Integrity-001 — whether every real step got an update at
-    all. Best-effort by design (see import_result()'s caller): if the live
-    work order can't be fetched, this whole function is skipped and only
-    parse_and_validate_result()'s order-independent checks apply. Raises
-    ValueError naming the exact offending field so a bad result aborts
-    before any API call is made, instead of surfacing as a partial import
-    failure."""
+    parse_and_validate_result()/parse_and_validate_step_result(), one of
+    which must run first) against the real work order it claims to belong
+    to. Only the checks that genuinely need `order` live here: whether step
+    ids are real, and — as of OP-Import-Integrity-001 — whether every real
+    step got an update at all. Best-effort by design (see import_result()'s
+    caller): if the live work order can't be fetched, this whole function
+    is skipped and only the shape-validator's order-independent checks
+    apply. Raises ValueError naming the exact offending field so a bad
+    result aborts before any API call is made, instead of surfacing as a
+    partial import failure.
+
+    `require_all_steps`: True (default) preserves the original
+    whole-order-result invariant unchanged for every existing caller. The
+    per-step execution path (run_work_order.py's _run_step_by_step()) is
+    the only caller that passes False — a single step's result is
+    correctly missing updates for every OTHER step in the order; that's
+    not a bug there the way it would be for a claimed-complete whole-order
+    result."""
     order_steps = order.get("steps") or []
     valid_step_ids = {s["id"] for s in order_steps}
     result_step_ids: set[str] = set()
@@ -423,6 +630,9 @@ def validate_result_against_order(result: dict, order: dict, source_desc: str) -
             )
         if step_id:
             result_step_ids.add(step_id)
+
+    if not require_all_steps:
+        return
 
     missing_step_ids = valid_step_ids - result_step_ids
     if missing_step_ids:
@@ -487,6 +697,14 @@ class AdapterInfo:
     # docs/runner-adapter-contract.md.
     consumes_paid_credits: bool = False
     command_template: str | None = None
+    # Can this adapter's execute_step() run ONE ticketplan step per call
+    # (see build_step_prompt())? False for every adapter until it actually
+    # implements execute_step() — the base class's default raises
+    # NotImplementedError, same pattern as supports_auto_execute vs.
+    # execute(). run_work_order.py's --per-step flag refuses to start
+    # unless this is True, rather than silently falling back to the
+    # whole-order path.
+    supports_step_execution: bool = False
 
 
 @dataclass
@@ -506,6 +724,22 @@ class ExecuteOutcome:
     # True mid-run (user hit Stop) rather than a natural failure/timeout/
     # crash. run_work_order.py uses this to write a "Vom Nutzer
     # unterbrochen" blocked_reason instead of a generic failure message.
+    interrupted: bool = False
+
+
+@dataclass
+class StepExecuteOutcome:
+    """Sibling of ExecuteOutcome for execute_step() — same shape, except
+    `step_result` holds the single-step result dict (validated by
+    parse_and_validate_step_result()) instead of a whole-order `result`.
+    Kept as a separate dataclass rather than reusing ExecuteOutcome with a
+    differently-typed field so a caller can never accidentally treat a
+    per-step outcome as a whole-order one (or vice versa) — the type
+    itself is the guard, not a runtime check."""
+    exit_code: int
+    output_log_path: Path
+    step_result: dict | None
+    cost_usd: float | None = None
     interrupted: bool = False
 
 
@@ -623,6 +857,33 @@ class RunnerAdapter(ABC):
         raise NotImplementedError(
             f"Adapter '{self.info.name}' does not support native --mode execute "
             f"(supports_auto_execute={self.info.supports_auto_execute!r})."
+        )
+
+    def execute_step(
+        self,
+        order: dict,
+        step: dict,
+        prior_steps: list[dict],
+        session_path: Path,
+        max_budget_usd: float | None = None,
+        progress: ProgressReporter | None = None,
+    ) -> StepExecuteOutcome:
+        """Adapter-native execution of a SINGLE ticketplan step — only
+        meaningful if info.supports_step_execution. Base implementation
+        refuses; adapters that support it must override. Sibling of
+        execute() at step granularity: run_work_order.py's --per-step path
+        (_run_step_by_step()) calls this once per step, in order, passing
+        each already-completed step's result forward as `prior_steps` —
+        see build_step_prompt() for exactly what context that carries.
+
+        `max_budget_usd`/`progress`: same contract as execute() — the
+        harness has already enforced the budget gate before this is ever
+        called, and `progress` is the same ProgressReporter (report/stop),
+        just checked once per step invocation instead of once per whole
+        order."""
+        raise NotImplementedError(
+            f"Adapter '{self.info.name}' does not support --per-step execution "
+            f"(supports_step_execution={self.info.supports_step_execution!r})."
         )
 
     @abstractmethod
