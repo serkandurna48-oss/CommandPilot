@@ -645,6 +645,22 @@ const dict: Record<string, Record<Lang, string>> = {
     de: "Pflicht: claude_code execute startet nicht ohne explizites Budget — entweder --max-budget-usd (oben, Wert anpassen) oder die Umgebungsvariable COMMANDPILOT_CLAUDE_MAX_BUDGET_USD. Es gibt nie einen stillen Standardwert. Prompt-file / manuelles Einfügen oben kosten nichts von CommandPilot-Seite.",
   },
 
+  // Per-step execution toggle + sandbox adapter (applies to both 4b/4c below)
+  "operator.runner.per_step_toggle_label": { en: "Step-by-step execution (--per-step)", de: "Step-für-Step-Ausführung (--per-step)" },
+  "operator.runner.per_step_toggle_hint": {
+    en: "One call per ticket-plan step instead of one call for the whole order — each step's status updates live as it finishes, instead of only at the very end. Costs more (N calls instead of 1). Applies to both commands below.",
+    de: "Ein Aufruf pro Ticketplan-Step statt ein Aufruf für die ganze Work Order — jeder Step-Status aktualisiert sich live, sobald er fertig ist, statt erst ganz am Ende. Kostet mehr (N Aufrufe statt 1). Gilt für beide Befehle unten.",
+  },
+  "operator.runner.step4_sandbox_title": { en: "4c. Or: fully automatic in an isolated Docker sandbox", de: "4c. Oder: vollautomatisch in einer isolierten Docker-Sandbox" },
+  "operator.runner.step4_sandbox_hint": {
+    en: "Runs unattended inside a disposable container + disposable repo clone — your real working tree is never touched. Changes land as a diff artifact on this work order for you to review, never applied automatically.",
+    de: "Läuft unbeaufsichtigt in einem Wegwerf-Container + einem Wegwerf-Repo-Klon — dein echtes Arbeitsverzeichnis wird nie angefasst. Änderungen landen als Diff-Artefact an dieser Work Order zum Prüfen, werden nie automatisch angewendet.",
+  },
+  "operator.runner.sandbox_docker_required_hint": {
+    en: "Requires Docker (one-time: docker build -t commandpilot-sandbox:latest scripts/sandbox).",
+    de: "Braucht Docker (einmalig: docker build -t commandpilot-sandbox:latest scripts/sandbox).",
+  },
+
   // Runner phase indicator + current run folder (OP-Workflow-UI-001)
   "operator.runner.run_folder_label": { en: "Current run folder", de: "Aktueller Run-Ordner" },
   "operator.runner.phase.not_started": { en: "Not started yet", de: "Noch nicht gestartet" },

@@ -6,7 +6,7 @@ import { useT } from "@/lib/i18n";
 import type { AgentRun, ReviewPackage, WorkOrder } from "@/types";
 import { isExternalRepoWorkOrder } from "@/lib/workOrderMapper";
 import { cn } from "@/lib/utils";
-import { Copy, Check, AlertTriangle, Coins, ShieldCheck, FolderGit2, FolderOpen } from "lucide-react";
+import { Copy, Check, AlertTriangle, Coins, ShieldCheck, FolderGit2, FolderOpen, Container } from "lucide-react";
 
 // Which of these five mutually-exclusive phases we're in — never more than
 // one at a time (OP-Workflow-UI-001: "keine widersprüchlichen Zustände").
@@ -151,15 +151,22 @@ export function LocalRunnerPanel({
   // REPO_ROOT / "tmp" / "work-order-runs" / work_order_id. Pure display text,
   // never read from the filesystem here (this runs in the browser).
   const runFolder = `tmp/work-order-runs/${order.id}/`;
+  // Applies to both the claude_code and claude_code_sandboxed commands below
+  // — both adapters implement execute_step()/supports_step_execution, so the
+  // flag is valid for either. Pure display toggle, no backend call.
+  const [perStep, setPerStep] = useState(false);
+  const perStepFlag = perStep ? " --per-step" : "";
 
   const setTokenCmd = `$env:COMMANDPILOT_API_TOKEN = "paste-your-token-here"`;
   const startCmd = `python scripts/run_work_order.py ${order.id} --mode prompt-file --api-url ${apiUrl} --token $env:COMMANDPILOT_API_TOKEN`;
   // --max-budget-usd is REQUIRED here, not optional decoration: run_work_order.py
-  // hard-refuses `--mode execute --adapter claude_code` without an explicit
-  // budget (flag or COMMANDPILOT_CLAUDE_MAX_BUDGET_USD) — no default is ever
-  // assumed. 0.20 is shown as a starting-point suggestion to edit, not a
-  // silently-safe default baked into the script itself.
-  const executeClaudeCmd = `python scripts/run_work_order.py ${order.id} --mode execute --adapter claude_code --max-budget-usd 0.20 --api-url ${apiUrl} --token $env:COMMANDPILOT_API_TOKEN`;
+  // hard-refuses `--mode execute` with a credit-consuming adapter without an
+  // explicit budget (flag or COMMANDPILOT_CLAUDE_MAX_BUDGET_USD) — no default
+  // is ever assumed. 0.20 is shown as a starting-point suggestion to edit,
+  // not a silently-safe default baked into the script itself. Applies to
+  // both claude_code and claude_code_sandboxed — same budget gate either way.
+  const executeClaudeCmd = `python scripts/run_work_order.py ${order.id} --mode execute --adapter claude_code --max-budget-usd 0.20 --api-url ${apiUrl} --token $env:COMMANDPILOT_API_TOKEN${perStepFlag}`;
+  const executeSandboxCmd = `python scripts/run_work_order.py ${order.id} --mode execute --adapter claude_code_sandboxed --max-budget-usd 0.20 --api-url ${apiUrl} --token $env:COMMANDPILOT_API_TOKEN${perStepFlag}`;
   const importCmd = `python scripts/run_work_order.py ${order.id} --mode import-result --api-url ${apiUrl} --token $env:COMMANDPILOT_API_TOKEN`;
 
   return (
@@ -217,6 +224,20 @@ export function LocalRunnerPanel({
         hint={t("operator.runner.step4_manual_hint")}
         usesCredits={false}
       />
+
+      <label className="flex items-start gap-2 text-xs cursor-pointer">
+        <input
+          type="checkbox"
+          checked={perStep}
+          onChange={(e) => setPerStep(e.target.checked)}
+          className="mt-0.5 accent-brand-600"
+        />
+        <span>
+          <span className="text-[var(--text-secondary)] font-medium">{t("operator.runner.per_step_toggle_label")}</span>
+          <span className="block text-[var(--text-tertiary)]">{t("operator.runner.per_step_toggle_hint")}</span>
+        </span>
+      </label>
+
       <CommandBlock
         label={t("operator.runner.step4_auto_title")}
         hint={t("operator.runner.step4_auto_hint")}
@@ -226,6 +247,17 @@ export function LocalRunnerPanel({
       <div className="rounded-lg bg-status-warning/10 border border-status-warning/30 px-3 py-2 flex items-start gap-2">
         <Coins className="h-3.5 w-3.5 text-status-warning/90 shrink-0 mt-0.5" />
         <p className="text-status-warning/90 text-xs">{t("operator.runner.budget_required_hint")}</p>
+      </div>
+
+      <CommandBlock
+        label={t("operator.runner.step4_sandbox_title")}
+        hint={t("operator.runner.step4_sandbox_hint")}
+        command={executeSandboxCmd}
+        usesCredits={true}
+      />
+      <div className="rounded-lg bg-status-info/10 border border-status-info/30 px-3 py-2 flex items-start gap-2">
+        <Container className="h-3.5 w-3.5 text-status-info/90 shrink-0 mt-0.5" />
+        <p className="text-status-info/90 text-xs">{t("operator.runner.sandbox_docker_required_hint")}</p>
       </div>
 
       <CommandBlock label={t("operator.runner.step5_title")} command={importCmd} />

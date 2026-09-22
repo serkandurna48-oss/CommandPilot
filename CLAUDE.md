@@ -503,7 +503,12 @@ sind zum Zeitpunkt dieses CLAUDE.md-Updates noch nicht bearbeitet.
   `scripts/sandbox/Dockerfile` baut lokal erfolgreich und wurde real
   hochgefahren (Node v20.20.2, Python 3.11.2, git 2.39.5, `claude` CLI
   2.1.197 — alle vier Versionen live per `docker run` bestätigt, nicht nur
-  build-erfolgreich).
+  build-erfolgreich). **In der UI verdrahtet (`frontend/components/operator/
+  LocalRunnerPanel.tsx`)**: ein "Step-für-Step-Ausführung"-Toggle (hängt
+  `--per-step` an beide Befehle) und ein eigener Command-Block "4c" für
+  `claude_code_sandboxed` (Docker-Hinweis-Box) — vorher nur per CLI-Flag
+  erreichbar, jetzt aus dem Operator-UI kopierbar, exakt wie die
+  bestehenden Runner-Befehle.
   **Weiterhin offen (braucht echtes Geld/Token, nicht in diesem Durchgang
   gemacht)**: ein echter `--per-step`-Lauf gegen die reale `claude`-CLI
   (braucht `COMMANDPILOT_API_TOKEN`), und ein echter `claude_code_sandboxed`-
