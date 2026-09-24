@@ -478,6 +478,7 @@ Kein automatisches Löschen der anderen ohne explizite Anweisung.
 | `ai-usage-and-cost-audit.md` | Audit der AI-Kosten/-Nutzung |
 | `manual-e2e-checklist.md` | Manuelle Browser-E2E-Checkliste |
 | `saas-roadmap.md` (23.09.2026) | Aktive SaaS-Priorisierung (Stufen 1–4), ersetzt die alte v0.2/v0.3-Roadmap als Referenz |
+| `five-day-acceptance-checklist.md` (24.09.2026) | Checkliste für den 5-Tage-Nutzungstest von CommandPilot als tägliches Orientierungswerkzeug |
 | `background-operator-spike.md` | **Superseded** — nicht als aktuelles Design behandeln |
 
 `docs/aufträge/` (eigener Unterordner, nicht in der Tabelle oben): Auftragsdokumente
