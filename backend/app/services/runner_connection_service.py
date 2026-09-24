@@ -109,10 +109,21 @@ def _find_pending_request(user_code: str) -> dict | None:
 
 def approve_pairing(user_id: str, workspace_id: str | None, user_code: str, label: str | None) -> dict | None:
     """Step 2 — called from an authenticated browser session only (the
-    router depends on get_current_user for this endpoint). Binds the
-    already-issued token to this real account. Returns None if user_code is
-    unknown/already resolved/expired, so the router can 404 rather than
-    imply something was approved when nothing was."""
+    router depends on get_current_browser_user for this endpoint — a runner
+    token is explicitly rejected there, see that dependency's docstring).
+    Binds the already-issued token to this real account. Returns None if
+    user_code is unknown/already resolved/expired, so the router can 404
+    rather than imply something was approved when nothing was.
+
+    Two concurrent approvals of the same code both pass the pending check
+    above before either has written anything — _find_pending_request alone
+    is not enough to pick a single winner. The actual binding below is an
+    atomic compare-and-set: `WHERE id = ... AND user_id IS NULL` only
+    matches (and only returns a row) for whichever caller's UPDATE commits
+    first; Postgres's row-level locking serializes the two, so the second
+    one's WHERE re-evaluates against the now-non-NULL user_id and matches
+    zero rows. That caller gets None back here, same as an unknown code.
+    """
     db = get_db()
     pending = _find_pending_request(user_code)
     if not pending:
@@ -125,11 +136,14 @@ def approve_pairing(user_id: str, workspace_id: str | None, user_code: str, labe
         db.table("runner_connections")
         .update(update)
         .eq("id", pending["connection_id"])
+        .is_("user_id", "null")
         .execute()
         .data
     )
+    if not connection:
+        return None
     db.table("runner_pairing_requests").update({"status": "approved"}).eq("id", pending["id"]).execute()
-    return connection[0] if connection else None
+    return connection[0]
 
 
 def poll_pairing_status(user_code: str) -> str:

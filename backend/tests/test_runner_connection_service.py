@@ -206,6 +206,25 @@ class PairingFlowTests(unittest.TestCase):
             [r for r in self.fake_db.table("runner_connections").rows if r["id"] == connection["id"]][0]["revoked_at"]
         )
 
+    def test_concurrent_approvals_of_the_same_code_have_exactly_one_winner(self):
+        # Simulates two requests racing the same user_code: both read the
+        # SAME "still pending" snapshot before either has written anything
+        # (the actual race — a plain sequential re-call wouldn't reproduce
+        # it, since the first call's own write already flips status away
+        # from pending before a second call could look it up again).
+        # The atomic `WHERE user_id IS NULL` guard on the real write is what
+        # must pick exactly one winner.
+        result = svc.create_pairing_request(None)
+        pending_snapshot = svc._find_pending_request(result["user_code"])
+        with patch.object(svc, "_find_pending_request", return_value=pending_snapshot):
+            first = svc.approve_pairing("user-1", "ws-1", result["user_code"], None)
+            second = svc.approve_pairing("user-2", "ws-2", result["user_code"], None)
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+        connection = self.fake_db.table("runner_connections").rows[0]
+        self.assertEqual(connection["user_id"], "user-1")
+
 
 class GetCurrentUserRunnerTokenTests(unittest.TestCase):
     """app.auth.get_current_user() must accept an approved runner token
