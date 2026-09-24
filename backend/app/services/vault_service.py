@@ -193,11 +193,27 @@ def _cap_to_budget(matches: list[VaultMatch], token_budget: int) -> list[VaultMa
     return capped
 
 
+_MAX_INDEX_BUDGET_SHARE = 0.5
+
+
 def get_base_context(token_budget: int, vault_path: str | None = None) -> list[VaultMatch]:
     """
-    00-Index.md in full, then one summary line per entity note (title/first
-    line + type/status/priority/updated), capped to token_budget.
+    00-Index.md (truncated to at most half of token_budget — see below),
+    then one summary line per entity note (title/first line + type/status/
+    priority/updated), capped to token_budget.
     Missing/unreadable vault → []. Never raises.
+
+    00-Index.md's own text is pre-truncated to at most
+    _MAX_INDEX_BUDGET_SHARE of the budget BEFORE the combined list goes
+    through _cap_to_budget. Found live 24.09.2026
+    (test_case_06_offene_frage_faellt_auf_basiskontext_zurueck): the real
+    vault's index has grown to ~5.9KB, already bigger than the entire
+    default base_token_budget (1200 tokens = 4800 chars) — _cap_to_budget
+    alone would truncate the index to fill 100% of the budget and never
+    even look at a single entity note, silently defeating this function's
+    whole purpose ("map of the user's projects/goals/people", per the
+    module docstring) as the index keeps growing. Reserving half the
+    budget guarantees room for entity notes regardless of index size.
     """
     root = _vault_root(vault_path)
     if root is None:
@@ -210,6 +226,9 @@ def get_base_context(token_budget: int, vault_path: str | None = None) -> list[V
         try:
             text = index_path.read_text(encoding="utf-8").strip()
             if text:
+                max_index_chars = int(max(token_budget, 0) * _CHARS_PER_TOKEN * _MAX_INDEX_BUDGET_SHARE)
+                if len(text) > max_index_chars:
+                    text = text[:max_index_chars] + "…"
                 matches.append(VaultMatch(text, _BASE_INDEX_FILE, "", score=0))
         except (OSError, UnicodeDecodeError) as exc:
             logger.warning("vault_service: could not read %s | %s", index_path, exc)

@@ -295,6 +295,28 @@ def test_base_budget_capped_to_total_budget_codex_repro(tmp_path):
     assert len(block) <= max_expected
 
 
+def test_a_large_index_does_not_crowd_out_every_entity_note(tmp_path):
+    # Live reproduction, 24.09.2026 (test_case_06 in test_jarvis_quality.py):
+    # the real vault's 00-Index.md has grown to ~5.9KB, bigger than the
+    # entire default base_token_budget (1200 tokens = 4800 chars). Before
+    # this fix, _cap_to_budget alone truncated the oversized index to fill
+    # 100% of the budget and never got to a single entity note — an
+    # open-ended query's base context silently lost the "map of the vault"
+    # this function exists to guarantee, purely because the index grew.
+    (tmp_path / "Projekte").mkdir()
+    (tmp_path / "Menschen").mkdir()
+    (tmp_path / "00-Index.md").write_text("Index " * 1000, encoding="utf-8")  # ~6,000 chars
+    (tmp_path / "Projekte" / "CommandPilot.md").write_text(
+        "---\ntype: project\nstatus: active\n---\n\n# CommandPilot\n\nPersönliches Betriebssystem.\n",
+        encoding="utf-8",
+    )
+
+    matches = vault_service.get_base_context(1200, vault_path=str(tmp_path))  # default base_token_budget
+    files = {m.source_file for m in matches}
+    assert "00-Index.md" in files
+    assert "Projekte/CommandPilot.md" in files
+
+
 def test_formatted_header_counts_against_budget(tmp_path):
     # A match whose source label is long relative to its budget must not let
     # the header push the total formatted output over budget — the header
