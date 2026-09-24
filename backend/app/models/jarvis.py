@@ -90,19 +90,19 @@ class JarvisChatAI(BaseModel):
     suggested_actions: list[SuggestedAction] = []
 
     @model_validator(mode="after")
-    def _enforce_two_or_none(self):
-        # The system prompt instructs the model to return exactly two
-        # suggestions or none — a lone stray suggestion breaks that
-        # invariant (a UI showing "confirm this one goal-sized proposal,
-        # alone" is not the reviewed pair the product calls for) and must
-        # never reach the caller. Dropping to [] rather than raising: a
-        # malformed suggestion set should degrade to "no proposals this
-        # turn," not fail the whole chat reply.
-        if len(self.suggested_actions) == 1:
+    def _cap_at_two(self):
+        # The system prompt asks for one or two suggestions, never more.
+        # Previously a lone suggestion was dropped to enforce a strict
+        # "two or none" invariant — but GPT-4o repeatedly returned exactly
+        # one on real messages, so that invariant just meant "the user
+        # never sees a proposal" more often than not. A single reviewed
+        # proposal is still a reviewed proposal; only cap on the >2 side,
+        # which would exceed what the UI is built to show.
+        if len(self.suggested_actions) > 2:
             logger.warning(
-                "Jarvis returned exactly one suggested_action — dropping to enforce the two-or-none invariant"
+                "Jarvis returned %d suggested_actions — capping at 2", len(self.suggested_actions)
             )
-            self.suggested_actions = []
+            self.suggested_actions = self.suggested_actions[:2]
         return self
 
 

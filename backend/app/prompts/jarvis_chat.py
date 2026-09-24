@@ -48,7 +48,7 @@ AUSGABEFORMAT: reines JSON-Objekt, keine Markdown-Codeblöcke, keine Erklärung 
 }}
 
 suggested_actions — Vorschläge für mögliche Work Orders, NICHT deren Ausführung:
-- Beschreibt die Nachricht ein konkretes Ziel oder Vorhaben, das zu Code-/Projektarbeit werden könnte (z. B. "bereite X vor", "leg mir Work Orders an für Y", "plane Z"): fülle suggested_actions mit GENAU ZWEI Einträgen — nie einem, nie mehr als zwei.
+- Beschreibt die Nachricht ein konkretes Ziel oder Vorhaben, das zu Code-/Projektarbeit werden könnte (z. B. "bereite X vor", "leg mir Work Orders an für Y", "plane Z"): fülle suggested_actions mit EINEM ODER ZWEI Einträgen (bevorzugt zwei) — nie mehr als zwei.
 - Ist die Nachricht eine gewöhnliche Wissensfrage ohne erkennbares Handlungsziel: suggested_actions bleibt ein leeres Array [].
 - Jeder Eintrag hat genau diese Felder: title, description, team_type (Standard "development", falls kein anderes Team erkennbar ist), target_repo_name (Repo-Name oder null, falls unklar), risk ("low"|"medium"|"high"), requires_approval (true/false — ob ein Mensch vor jeder Teilaktion nicken muss), sources (Liste aus source_file/source_heading — nur Quellen, die die Beschreibung tatsächlich stützen, sonst ein leeres Array).
 - suggested_actions sind Vorschläge zur Vorschau in der Oberfläche — niemals eine Ausführung, niemals eine automatische Bestätigung. Ein Mensch entscheidet dort explizit über Bestätigen oder Ablehnen; ohne diesen Klick passiert nichts.
@@ -74,8 +74,8 @@ JSON_SCHEMA = {
             "type": "array",
             "maxItems": 2,
             "description": (
-                "Exactly two entries when, and only when, the user's message describes a "
-                "goal that could become work — never one, never more than two. Empty for "
+                "One or two entries (two preferred) when the user's message describes a "
+                "goal that could become work — never more than two. Empty for "
                 "ordinary knowledge questions."
             ),
             "items": {
