@@ -14,11 +14,14 @@ Run:
 from __future__ import annotations
 
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_ROOT))
 
+from app.prompts import jarvis_chat  # noqa: E402
 from app.prompts.jarvis_chat import SYSTEM_PROMPT, build_chat_prompt, build_system_prompt  # noqa: E402
 
 
@@ -77,6 +80,45 @@ def test_nonempty_context_block_is_included_verbatim():
     prompt = build_chat_prompt("Was ist der Status von CommandPilot?", [], context)
     assert context in prompt
     assert "leer" not in prompt.split("SECOND-BRAIN-KONTEXT:")[1].split("\n\n")[0]
+
+
+def test_date_line_advances_across_the_utc_midnight_boundary():
+    # The one real risk in "just call datetime.now(timezone.utc)" is a caller
+    # someday caching the date across a request boundary, or a future
+    # timezone change reintroducing an off-by-one. Freeze time on both sides
+    # of UTC midnight and assert the date line actually tracks it — this
+    # would fail if HEUTIGES DATUM were ever computed once and reused.
+    before_midnight = datetime(2026, 9, 23, 23, 59, 59, tzinfo=timezone.utc)
+    after_midnight = datetime(2026, 9, 24, 0, 0, 1, tzinfo=timezone.utc)
+
+    class _FrozenDatetime(datetime):
+        _now = before_midnight
+
+        @classmethod
+        def now(cls, tz=None):
+            return cls._now
+
+    with patch.object(jarvis_chat, "datetime", _FrozenDatetime):
+        _FrozenDatetime._now = before_midnight
+        prompt_before = build_chat_prompt("Was steht an?", [], "")
+        _FrozenDatetime._now = after_midnight
+        prompt_after = build_chat_prompt("Was steht an?", [], "")
+
+    assert "HEUTIGES DATUM: 2026-09-23 (Mittwoch)" in prompt_before
+    assert "HEUTIGES DATUM: 2026-09-24 (Donnerstag)" in prompt_after
+
+
+def test_prompt_grounds_the_model_in_todays_date():
+    # Found 23.09.2026 live in the browser: Jarvis said "heute" about a
+    # calendar event that was actually the next day, because nothing in this
+    # prompt ever told the model what "today" is (unlike daily_plan.py's
+    # build_user_prompt(), which already includes checkin['checkin_date']).
+    # Calendar/Notion context arrives as absolute ISO timestamps — without
+    # this anchor the model cannot correctly reason about "heute"/"morgen".
+    prompt = build_chat_prompt("Was steht heute an?", [], "")
+    today = datetime.now(timezone.utc).date().isoformat()
+    assert f"HEUTIGES DATUM: {today}" in prompt
+    assert prompt.index("HEUTIGES DATUM") < prompt.index("SECOND-BRAIN-KONTEXT")
 
 
 def test_history_is_rendered_in_order():

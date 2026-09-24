@@ -8,6 +8,10 @@ Phase 3). See app/services/ai_service.py's generate_chat_reply() and
 app/models/jarvis.py's JarvisChatAI for where JSON_SCHEMA is used and parsed.
 """
 
+from datetime import datetime, timezone
+
+_DE_WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
+
 
 def build_system_prompt(language: str = "de") -> str:
     """
@@ -110,16 +114,37 @@ JSON_SCHEMA = {
 
 def build_chat_prompt(message: str, history: list[dict], context_block: str, language: str = "de") -> str:
     """
-    Build the user-turn prompt: second-brain context, prior turns, current
-    question. context_block is a pre-formatted, pre-budgeted block from
-    vault_service (see get_context_for_query) — empty string when the vault
-    is unavailable or nothing matched, in which case the model is instructed
-    to say so rather than invent an answer. language mirrors
+    Build the user-turn prompt: today's date, second-brain context, prior
+    turns, current question. context_block is a pre-formatted, pre-budgeted
+    block from vault_service (see get_context_for_query) — empty string when
+    the vault is unavailable or nothing matched, in which case the model is
+    instructed to say so rather than invent an answer. language mirrors
     build_system_prompt()'s contract — the trailing reply-language
     instruction is repeated here (same reinforcement pattern as
     daily_plan.py's lang_instruction) since it's the last thing the model
     reads before generating.
+
+    The leading HEUTIGES DATUM line (found missing 23.09.2026, live in the
+    browser — Jarvis said "heute" about a calendar event that was actually
+    tomorrow) is the model's only anchor for "heute"/"morgen"/"diese Woche":
+    calendar_service/notion_tasks_service events and due dates are absolute
+    ISO timestamps, and without this line the model has no way to know what
+    "today" even is. daily_plan.py's build_user_prompt() already includes
+    checkin['checkin_date'] for the same reason — this brings jarvis_chat.py
+    to parity. UTC, not localized — see the inline comment above date_line
+    for why.
     """
+    # UTC, not a local Europe/Berlin zoneinfo lookup — matches
+    # google_calendar_service.py/outlook_calendar_service.py's own
+    # datetime.now(timezone.utc) (they pass "Europe/Berlin" only as a string
+    # to the Composio API, never resolve it locally, precisely because
+    # Windows dev machines don't ship IANA tzdata without an extra
+    # dependency). Worst case this is off by the UTC/CET(-2) offset for an
+    # hour or two around local midnight — negligible next to having no
+    # "today" anchor at all, which is the bug this line fixes.
+    now = datetime.now(timezone.utc)
+    date_line = f"HEUTIGES DATUM: {now.date().isoformat()} ({_DE_WEEKDAYS[now.weekday()]})"
+
     context_section = (
         f"SECOND-BRAIN-KONTEXT:\n{context_block}"
         if context_block
@@ -133,7 +158,9 @@ def build_chat_prompt(message: str, history: list[dict], context_block: str, lan
     history_text = "\n".join(history_lines) if history_lines else "(kein bisheriger Verlauf)"
     lang_instruction = "Antworte auf Deutsch" if language != "en" else "Antworte auf Englisch (English, not German)"
 
-    return f"""{context_section}
+    return f"""{date_line}
+
+{context_section}
 
 BISHERIGER VERLAUF:
 {history_text}
