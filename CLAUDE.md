@@ -55,10 +55,12 @@ Bindende Reihenfolge für die nächsten Ausbaustufen:
    Abschnitt "Jarvis" unten.
 2. **Erledigt** — Text-Chat auf derselben Retrieval-Funktion wie (1) — keine
    zweite, parallele Kontext-Pipeline. `/jarvis`, siehe Abschnitt "Jarvis".
-3. **Nächster Schritt** — Aktionen mit Vorschau und Bestätigung — nichts wird
-   ausgeführt, ohne dass der Mensch vorher sieht, was passieren würde. Siehe
+3. **Erledigt (20.09.2026)** — Aktionen mit Vorschau und Bestätigung — nichts
+   wird ausgeführt, ohne dass der Mensch vorher sieht, was passieren würde.
+   Umgesetzt als Suggested-Action-Confirm/Reject-Flow, siehe Abschnitt
+   "Jarvis" unten (Response-Vertrag) sowie
    `docs/aufträge/JARVIS-C1 — Command Layer, der nächste sichtbare Ablauf.md`.
-4. Dashboard.
+4. **Nächster Schritt** — Dashboard.
 5. Sprache.
 6. **Teilweise vorgezogen (22.09.2026)** — Integrationen: Kalender (Google
    Calendar UND Outlook, unabhängig voneinander — Serkan nutzt Outlook
@@ -114,10 +116,16 @@ wären. `base_token_budget` wird intern auf `total_token_budget` gedeckelt;
 budgetiert wird der fertig formatierte Block inklusive der
 `### Quelle: ...`-Label-Zeilen, nicht nur der rohe Treffertext.
 
-**Eigentümer-Bindung**: `VAULT_OWNER_USER_ID` (Env-Var, optional). Gesetzt
-und `user_id` des Requests stimmt nicht überein → leerer Kontext, Logeintrag,
-kein Dateisystemzugriff. Leer/ungesetzt (Default) → kein Gate. Kein
-Pro-Nutzer-Vault-System — ein Vault, ein Eigentümer, keine Migration.
+**Eigentümer-Bindung**: `VAULT_OWNER_USER_ID` (Env-Var). Gesetzt und
+`user_id` des Requests stimmt nicht überein → leerer Kontext, Logeintrag,
+kein Dateisystemzugriff. **Seit 23.09.2026 in `backend/.env` tatsächlich
+gesetzt** (Serkans echte user_id) — vorher war die Variable trotz
+existierendem Code schlicht nicht konfiguriert, das Gate damit faktisch aus.
+Siehe "Bekannte Risiken" für den live reproduzierten Datenleck, den das
+verursacht hat, und `is_personal_integrations_owner()`
+(`app/core/config.py`), das dieselbe Prüfung jetzt auch vor Calendar/Notion
+schaltet. Kein Pro-Nutzer-Vault-System — ein Vault, ein Eigentümer, keine
+Migration.
 
 **Zwei Aufrufer, ein Retrieval:**
 - `plan_service.get_vault_context_for_checkin(checkin, user_id)` —
@@ -140,6 +148,21 @@ Pro-Nutzer-Vault-System — ein Vault, ein Eigentümer, keine Migration.
   bewusst "locker im Ton, scharf im Inhalt", nicht die Mitte zwischen beidem.
   Zusätzlich: Regel, den Mehrwert einer Antwort explizit zu benennen (WARUM
   etwas zählt), nicht nur WAS im Kontext steht.
+  **Fix (23.09.2026, live im Browser gefunden)**: `build_chat_prompt()` gab
+  dem Modell nirgends das heutige Datum — Kalender-/Notion-Kontext liefert
+  nur absolute ISO-Timestamps, ohne Anker kann das Modell "heute"/"morgen"
+  nicht korrekt zuordnen. Live reproduziert: Jarvis sagte "Du hast heute den
+  ganzen Tag bei VW eingeplant", obwohl der zitierte Kalendereintrag auf den
+  Folgetag datiert war. `daily_plan.py`s `build_user_prompt()` hatte dieses
+  Problem nicht (übergibt `checkin['checkin_date']` bereits). Fix: eine
+  führende `HEUTIGES DATUM: <ISO> (<Wochentag>)`-Zeile vor dem Kontextblock,
+  UTC (nicht lokalisiert — `ZoneInfo("Europe/Berlin")` scheitert auf
+  Windows-Dev-Maschinen ohne `tzdata`-Paket, genau deshalb übergeben
+  `google_calendar_service.py`/`outlook_calendar_service.py` die Zeitzone
+  auch nur als String an Composio, statt sie lokal aufzulösen). Nach dem Fix
+  live erneut geprüft: korrekte Antwort ("Morgen hast du was Fixes
+  eingeplant... Heute scheint nichts Fixes im Kalender zu stehen."). Test:
+  `test_jarvis_chat_prompt.py::test_prompt_grounds_the_model_in_todays_date`.
 
 **Externer Kontext (Kalender ×2 + Notion, seit 22.09.2026)**:
 `backend/app/services/google_calendar_service.py`,
@@ -220,17 +243,35 @@ Antwort (nur `sources`, nicht `base_sources`), sichtbarer Lade-/Fehlerzustand
 mit Retry — nie stiller Mock-Fallback (siehe "Bekannte Risiken").
 
 **Response-Vertrag** (`app/models/jarvis.py`): `JarvisChatResponse` hat
-`suggested_actions: list[SuggestedAction]`, in v1 IMMER leer. `SuggestedAction`
-ist an `work_order.py`s Feldern ausgerichtet (`title`, `team_type`,
-`target_repo_name`, `risk`, `requires_approval`, `sources`) — Vorbereitung
-für Produktrichtung Schritt 3 (Command Layer,
-`docs/aufträge/JARVIS-C1 — Command Layer, der nächste sichtbare Ablauf.md`),
-noch nicht implementiert. Kein Auto-Ausführen von Aktionen aus dem Chat.
+`suggested_actions: list[SuggestedAction]` — **seit 20.09.2026 implementiert**
+(Produktrichtung Schritt 3, Command Layer,
+`docs/aufträge/JARVIS-C1 — Command Layer, der nächste sichtbare Ablauf.md`;
+eine frühere Version dieses Abschnitts beschrieb es noch als "immer leer,
+nicht implementiert" — das war zum damaligen Zeitpunkt korrekt, ist es
+jetzt nicht mehr). `prompts/jarvis_chat.py` weist das Modell an, bei einer
+erkennbar umsetzbaren Anfrage genau zwei `SuggestedAction`-Einträge zu
+füllen, sonst bleibt die Liste leer — ausgerichtet an `work_order.py`s
+Feldern (`title`, `team_type`, `target_repo_name`, `risk`,
+`requires_approval`, `sources`). Bestätigung/Ablehnung laufen über
+`GET /api/jarvis/suggested-actions/decisions`,
+`POST /api/jarvis/suggested-actions/confirm` und `.../reject`
+(`routers/jarvis.py`), fachlich umgesetzt in
+`services/suggested_action_service.py`: Confirm legt über
+`work_order_service.create_work_order()` eine echte Work Order an,
+abgesichert gegen Doppelbestätigung durch einen Unique-Index
+(`013_suggested_action_decisions.sql`, 409 bei zweitem Versuch auf dieselbe
+Entscheidung). Frontend: `components/jarvis/JarvisChat.tsx` zeigt dafür eine
+`SuggestedActionCard` mit Confirm/Reject-Buttons. Weiterhin gültig: kein
+Auto-Ausführen ohne diesen expliziten Bestätigungsschritt — das war und
+bleibt der Kern von Schritt 3.
 
 **Tests**: `backend/tests/test_vault_service.py`,
 `test_daily_plan_vault_context.py`, `test_jarvis_router.py`,
 `test_jarvis_chat_prompt.py`, plus (22.09.2026) `test_google_calendar_service.py`,
-`test_outlook_calendar_service.py` und `test_notion_tasks_service.py` — alle
+`test_outlook_calendar_service.py`, `test_notion_tasks_service.py` und
+`test_work_orders_context_service.py`, sowie (20.09.2026, Command Layer)
+`test_jarvis_quality.py` (die zehn JARVIS-Q1-Fälle) und
+`test_suggested_action_service.py` (Confirm/Reject, Idempotenz) — alle
 pytest-discoverbar, laufen über `scripts/check.ps1` mit. `test_jarvis_router.py`
 enthält seit 22.09.2026
 zusätzlich zwei Fälle für den externen Kontext: Kalender/Notion landen im
@@ -288,9 +329,14 @@ python -m pytest backend/tests/ -v
 
 - **Kein Test-Framework im Frontend konfiguriert** (kein Jest/Vitest) — nichts erfinden.
 - **Kein Lint/Format-Tool im Backend** (kein ruff/black) — nichts erfinden.
-- Backend hat eine echte pytest-Suite: `backend/tests/` (6 Dateien, davon 4
-  Jarvis-bezogen — siehe Abschnitt "Jarvis" —, Setup über
-  `backend/requirements-dev.txt`). `scripts/test_*.py` bleiben separate,
+- Backend hat eine echte pytest-Suite: `backend/tests/` (14 Dateien, Stand
+  23.09.2026 — zehn davon Jarvis-/Second-Brain-bezogen, siehe Abschnitt
+  "Jarvis" für die vollständige Liste; die restlichen vier decken
+  Operator-Kernmechanik ab: `test_work_order_transitions.py`,
+  `test_work_order_daemon_trigger.py`, `test_result_import_idempotency.py`,
+  `test_project_model.py`. Bei Zweifel `Get-ChildItem backend/tests` neu
+  zählen statt dieser Zahl zu trauen — sie driftet erfahrungsgemäß schnell),
+  Setup über `backend/requirements-dev.txt`. `scripts/test_*.py` bleiben separate,
   absichtlich stdlib-only Standalone-Skripte (`python scripts/
   test_bounded_retry.py` etc.) — nicht pytest-discoverbar, das ist Design,
   kein Fehlen.
@@ -330,7 +376,7 @@ backend/
 
 supabase/
   schema.sql
-  migrations/     # 001-012, sequenziell, alle auf main
+  migrations/     # 001-016, sequenziell, alle auf main
 
 scripts/          # check.ps1 — ein-Befehl-Prüfung, siehe "Wichtige Befehle".
                   # Sonst: lokale Runner-Harness (run_work_order.py,
@@ -370,10 +416,14 @@ mehrere Git-Worktrees/Branches parallel bearbeitet.
 ## DB-/Migration-Regeln
 
 - `supabase/migrations/NNN_beschreibung.sql`, sequenziell nummeriert, manuell in der
-  Supabase SQL Editor ausgeführt. Aktueller Stand: 001–012, alle auf `main`.
+  Supabase SQL Editor ausgeführt. Aktueller Stand: 001–016, alle auf `main`
+  (016 fügt `work_orders.daemon_run_requested_at` hinzu — siehe "Bekannte
+  Risiken" zum Live-Ausführungsstand).
 - Standard: idempotent (`IF NOT EXISTS`-Guards). Bekannte Ausnahmen:
-  `004_ai_usage_log.sql` und `006_work_orders.sql` (beide CREATE POLICY ohne Guard)
-  — beide nur einmal ausführen.
+  `004_ai_usage_log.sql`, `006_work_orders.sql`, `007_work_order_steps.sql` und
+  `013_suggested_action_decisions.sql` (alle vier `CREATE POLICY` ohne Guard,
+  jede Migrationsdatei dokumentiert das selbst inline) — alle vier nur einmal
+  ausführen.
 - Detaillierte Regeln (RLS-Pattern, README-Sync-Pflicht): siehe
   `.claude/rules/database.md`.
 
@@ -404,7 +454,7 @@ Kein automatisches Löschen der anderen ohne explizite Anweisung.
 ## Test-/Review-Regeln
 
 - Automatisierter Test-Stand vorhanden, aber schmal (siehe "Wichtige Befehle"):
-  `backend/tests/` (pytest, 6 Dateien) deckt Operator-Control-Plane-Kernmechanik
+  `backend/tests/` (pytest, 14 Dateien) deckt Operator-Control-Plane-Kernmechanik
   (State Machine, Bounded Retry, Import-Idempotenz) UND die Jarvis-Wissensschicht
   (Retrieval, Budget, Ownership-Gate, Chat-Endpunkt/-Prompt) ab. `scripts/test_*.py`
   (stdlib) bleiben separat für die Runner-Harness — kein E2E-, kein
@@ -427,15 +477,42 @@ Kein automatisches Löschen der anderen ohne explizite Anweisung.
 | `runner-adapter-contract.md` | Interface-Vertrag für Runner-Adapter |
 | `ai-usage-and-cost-audit.md` | Audit der AI-Kosten/-Nutzung |
 | `manual-e2e-checklist.md` | Manuelle Browser-E2E-Checkliste |
+| `saas-roadmap.md` (23.09.2026) | Aktive SaaS-Priorisierung (Stufen 1–4), ersetzt die alte v0.2/v0.3-Roadmap als Referenz |
 | `background-operator-spike.md` | **Superseded** — nicht als aktuelles Design behandeln |
 
 `docs/aufträge/` (eigener Unterordner, nicht in der Tabelle oben): Auftragsdokumente
 für einzelne KI-Sessions — `JARVIS-A1` (Fundament/Findings, siehe Abschnitt "Jarvis"),
-`JARVIS-Q1` (Qualitätsnetz, zehn Testfälle) und `JARVIS-C1` (Command Layer). Q1 und C1
-sind zum Zeitpunkt dieses CLAUDE.md-Updates noch nicht bearbeitet.
+`JARVIS-Q1` (Qualitätsnetz, zehn Testfälle — **erledigt**: `backend/tests/
+test_jarvis_quality.py` plus `.claude/skills/abnahme/SKILL.md`) und `JARVIS-C1`
+(Command Layer — **erledigt**, siehe Abschnitt "Jarvis", Response-Vertrag).
+Zusätzlich `JARVIS-D1` (Design-System-Durchgang) und `JARVIS-M1` (paralleler
+Multi-Agent-Work-Order-Durchgang) — beide ohne eigenen Abschnitt in diesem
+Dokument, im Ordner aber vorhanden.
 
 ## Bekannte Risiken
 
+- **Behoben (23.09.2026), aber als schwerwiegendster bisheriger Fund
+  festgehalten: kritischer Multi-Tenant-Datenleck über Jarvis.** Live mit
+  einem echten zweiten Supabase-Testaccount reproduziert: dessen Jarvis-Chat
+  bekam Serkans echten Outlook-Kalendertermin und mehrere seiner echten,
+  teils sensiblen Notion-Aufgaben (Steuererklärung, Versicherungsschäden,
+  ein medizinischer Befund) angezeigt. Ursache doppelt: `VAULT_OWNER_USER_ID`
+  war trotz existierendem Gate-Code nie in `backend/.env` gesetzt (Gate
+  faktisch aus), und für `google_calendar_service`/`outlook_calendar_service`/
+  `notion_tasks_service` gab es **überhaupt kein** Eigentümer-Gate — ihre
+  `get_context()`-Funktionen kennen gar keinen `user_id`-Parameter, es ist
+  ein Composio-Account für den gesamten Prozess. Fix: neue
+  `is_personal_integrations_owner()`-Prüfung (`app/core/config.py`),
+  verdrahtet in `routers/jarvis.py` UND `routers/plans.py` vor allen drei
+  externen Quellen; `VAULT_OWNER_USER_ID` jetzt real gesetzt. Live erneut
+  mit demselben Testaccount verifiziert: Antwort enthält jetzt korrekt
+  nichts mehr; Serkans eigener Zugriff weiterhin mit echten Daten bestätigt
+  (keine Regression). Zwei neue Regressionstests in `test_jarvis_router.py`
+  (`test_non_owner_never_gets_calendar_or_notion_context`, positiver Gegentest
+  mit gepatchtem `is_personal_integrations_owner`). **Bleibt architektonisch
+  Single-Tenant** — der Fix beschränkt auf den einen Eigentümer, macht daraus
+  keine Pro-Nutzer-Integration; das ist weiterhin eine offene Entscheidung
+  für echte eingeladene Tester (siehe `docs/saas-roadmap.md`).
 - **Safety-Rules dreifach dupliziert**: `frontend/lib/safetyRules.ts` (nur Anzeige)
   vs. `backend/app/core/safety_rules.py` (echte Enforcement) vs. Runner-Prompt-Text
   — Drift-Risiko. Bei Änderungen an Approval-Scopes zuerst `safety_rules.py`
@@ -443,6 +520,46 @@ sind zum Zeitpunkt dieses CLAUDE.md-Updates noch nicht bearbeitet.
 - **Mock-Fallback-Risiko**: `frontend/lib/mockWorkOrders.ts` kann bei API-Fehlern
   still auf Mock-Daten zurückfallen und echte Fehler verdecken — nie ohne
   sichtbaren Fehlerzustand.
+- **Runner-Pairing statt Browser-Token (23.09.2026) — jetzt live
+  end-to-end verifiziert, nicht mehr nur getestet.**
+  `supabase/migrations/017_runner_connections.sql` (gegen die Live-DB
+  ausgeführt) + `app.auth._resolve_runner_token()` (akzeptiert einen
+  `cprun_`-präfixierten Runner-Token transparent neben einem echten
+  Supabase-JWT, gleiche `CurrentUser`-Form) + `scripts/
+  run_work_order_daemon.py --pair` (Device-Flow) + Settings-UI "Runner
+  verbinden" (`components/settings/RunnerConnections.tsx`). Ersetzt den
+  vorherigen Refresh-Token-Workflow als empfohlenen Weg.
+  **Live-Lauf fand 3 echte Bugs, alle gefixt**: (1) `.gitignore` fehlte
+  `.cp_runner_token.json`; (2) `postgrest-py 2.30.0`s
+  `maybe_single().execute()` gibt bei 0 Treffern bares `None` zurück statt
+  eines Response-Objekts — traf `_find_pending_request`,
+  `poll_pairing_status` UND `auth._resolve_runner_token`, alle drei
+  crashten mit HTTP 500 statt sauberem 401/"abgelaufen" (ein abgelaufener
+  Pairing-Code bzw. ein widerrufener Token reproduzierten das live); die
+  In-Memory-Test-Fakes bildeten dieses Verhalten nicht nach, weshalb die
+  Suite grün blieb — jetzt korrigiert, Tests von `assertRaises(Exception)`
+  auf die konkrete `HTTPException(401)` verschärft; (3) Widerruf blockiert
+  seither auch tatsächlich (vorher 500, jetzt 401), live mit einem echten
+  gepaarten Token reproduziert. Details und der vollständige Testverlauf
+  (inkl. eines real budget-limitierten `claude`-CLI-Laufs) in
+  `docs/saas-roadmap.md`.
+- **Fix (23.09.2026): `LifecycleControls.tsx` verschluckte jeden API-Fehler
+  still.** Beide Handler (`handleClick`, `handleAutonomousStartClick`) hatten
+  `try/finally` ohne `catch` — ein PATCH-Fehler (abgelaufene Session, 403,
+  oder das fehlende `daemon_run_requested_at`-Schema ohne Migration 016)
+  ließ den Button nur in den Ruhezustand zurückfallen, ohne dass der Nutzer
+  je erfuhr, warum. Betraf JEDE Lifecycle-Aktion (Genehmigen/Abbrechen/Als
+  laufend markieren/Autonom starten), nicht nur den Migrationsfall. Fix:
+  sichtbare, schließbare Fehlerbox (`error`-State), live gegen die echte
+  fehlende Migration 016 verifiziert (PGRST204 erscheint jetzt lesbar statt
+  nur in der Browser-Konsole).
+- **Neu (23.09.2026): `components/morning/PlanHistory.tsx`** — `GET
+  /api/plans/me` existierte im Backend, wurde vom Frontend aber nie
+  aufgerufen; frühere Tagespläne waren nur über eine bereits bekannte URL
+  erreichbar. Gleiches Muster wie `CheckinHistory.tsx`s eigene Lücke (siehe
+  deren Docstring), auf `/morning` unter dem Check-in-Formular eingehängt,
+  jede Zeile verlinkt nach `/plans/[id]`. Live geprüft: reale Historie samt
+  Navigation zu einem alten Plan funktioniert.
 - **CLI-Runner-Pfad jetzt live gegen `claude` getestet (22.09.2026)**: `scripts/
   run_work_order.py --mode execute --adapter claude_code` lief mehrfach echt
   (reale, budget-gedeckelte Claude-Kosten, u.a. ein $1.40/24-Turn-Lauf) — dabei
@@ -516,7 +633,7 @@ sind zum Zeitpunkt dieses CLAUDE.md-Updates noch nicht bearbeitet.
   Container-Mechanik selbst — Mount, Git, Cleanup — ohne echten `claude`-
   Aufruf verifiziert). Siehe `docs/manual-e2e-checklist.md`.
 - **Autonomer Trigger-Daemon (`scripts/run_work_order_daemon.py`, 22.09.2026)
-  — unit-getestet (11 Tests, `scripts/test_run_work_order_daemon.py`), UI-Pfad
+  — unit-getestet (14 Tests, `scripts/test_run_work_order_daemon.py`), UI-Pfad
   live verifiziert, Daemon selbst noch nicht live gelaufen**: der "Autonom
   starten"-Button (`LifecycleControls.tsx`, Status `queued`) wurde live im
   Browser bestätigt — Bestätigungsdialog korrekt, PATCH feuert korrekt (nach
@@ -533,6 +650,19 @@ sind zum Zeitpunkt dieses CLAUDE.md-Updates noch nicht bearbeitet.
   starten" klicken, beobachten dass er den Auftrag abholt und
   `run_work_order.py` wirklich anstößt (siehe
   `docs/background-dev-team-runbook.md` § Autonomer Daemon).
+  **Fix (23.09.2026, gefunden bei Code-Review vor dem ersten Live-Lauf, noch
+  ohne Migration/Geld möglich)**: `--adapter` defaultete auf `manual_prompt`,
+  das `supports_auto_execute="no"` hat — ein ohne explizites `--adapter
+  claude_code`/`claude_code_sandboxed` gestarteter Daemon hätte jede
+  angefragte Work Order stillschweigend verschluckt: `claim()` löscht
+  `daemon_run_requested_at`, danach lehnt `run_work_order.py`s eigener
+  Execute-Guard `manual_prompt` ab, bevor auch nur ein `agent_run`- oder
+  `activity_log`-Eintrag entsteht — die Work Order fällt zurück auf
+  `queued`, der "Autonom starten"-Button erscheint einfach wieder, ohne
+  Erklärung. `main()` prüft jetzt `get_adapter(args.adapter).info
+  .supports_auto_execute` vor dem ersten Poll und bricht mit klarer
+  Fehlermeldung ab, wenn der Adapter `"no"` ist — drei neue Tests in
+  `scripts/test_run_work_order_daemon.py::MainAdapterValidationTests`.
 - **`openai`-Sprung 1.54.4 → 3.17.0 (22.09.2026), erzwungen durch `composio`**:
   `import composio` zieht unconditional `composio.core.provider._openai` und
   damit ein reales `openai>=2.48.0` — es gibt keine Möglichkeit, das SDK zu
@@ -541,9 +671,18 @@ sind zum Zeitpunkt dieses CLAUDE.md-Updates noch nicht bearbeitet.
   `response_format: json_schema`-Dict-Form, die vier Exception-Klassen) ist laut
   offiziellem Changelog vom bekannten 2.0.0-Breaking-Change (Responses-API
   `output`-Typing) nicht betroffen — aber kein Test in diesem Repo ruft die
-  echte OpenAI-API auf. Vor dem nächsten Merge einmal Tagesplan **und**
-  Jarvis-Chat live im Browser gegen die echte OpenAI-API durchklicken, nicht
-  nur `scripts/check.ps1` vertrauen.
+  echte OpenAI-API auf.
+  **Jarvis-Chat: live verifiziert (23.09.2026)** — echte Anfrage über
+  `/api/jarvis/chat` gegen die echte OpenAI-API durchgeklickt (`gpt-4o` via
+  `AsyncOpenAI`, `response_format: json_schema`), Antwort kam strukturiert
+  und korrekt zurück, alle vier Kontextquellen (Vault, Google/Outlook-
+  Kalender, Notion, Work Orders) live befüllt — der `openai`-Sprung selbst
+  ist also nicht das Problem. Dabei aber ein echter, unabhängiger Bug
+  gefunden und gefixt: siehe Jarvis-Abschnitt oben, "HEUTIGES DATUM"-Fix.
+  **Tagesplan: nur Rendering eines bestehenden Plans live geprüft, keine
+  frische Generierung** — für 23.09.2026 existierte bereits ein Plan, ein
+  echter Generierungslauf (der den `openai`-Aufrufpfad tatsächlich neu
+  auslöst) steht noch aus.
 - Details und vollständige Risikoliste: siehe
   `docs/commandpilot-current-state-and-business-roadmap.md`.
 

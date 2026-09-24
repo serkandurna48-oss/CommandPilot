@@ -22,7 +22,6 @@ Ergänzt `CLAUDE.md` — hier stehen nur DB-spezifische, aktionable Details.
   Synchronisation ist einmal gerissen (003–005 fehlten trotz aktiver Nutzung im
   Code) — nicht wiederholen. Der Subagent `architecture-consistency-check` prüft
   das automatisiert.
-- **Falls `supabase/migrations/006_work_orders.sql` (oder höher) existiert**
-  [nur auf `feat/operator-control-plane`]: 006 hat dieselbe
-  Nicht-idempotenz-Einschränkung wie 004 (CREATE POLICY ohne Guard) — nur einmal
-  ausführen.
+- **Nicht-idempotente Migrationen (CREATE POLICY ohne Guard), alle auf `main`,
+  jeweils nur einmal ausführen**: `004_ai_usage_log.sql`, `006_work_orders.sql`,
+  `007_work_order_steps.sql`, `013_suggested_action_decisions.sql`.

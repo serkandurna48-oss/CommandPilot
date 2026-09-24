@@ -43,6 +43,9 @@ After running `supabase/schema.sql` for the first time, apply any incremental mi
 | --- | --- | --- |
 | `supabase/migrations/001_profiles_language_check.sql` | Normalises `profiles.language` to `'en'` for null/invalid rows, then adds a CHECK constraint | Before deploying i18n / language-selection feature |
 | `supabase/migrations/002_daily_plans_review_context_used.sql` | Adds `daily_plans.review_context_used boolean default false` if the column is missing | Before deploying backend code that writes `review_context_used` |
+| `supabase/migrations/003_daily_plans_unique_constraint.sql` | Adds UNIQUE `(user_id, plan_date)` on `daily_plans` (CP-202) — requires no pre-existing duplicate rows | Before deploying duplicate-plan prevention |
+| `supabase/migrations/004_ai_usage_log.sql` | Adds `ai_usage_log` table + RLS (CP-203) — tracks OpenAI cost per call for the per-user daily spending cap | Before deploying AI usage/cost enforcement |
+| `supabase/migrations/005_projects_extend.sql` | Extends `projects` with `priority`/`next_action`/`risk` columns and an expanded `status` check constraint (CP-206) | Before deploying full Projects CRUD / morning plan integration |
 | `supabase/migrations/006_work_orders.sql` | Adds `work_orders`, `approval_scopes`, `agent_runs`, `activity_logs`, `artifacts`, `review_packages` tables + RLS | Before deploying the Background Dev Team / `/api/work-orders` backend |
 | `supabase/migrations/007_work_order_steps.sql` | Adds `work_order_steps` table (the ticket plan) + RLS | Before deploying the Execution Plan UI / step endpoints |
 | `supabase/migrations/008_work_orders_team_type.sql` | Adds `work_orders.team_type text not null default 'development'` | Before deploying the Work Order creation UI (OP-Create-001) |
@@ -52,10 +55,10 @@ After running `supabase/schema.sql` for the first time, apply any incremental mi
 | `supabase/migrations/012_result_import_dedup_keys.sql` | Adds `activity_logs.dedup_key`/`artifacts.dedup_key` + UNIQUE indexes on `(work_order_id, dedup_key)` | Before deploying the CP-OP03 idempotent result import (`scripts/import_work_order_result.py`) |
 | `supabase/migrations/013_suggested_action_decisions.sql` | Adds `suggested_action_decisions` table (+ unique `(user_id, request_id)` index + RLS) — audit trail and idempotency guard for confirming/rejecting a Jarvis chat proposal | Before deploying the JARVIS-C1 Command Layer (`POST /api/jarvis/suggested-actions/confirm`\|`reject`) |
 | `supabase/migrations/014_projects_website_url.sql` | Adds nullable `projects.website_url` | Before deploying the "Product Websites" card grid on Home (`frontend/components/dashboard/ProductWebsites.tsx`) |
-| `supabase/migrations/015_enable_realtime_work_orders.sql` | Adds `work_orders`, `work_order_steps`, `activity_logs` to the `supabase_realtime` publication | Before deploying the live Operator Control Plane view (`frontend/components/operator/LiveExecutionView.tsx`, Supabase Realtime `postgres_changes` subscription on the operator detail page) |
+| `supabase/migrations/015_enable_realtime_work_orders.sql` | Adds `work_orders`, `work_order_steps`, `activity_logs` to the `supabase_realtime` publication | Before deploying the live Operator Control Plane view (`frontend/components/operator/StepPipeline.tsx`/`ActivityFeed.tsx`, Supabase Realtime `postgres_changes` subscription on `frontend/app/(app)/operator/[id]/page.tsx`) |
 | `supabase/migrations/016_work_orders_daemon_run_requested.sql` | Adds nullable `work_orders.daemon_run_requested_at` | Before deploying the "Autonom starten" button (`frontend/components/operator/LifecycleControls.tsx`) / `scripts/run_work_order_daemon.py` |
 
-Run each file in the Supabase SQL Editor. Migrations are idempotent — safe to re-run, except `006_work_orders.sql` and `013_suggested_action_decisions.sql` (their `CREATE POLICY` statements have no `IF NOT EXISTS` guard, matching the existing `004_ai_usage_log.sql` precedent) — run those once.
+Run each file in the Supabase SQL Editor. Migrations are idempotent — safe to re-run, except `004_ai_usage_log.sql`, `006_work_orders.sql`, `007_work_order_steps.sql`, and `013_suggested_action_decisions.sql` (their `CREATE POLICY` statements have no `IF NOT EXISTS` guard) — run those four once.
 
 ### 2. Backend Setup
 

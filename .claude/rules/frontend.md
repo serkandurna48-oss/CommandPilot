@@ -19,8 +19,7 @@ Ergänzt `CLAUDE.md` — hier stehen nur frontend-spezifische, aktionable Detail
   `SIGNED_IN`). Nicht direkt `supabase.auth` aus Komponenten heraus aufrufen.
 - Nach jeder Änderung: `npm run lint && npm run type-check` — es gibt keinen
   Test-Runner als Sicherheitsnetz.
-- **Falls `components/operator/*` oder `lib/mockWorkOrders.ts` in deinem Checkout
-  existieren** [nur auf `feat/operator-control-plane`]: Mock-Daten-Fallback bei
+- **`components/operator/*` / `lib/mockWorkOrders.ts`**: Mock-Daten-Fallback bei
   API-Fehlern darf nie UI-transparent (ohne sichtbaren Fehlerzustand) erfolgen —
   das verdeckt echte Ausfälle. Siehe `CLAUDE.md` § Bekannte Risiken.
 
