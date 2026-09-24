@@ -324,16 +324,18 @@ def get_context_for_query(
     not one that silently balloons to the base default regardless of what was
     asked for.
 
-    Ownership gate (JARVIS-A1, Aufgabe 2): if settings.VAULT_OWNER_USER_ID is
-    set and user_id doesn't match it, returns ("", [], []) without touching
-    the filesystem — the caller must pass the requesting user's id through
-    here, not assume the vault is theirs. An empty/unset VAULT_OWNER_USER_ID
-    disables the gate entirely (pre-existing behavior).
+    Ownership gate (JARVIS-A1, Aufgabe 2; fail-closed since the same fix as
+    is_personal_integrations_owner, app/core/config.py): user_id must match
+    settings.VAULT_OWNER_USER_ID or this returns ("", [], []) without
+    touching the filesystem — the caller must pass the requesting user's id
+    through here, not assume the vault is theirs. An empty/unset
+    VAULT_OWNER_USER_ID now means nobody passes, not everybody — an unset
+    env var must never be the thing that makes a per-owner gate a no-op.
     """
     owner_id = settings.VAULT_OWNER_USER_ID
-    if owner_id and user_id != owner_id:
+    if not owner_id or user_id != owner_id:
         logger.warning(
-            "vault_service: user_id does not match VAULT_OWNER_USER_ID — returning empty context | user_id=%r",
+            "vault_service: user_id does not match VAULT_OWNER_USER_ID (or it is unset) — returning empty context | user_id=%r",
             user_id,
         )
         return "", [], []

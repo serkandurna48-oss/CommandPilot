@@ -122,16 +122,17 @@ def test_token_budget_is_respected(tmp_path):
 
 
 def test_get_context_for_query_always_includes_base_context(tmp_path, monkeypatch):
-    # Not testing the ownership gate here — force it off so this test doesn't
-    # depend on whatever VAULT_OWNER_USER_ID happens to be set to in the real
-    # backend/.env (broke live 23.09.2026 when that var was set for real to
-    # close a genuine multi-tenant data leak — see is_personal_integrations_owner()).
-    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "")
+    # Not testing the ownership gate here — the gate is now fail-closed (an
+    # empty VAULT_OWNER_USER_ID denies everyone, see
+    # test_empty_vault_owner_user_id_fails_closed below), so this test must
+    # set a real matching owner_id/user_id pair instead of forcing the var
+    # off, to isolate retrieval behavior from the gate.
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "owner-1")
     _make_vault(tmp_path)
     # Query shares no vocabulary with any note body — only base context should surface,
     # and it must show up as base_sources, not hit_sources (nothing actually matched).
     block, hit_sources, base_sources = vault_service.get_context_for_query(
-        "Woran sollte ich diese Woche arbeiten und warum?", vault_path=str(tmp_path)
+        "Woran sollte ich diese Woche arbeiten und warum?", user_id="owner-1", vault_path=str(tmp_path)
     )
     assert hit_sources == []
     assert "00-Index.md" in {s["file"] for s in base_sources}
@@ -142,10 +143,10 @@ def test_get_context_for_query_always_includes_base_context(tmp_path, monkeypatc
 # ── Sources noise reduction (JARVIS-A1, Aufgabe 5) ───────────────────────────────
 def test_hit_sources_and_base_sources_are_kept_separate(tmp_path, monkeypatch):
     # Same reasoning as test_get_context_for_query_always_includes_base_context above.
-    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "")
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "owner-1")
     _make_vault(tmp_path)
     block, hit_sources, base_sources = vault_service.get_context_for_query(
-        "Was ist die Next Action für CommandPilot?", vault_path=str(tmp_path)
+        "Was ist die Next Action für CommandPilot?", user_id="owner-1", vault_path=str(tmp_path)
     )
     # base_sources: always-present map-of-the-vault entries, one per file, no heading.
     assert {s["file"] for s in base_sources} == {"00-Index.md", "Projekte/CommandPilot.md", "Menschen/Volkan.md"}
@@ -183,14 +184,18 @@ def test_matching_user_id_returns_normal_context(tmp_path, monkeypatch):
     assert hit_sources != []
 
 
-def test_empty_vault_owner_user_id_behaves_as_before(tmp_path, monkeypatch):
+def test_empty_vault_owner_user_id_fails_closed(tmp_path, monkeypatch):
+    # Fail-closed (same fix as is_personal_integrations_owner,
+    # app/core/config.py): an unset/empty VAULT_OWNER_USER_ID must deny
+    # everyone, not disable the gate. Previously this test asserted the
+    # opposite (fail-open) as "expected" behavior — that was the bug.
     _make_vault(tmp_path)
     monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "")
     block, hit_sources, base_sources = vault_service.get_context_for_query(
         "Was ist die Next Action für CommandPilot?", user_id="anyone-at-all", vault_path=str(tmp_path)
     )
-    assert block != ""
-    assert hit_sources != []
+    assert block == ""
+    assert hit_sources == []
 
 
 # ── Invalid UTF-8 handling (JARVIS-A1, Aufgabe 3) ────────────────────────────────
