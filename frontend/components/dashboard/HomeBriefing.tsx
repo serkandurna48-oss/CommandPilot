@@ -129,11 +129,13 @@ export interface HomeBriefingProps {
   inProgress: WorkOrder[];
   activity: ActivityEvent[];
   projects: Project[];
+  projectsError: string | null;
+  onRetryProjects: () => void;
   pendingId: string | null;
   onRequeue: (id: string) => void;
 }
 
-export function HomeBriefing({ plan, needsDecision, inProgress, activity, projects, pendingId, onRequeue }: HomeBriefingProps) {
+export function HomeBriefing({ plan, needsDecision, inProgress, activity, projects, projectsError, onRetryProjects, pendingId, onRequeue }: HomeBriefingProps) {
   const t = useT();
   const priority = plan?.top_priorities?.[0];
 
@@ -310,7 +312,7 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
         </div>
       </div>
 
-      <ProjectCards projects={projects} />
+      <ProjectCards projects={projects} loadError={projectsError} onRetry={onRetryProjects} />
 
       <ProductWebsites projects={projects} />
 

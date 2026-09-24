@@ -14,6 +14,13 @@ export default function DashboardPage() {
   const [plan, setPlan] = useState<DailyPlan | null>(null);
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  // Confirmed against e8c2b02: a rejected projectsResult left `projects` at
+  // its initial [], and ProjectCards.tsx cannot tell "you have zero
+  // projects" from "the fetch failed" — the section either rendered its
+  // normal empty state or nothing at all, silently. Same anti-pattern
+  // CLAUDE.md already flags for mockWorkOrders.ts: an API failure must
+  // never look identical to "nothing here."
+  const [projectsError, setProjectsError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -31,6 +38,15 @@ export default function DashboardPage() {
     }
     if (projectsResult.status === "fulfilled") {
       setProjects(projectsResult.value);
+      setProjectsError(null);
+    } else {
+      // No t() here — a fresh function reference every render would make
+      // this callback (and the effect depending on it) re-run on every
+      // render, refetching in a loop. Same "stable — no t dependency"
+      // convention as ProjectsManager.tsx's loadProjects(); the fallback
+      // is translated at render time instead (see JSX below).
+      const err = projectsResult.reason;
+      setProjectsError(err instanceof Error ? err.message : String(err));
     }
     setLoading(false);
   }, []);
@@ -147,6 +163,8 @@ export default function DashboardPage() {
       inProgress={inProgress}
       activity={activity}
       projects={projects}
+      projectsError={projectsError}
+      onRetryProjects={load}
       pendingId={pendingId}
       onRequeue={requeue}
     />

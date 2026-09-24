@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { AlertTriangle, Clock } from "lucide-react";
+import { Button } from "@/components/ui/Button";
 import { useT } from "@/lib/i18n";
 import { cn, daysSince } from "@/lib/utils";
 import { PROJECT_STATUS_DOT } from "@/components/dashboard/HomeBriefing";
@@ -131,12 +132,37 @@ function OtherProjectRow({ project }: { project: Project }) {
   );
 }
 
-export function ProjectCards({ projects }: { projects: Project[] }) {
+export function ProjectCards({
+  projects,
+  loadError,
+  onRetry,
+}: {
+  projects: Project[];
+  loadError: string | null;
+  onRetry: () => void;
+}) {
   const t = useT();
   const active = projects.filter((p) => p.status === "active").sort(byPriority);
   const other = projects
     .filter((p) => p.status === "waiting" || p.status === "paused" || p.status === "backlog")
     .sort(byPriority);
+
+  // A failed fetch must never look like "you genuinely have zero projects"
+  // (confirmed against e8c2b02: projects silently stayed [] on a rejected
+  // request, indistinguishable from a real empty state) — this takes
+  // priority over the active/other empty-return below, checked first.
+  if (loadError) {
+    return (
+      <div className="rounded-2xl border border-status-danger/30 bg-status-danger/10 px-4 py-3 mb-4 flex items-center justify-between gap-3">
+        <p className="text-status-danger text-sm">
+          {t("dashboard.project_cards.load_error")} {loadError}
+        </p>
+        <Button size="sm" variant="outline-accent" onClick={onRetry}>
+          {t("button.retry")}
+        </Button>
+      </div>
+    );
+  }
 
   if (active.length === 0 && other.length === 0) return null;
 

@@ -68,6 +68,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "dashboard.section.active_projects": { en: "Active Projects",        de: "Aktive Projekte" },
   "dashboard.section.product_websites": { en: "Product Websites",      de: "Produkt-Websites" },
   "dashboard.project_cards.other_projects":    { en: "Other Projects",     de: "Weitere Projekte" },
+  "dashboard.project_cards.load_error":        { en: "Could not load your projects:", de: "Projekte konnten nicht geladen werden:" },
   "dashboard.project_cards.next_action_empty": { en: "No next task set.",  de: "Keine nächste Aufgabe gesetzt." },
   "dashboard.project_cards.set_now":           { en: "Set now",            de: "Jetzt setzen" },
   "dashboard.project_cards.compact_today":     { en: "today",              de: "heute" },
