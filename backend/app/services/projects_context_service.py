@@ -22,6 +22,7 @@ Missing user_id, no non-archived/done projects on file, or any DB error
 from __future__ import annotations
 
 import logging
+from datetime import datetime, timezone
 
 from app.services import project_service
 
@@ -32,16 +33,42 @@ _MAX_PROJECTS = 15
 _PRIORITY_RANK = {"high": 0, "medium": 1, "low": 2}
 
 
+def _recency_label(updated_at: str | None) -> str:
+    """"Aktualität" — found missing 23.09.2026 review: without a recency
+    signal in the context itself, "wo stehen wir" answers couldn't say
+    whether a project's status was current or ancient, only what it was.
+    Mirrors ProjectCards.tsx's own daysSince() wording (heute/vor 1 Tag/
+    vor N Tagen) so the dashboard and Jarvis never disagree on phrasing."""
+    if not updated_at:
+        return "unbekannt"
+    try:
+        then = datetime.fromisoformat(updated_at)
+    except ValueError:
+        return "unbekannt"
+    if then.tzinfo is None:
+        then = then.replace(tzinfo=timezone.utc)
+    days = max(0, (datetime.now(timezone.utc) - then).days)
+    if days == 0:
+        return "heute"
+    if days == 1:
+        return "vor 1 Tag"
+    return f"vor {days} Tagen"
+
+
 def _format_project(project: dict) -> str:
+    # [ID: ...] and Aktualität are load-bearing, not decoration — a "wo
+    # stehen wir" answer that can't be traced back to a specific project
+    # row or dated as current/stale isn't a verifiable answer (JARVIS-M2
+    # review, 24.09.2026).
     name = project.get("name") or "(ohne Namen)"
+    project_id = project.get("id") or "unbekannt"
     status = project.get("status") or "unknown"
-    next_action = project.get("next_action")
-    risk = project.get("risk")
-    parts = [f"- {name} — Status: {status}"]
-    if next_action:
-        parts.append(f"Nächste Aufgabe: {next_action}")
-    if risk:
-        parts.append(f"Blocker: {risk}")
+    recency = _recency_label(project.get("updated_at"))
+    parts = [f"- {name} [ID: {project_id}]", f"Status: {status}", f"Aktualität: {recency}"]
+    if project.get("next_action"):
+        parts.append(f"Nächste Aufgabe: {project['next_action']}")
+    if project.get("risk"):
+        parts.append(f"Blocker: {project['risk']}")
     return " | ".join(parts)
 
 
@@ -65,7 +92,9 @@ def get_context(user_id: str, token_budget: int = 600) -> tuple[str, list[dict]]
     (same scope as ProjectCards.tsx on Home — "active"/"waiting"/"paused"/
     "backlog"), sorted by priority high->low, capped to _MAX_PROJECTS
     entries and token_budget by dropping whole entries, never truncating
-    mid-line. sources shaped
+    mid-line. Each line carries [ID: ...] and an "Aktualität" recency label
+    (see _format_project) so a "wo stehen wir" answer can be traced back
+    to a specific, dated project row — not just a name. sources shaped
     `[{"file": "Projekte (CommandPilot)", "heading": <line>}, ...]` — same
     shape routers/jarvis.py turns into SourceRef for every other context
     source.

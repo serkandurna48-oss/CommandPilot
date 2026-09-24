@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import os
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -97,6 +98,42 @@ def test_next_action_and_risk_are_included_when_set(monkeypatch):
     assert "Nächste Aufgabe:" in block
     assert "Blocker:" in block
     assert sources[0]["file"] == "Projekte (CommandPilot)"
+
+
+def test_project_id_and_recency_are_included(monkeypatch):
+    # A "wo stehen wir" answer must be traceable to a specific, dated
+    # project row — not just a name (JARVIS-M2 review, 24.09.2026).
+    two_days_ago = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+    projects = [
+        {"id": "e0ad0731-d044-4277-9668-540daaf828b2", "name": "Softwarebusiness",
+         "status": "active", "priority": "high", "next_action": None, "risk": None,
+         "updated_at": two_days_ago},
+    ]
+    monkeypatch.setattr(
+        projects_context_service.project_service, "get_projects_for_user",
+        MagicMock(return_value=projects),
+    )
+    block, sources = projects_context_service.get_context("user-1")
+    assert "[ID: e0ad0731-d044-4277-9668-540daaf828b2]" in block
+    assert "Aktualität: vor 2 Tagen" in block
+    assert "[ID:" in sources[0]["heading"]
+    assert "Aktualität:" in sources[0]["heading"]
+
+
+def test_recency_label_handles_today_and_missing_timestamp(monkeypatch):
+    projects = [
+        {"id": "p1", "name": "Today project", "status": "active", "priority": "high",
+         "next_action": None, "risk": None, "updated_at": datetime.now(timezone.utc).isoformat()},
+        {"id": "p2", "name": "No timestamp project", "status": "active", "priority": "low",
+         "next_action": None, "risk": None, "updated_at": None},
+    ]
+    monkeypatch.setattr(
+        projects_context_service.project_service, "get_projects_for_user",
+        MagicMock(return_value=projects),
+    )
+    block, _ = projects_context_service.get_context("user-1")
+    assert "Aktualität: heute" in block
+    assert "Aktualität: unbekannt" in block
 
 
 def test_token_budget_drops_whole_projects_not_mid_line(monkeypatch):
