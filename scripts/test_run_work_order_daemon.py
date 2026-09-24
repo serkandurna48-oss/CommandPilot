@@ -381,6 +381,37 @@ class MainSessionResolutionTests(unittest.TestCase):
             # the cache file must now hold the newly-rotated token, not the seed
             self.assertEqual(json.loads(session_file.read_text())["refresh_token"], "rotated-again")
 
+    def test_runner_token_wins_over_a_stale_refresh_cache_even_if_it_is_expired(self):
+        # Found in review: a machine that had used --refresh-token before
+        # switching to --pair could still have an old .cp_daemon_session.json
+        # lying around. If that cached refresh token was itself
+        # expired/revoked, the daemon used to try refreshing anyway and
+        # refuse to start — even though the runner token it also loaded was
+        # perfectly valid on its own. The two must be mutually exclusive.
+        with tempfile.TemporaryDirectory() as tmp:
+            runner_token_file = Path(tmp) / "runner.json"
+            runner_token_file.write_text(
+                json.dumps({"runner_token": daemon.RUNNER_TOKEN_PREFIX + "valid-paired-token"}),
+                encoding="utf-8",
+            )
+            session_file = Path(tmp) / "session.json"
+            session_file.write_text(json.dumps({"refresh_token": "expired-old-refresh-token"}), encoding="utf-8")
+            argv = [
+                "run_work_order_daemon.py", "--adapter", "claude_code",
+                "--supabase-url", "https://x.supabase.co", "--supabase-anon-key", "anon",
+                "--runner-token-file", str(runner_token_file),
+                "--session-file", str(session_file),
+            ]
+            with patch.object(sys, "argv", argv), \
+                 patch.object(daemon.urllib.request, "urlopen", side_effect=_http_error(400)) as mock_urlopen, \
+                 patch.object(daemon, "poll_once") as mock_poll, \
+                 patch.object(daemon.time, "sleep", side_effect=KeyboardInterrupt):
+                rc = daemon.main()
+            self.assertEqual(rc, 0)
+            mock_urlopen.assert_not_called()  # never even attempts to refresh the stale cache
+            session_arg = mock_poll.call_args.args[1]
+            self.assertEqual(session_arg.access_token, daemon.RUNNER_TOKEN_PREFIX + "valid-paired-token")
+
     def test_no_token_and_no_refresh_capability_fails_with_a_clear_message(self):
         # Explicit empty strings everywhere a real shell environment could
         # otherwise leak a leftover COMMANDPILOT_API_TOKEN/_SUPABASE_* into

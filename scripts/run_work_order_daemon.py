@@ -113,6 +113,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 RUN_WORK_ORDER_SCRIPT = Path(__file__).resolve().parent / "run_work_order.py"
 DEFAULT_SESSION_FILE = REPO_ROOT / ".cp_daemon_session.json"
 DEFAULT_RUNNER_TOKEN_FILE = REPO_ROOT / ".cp_runner_token.json"
+# Duplicated from backend/app/services/runner_connection_service.py's
+# RUNNER_TOKEN_PREFIX — this script is intentionally stdlib-only and never
+# imports the backend package, so the string constant is kept in sync by
+# hand rather than shared.
+RUNNER_TOKEN_PREFIX = "cprun_"
 FRONTEND_ENV_LOCAL = REPO_ROOT / "frontend" / ".env.local"
 FRONTEND_URL_DEFAULT = "http://localhost:3001"
 
@@ -490,8 +495,18 @@ def main() -> int:
         except (OSError, json.JSONDecodeError) as exc:
             log(f"WARNUNG: konnte {args.runner_token_file} nicht lesen, ignoriere: {exc}")
 
+    # A resolved runner token (mode a, never expires, nothing to refresh) and
+    # the old refresh-token cache (mode c) must never both feed into the same
+    # session — found live: a machine that had used --refresh-token before
+    # switching to --pair still had a stale .cp_daemon_session.json lying
+    # around, and if that old refresh token was itself expired/revoked, the
+    # refresh() call below failed and the daemon refused to start at all
+    # despite already holding a perfectly valid runner token. Skip the
+    # refresh-token cache entirely once a runner token is in play.
+    has_runner_token = bool(args.token and args.token.startswith(RUNNER_TOKEN_PREFIX))
+
     seed_refresh_token = args.refresh_token
-    if not seed_refresh_token and args.session_file.exists():
+    if not has_runner_token and not seed_refresh_token and args.session_file.exists():
         try:
             cached = json.loads(args.session_file.read_text(encoding="utf-8"))
             seed_refresh_token = cached.get("refresh_token")
@@ -499,6 +514,9 @@ def main() -> int:
                 log(f"Refresh Token aus {args.session_file} geladen (vorheriger Lauf).")
         except (OSError, json.JSONDecodeError) as exc:
             log(f"WARNUNG: konnte {args.session_file} nicht lesen, ignoriere Cache: {exc}")
+    if has_runner_token and seed_refresh_token:
+        log(f"Runner-Token aktiv — ignoriere --refresh-token/{args.session_file.name} (mode a schließt mode c aus).")
+        seed_refresh_token = None
 
     session = TokenSession(
         access_token=args.token,
