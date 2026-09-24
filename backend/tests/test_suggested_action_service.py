@@ -266,6 +266,46 @@ class SuggestedActionServiceTests(unittest.TestCase):
         self.assertEqual(retried["work_order_id"], "wo-retry")
         self.assertFalse(retried["already_decided"])
 
+    def test_confirm_survives_an_activity_log_failure_without_duplicating_the_work_order(self):
+        # CMD-003 (found in review, 24.09.2026): create_work_order()
+        # succeeding but append_activity_log() failing right after used to
+        # release the claim in the same except block, making the same
+        # request_id retryable and creating a SECOND work order for one
+        # user confirmation. The claim must be updated with the real
+        # work_order_id before the (non-essential) activity log is even
+        # attempted; only a create_work_order() failure itself releases it.
+        with patch.object(
+            svc.work_order_service, "create_work_order",
+            side_effect=[{"id": "wo-1", "approval_scope_id": "scope-1"}, {"id": "wo-2", "approval_scope_id": "scope-2"}],
+        ) as create, patch.object(
+            svc.work_order_service, "append_activity_log",
+            side_effect=[RuntimeError("injected audit failure"), {"id": "log-1"}],
+        ):
+            first = svc.confirm_suggested_action("user-1", "ws-1", "Serkan", _ACTION, "req-audit-fail")
+            second = svc.confirm_suggested_action("user-1", "ws-1", "Serkan", _ACTION, "req-audit-fail")
+
+        self.assertEqual(first["work_order_id"], "wo-1")
+        self.assertEqual(second["work_order_id"], "wo-1")
+        self.assertTrue(second["already_decided"])
+        self.assertEqual(create.call_count, 1)
+
+    def test_incomplete_confirmation_resumes_instead_of_returning_a_null_work_order(self):
+        # CMD-003: a "confirmed" decision row whose work_order_id is still
+        # None (process died between claiming and creating/recording the
+        # work order) must not be trusted as proof of a completed
+        # confirmation — it must be resumed using the existing claim row,
+        # so the caller always gets a real work_order_id back.
+        svc._claim_request_id("user-1", "ws-1", "req-incomplete", "confirmed", _ACTION)
+
+        with patch.object(
+            svc.work_order_service, "create_work_order",
+            return_value={"id": "wo-resumed", "approval_scope_id": "scope-resumed"},
+        ), patch.object(svc.work_order_service, "append_activity_log", return_value={"id": "log-resumed"}):
+            response = svc.confirm_suggested_action("user-1", "ws-1", "Serkan", _ACTION, "req-incomplete")
+
+        self.assertTrue(response["decision"] != "confirmed" or response["work_order_id"] is not None)
+        self.assertEqual(response["work_order_id"], "wo-resumed")
+
     def test_list_decisions_returns_most_recent_first(self):
         svc.reject_suggested_action("user-1", "ws-1", _ACTION, "req-older")
         self.fake_db.table("suggested_action_decisions").rows[-1]["created_at"] = "2026-09-01T00:00:00+00:00"

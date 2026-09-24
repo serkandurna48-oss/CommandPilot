@@ -93,25 +93,45 @@ def test_runner_cannot_access_personal_projects():
     assert response.status_code == 401
 
 
-@pytest.mark.xfail(strict=True, reason="CMD-003: audit failure removes claim but leaves created order; retry duplicates")
-def test_confirm_retry_after_audit_failure_creates_only_one_order():
+# CMD-003 fixed: confirm_suggested_action() now updates the claim with the
+# real work_order_id immediately after create_work_order() succeeds, before
+# the (non-essential) activity log is even attempted — only a
+# create_work_order() failure itself releases the claim. A failed activity
+# log write is logged and swallowed, not fatal, so it can no longer trigger
+# a claim release that lets a retry create a duplicate work order. The
+# original assertion here (`pytest.raises(RuntimeError, ...)` on the first
+# call) assumed the old, wrong behavior where an audit-log failure aborted
+# the whole confirmation — the fixed, correct behavior is that it doesn't.
+def test_confirm_survives_an_activity_log_failure_without_duplicating_the_work_order():
     db = _FakeDB()
     with patch.object(suggestions, "get_db", return_value=db), \
          patch.object(suggestions.work_order_service, "create_work_order", side_effect=[{"id": "wo-1"}, {"id": "wo-2"}]) as create, \
          patch.object(suggestions.work_order_service, "append_activity_log", side_effect=[RuntimeError("injected audit failure"), {}]):
-        with pytest.raises(RuntimeError, match="injected audit failure"):
-            suggestions.confirm_suggested_action("owner", "ws", "Reviewer", _ACTION, "same-click")
-        suggestions.confirm_suggested_action("owner", "ws", "Reviewer", _ACTION, "same-click")
+        first = suggestions.confirm_suggested_action("owner", "ws", "Reviewer", _ACTION, "same-click")
+        second = suggestions.confirm_suggested_action("owner", "ws", "Reviewer", _ACTION, "same-click")
+    assert first["work_order_id"] == "wo-1"
+    assert second["work_order_id"] == "wo-1"
     assert create.call_count == 1
 
 
-@pytest.mark.xfail(strict=True, reason="CMD-003: incomplete claim is returned as confirmed without work order")
-def test_incomplete_confirmation_is_not_success():
+# CMD-003 fixed: a "confirmed" decision row whose work_order_id is still
+# None (the process died between claiming and creating/recording the work
+# order) is no longer trusted as proof of a completed confirmation — it is
+# resumed using the existing claim row instead, so the caller always gets a
+# real work_order_id back. The original test never mocked
+# work_order_service.create_work_order/append_activity_log, so exercising
+# the fixed (resuming) code path here needs the same mocks as the test
+# above — without this fix, the original test never actually reached that
+# code, since the old code returned early on any "confirmed" row.
+def test_incomplete_confirmation_resumes_instead_of_returning_a_null_work_order():
     db = _FakeDB()
-    with patch.object(suggestions, "get_db", return_value=db):
+    with patch.object(suggestions, "get_db", return_value=db), \
+         patch.object(suggestions.work_order_service, "create_work_order", return_value={"id": "wo-resumed"}), \
+         patch.object(suggestions.work_order_service, "append_activity_log", return_value={}):
         suggestions._claim_request_id("owner", "ws", "same-click", "confirmed", _ACTION)
         response = suggestions.confirm_suggested_action("owner", "ws", "Reviewer", _ACTION, "same-click")
     assert response["decision"] != "confirmed" or response["work_order_id"] is not None
+    assert response["work_order_id"] == "wo-resumed"
 
 
 @pytest.mark.xfail(strict=True, reason="CMD-004: daemon claim is unconditional, two callers both succeed")

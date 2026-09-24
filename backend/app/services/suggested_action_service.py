@@ -199,20 +199,64 @@ def _resolve_lost_race(user_id: str, request_id: str, wanted_decision: str) -> d
 def confirm_suggested_action(
     user_id: str, workspace_id: str | None, created_by: str, action: SuggestedAction, request_id: str
 ) -> dict:
+    """
+    CMD-003 (found in review, 24.09.2026) fixed two related gaps here:
+
+    1. A "confirmed" decision row with work_order_id still None (the
+       process died between claiming and creating/recording the work
+       order — e.g. a server restart) used to be returned as
+       already_decided=True with work_order_id=None: a caller was told
+       "confirmed" for a request_id with no real work order behind it,
+       forever, since nothing ever retried the actual creation. Such a
+       row is now treated as an interrupted attempt to RESUME (reuses the
+       existing claim row) rather than proof of completion — the caller
+       always gets a real work_order_id back or a real exception, never a
+       "confirmed" that silently isn't.
+    2. create_work_order() succeeding but the (non-essential) activity-log
+       write failing right after used to delete the claim in the same
+       except block, making the same request_id retryable — a retry then
+       created a SECOND work order for one user confirmation. The claim is
+       now updated with the real work_order_id immediately after creation
+       succeeds, before the activity log is even attempted; only a
+       create_work_order() failure itself releases the claim. A failed
+       activity-log write is logged and swallowed, not fatal — the audit
+       trail is best-effort, the work order itself is the real side effect
+       and must never be duplicated by a retry.
+    """
     existing = _get_existing_decision(user_id, request_id)
     if existing:
         if existing["decision"] != "confirmed":
             raise AlreadyDecidedError(existing["decision"], existing.get("work_order_id"))
-        return {"decision": "confirmed", "work_order_id": existing["work_order_id"], "already_decided": True}
-
-    claim = _claim_request_id(user_id, workspace_id, request_id, "confirmed", action)
-    if claim is None:
-        return _resolve_lost_race(user_id, request_id, "confirmed")
+        if existing.get("work_order_id"):
+            return {"decision": "confirmed", "work_order_id": existing["work_order_id"], "already_decided": True}
+        claim = existing
+    else:
+        claim = _claim_request_id(user_id, workspace_id, request_id, "confirmed", action)
+        if claim is None:
+            return _resolve_lost_race(user_id, request_id, "confirmed")
 
     try:
         order = work_order_service.create_work_order(
             user_id, workspace_id, created_by, _build_work_order_create(action)
         )
+    except Exception:
+        # Release the claim so the same request_id can be retried cleanly —
+        # mirrors work_order_service.create_work_order()'s own
+        # compensate-on-failure precedent for its approval_scope insert.
+        # Safe here specifically because no work order exists yet.
+        logger.error(
+            "Work order creation failed after claiming request_id=%s — releasing claim so it can be retried",
+            request_id,
+        )
+        get_db().table(_TABLE).delete().eq("id", claim["id"]).execute()
+        raise
+
+    # The real side effect now exists — record it on the claim before
+    # attempting anything else, so a crash or failure past this point can
+    # never cause a retry to create a duplicate work order.
+    get_db().table(_TABLE).update({"work_order_id": order["id"]}).eq("id", claim["id"]).execute()
+
+    try:
         work_order_service.append_activity_log(
             order["id"],
             ActivityLogCreate(
@@ -225,18 +269,13 @@ def confirm_suggested_action(
                 ),
             ),
         )
-    except Exception:
-        # Release the claim so the same request_id can be retried cleanly —
-        # mirrors work_order_service.create_work_order()'s own
-        # compensate-on-failure precedent for its approval_scope insert.
+    except Exception as exc:
         logger.error(
-            "Work order creation failed after claiming request_id=%s — releasing claim so it can be retried",
-            request_id,
+            "Activity log entry failed after work order %s was already created for request_id=%s — "
+            "confirmation still succeeds, only the audit-log line is missing | %s",
+            order["id"], request_id, exc,
         )
-        get_db().table(_TABLE).delete().eq("id", claim["id"]).execute()
-        raise
 
-    get_db().table(_TABLE).update({"work_order_id": order["id"]}).eq("id", claim["id"]).execute()
     return {"decision": "confirmed", "work_order_id": order["id"], "already_decided": False}
 
 
