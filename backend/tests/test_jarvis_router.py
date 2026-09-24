@@ -107,6 +107,7 @@ class JarvisChatEndpointTests(unittest.TestCase):
 
         with patch.object(jarvis_router, "ensure_user_workspace", return_value={"workspace_id": "ws-1", "profile": {}}), \
              patch.object(jarvis_router, "check_daily_cap", return_value=None), \
+             patch.object(jarvis_router, "is_personal_integrations_owner", return_value=True), \
              patch.object(
                  jarvis_router.vault_service, "get_context_for_query",
                  return_value=("### Quelle: 00-Index.md\n...", [], []),
@@ -174,6 +175,51 @@ class JarvisChatEndpointTests(unittest.TestCase):
             body["work_order_sources"],
             [{"source_file": "Work Orders (CommandPilot)", "source_heading": "Update KSV Baunatal — Status: needs_approval"}],
         )
+
+    def test_non_owner_never_gets_calendar_or_notion_context(self):
+        # Regression test for a real, live-reproduced data leak (23.09.2026):
+        # a second, unrelated authenticated user's Jarvis chat returned the
+        # vault owner's real Outlook calendar event and real personal Notion
+        # tasks verbatim, because google_calendar_service/outlook_calendar_service/
+        # notion_tasks_service take no user_id at all — one Composio identity
+        # for the whole process. is_personal_integrations_owner() gates this
+        # at the router; here that gate resolves False (default patch target
+        # not applied, i.e. the real function runs against a _FAKE_USER whose
+        # id can never match a real VAULT_OWNER_USER_ID), so none of the three
+        # services should even be called. Explicitly patched to False rather
+        # than relying on _FAKE_USER not matching whatever VAULT_OWNER_USER_ID
+        # happens to be in the real backend/.env — that env-dependence is
+        # exactly the fragility that let three other tests break silently
+        # the moment this project's .env got a real value for it.
+        app.dependency_overrides[get_current_user] = _override_get_current_user
+
+        with patch.object(jarvis_router, "ensure_user_workspace", return_value={"workspace_id": "ws-1", "profile": {}}), \
+             patch.object(jarvis_router, "check_daily_cap", return_value=None), \
+             patch.object(jarvis_router, "is_personal_integrations_owner", return_value=False), \
+             patch.object(jarvis_router.vault_service, "get_context_for_query", return_value=("", [], [])), \
+             patch.object(jarvis_router.google_calendar_service, "get_context") as mock_google, \
+             patch.object(jarvis_router.outlook_calendar_service, "get_context") as mock_outlook, \
+             patch.object(jarvis_router.notion_tasks_service, "get_context") as mock_notion, \
+             patch.object(
+                 jarvis_router.work_orders_context_service, "get_context", return_value=("", []),
+             ), \
+             patch.object(
+                 jarvis_router, "generate_chat_reply",
+                 return_value=(JarvisChatAI(reply="ok", suggested_actions=[]), 10, 5),
+             ), \
+             patch.object(jarvis_router, "log_ai_usage", return_value=None):
+            resp = self.client.post(
+                "/api/jarvis/chat",
+                json={"message": "Was steht heute in meinem Kalender?", "history": []},
+            )
+
+        self.assertEqual(resp.status_code, 200)
+        mock_google.assert_not_called()
+        mock_outlook.assert_not_called()
+        mock_notion.assert_not_called()
+        body = resp.json()
+        self.assertEqual(body["calendar_sources"], [])
+        self.assertEqual(body["task_sources"], [])
 
     def test_calendar_and_notion_failures_do_not_break_chat(self):
         # Same non-fatal contract as vault_service's fetch failure below —

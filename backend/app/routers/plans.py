@@ -4,7 +4,7 @@ from datetime import date, datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth import CurrentUser, ensure_user_workspace, get_current_user, require_owned_record
-from app.core.config import settings
+from app.core.config import is_personal_integrations_owner, settings
 from app.models.plan import PlanGenerateRequest, PlanResponse
 from app.services.ai_service import AIGenerationError, generate_daily_plan
 from app.services.checkin_service import get_active_rules_for_user
@@ -216,37 +216,44 @@ async def generate_plan(
     # per-source UI disclosure the way Jarvis chat does. Google and Outlook
     # are independent calendar sources; each is fetched and merged regardless
     # of whether the other has a connected account.
-    try:
-        google_calendar_context, _ = google_calendar_service.get_context()
-    except Exception as exc:
-        google_calendar_context = ""
-        logger.warning(
-            "Google Calendar context fetch failed | %s: %s — continuing without it",
-            type(exc).__name__,
-            str(exc)[:100],
-        )
+    # Gate: same single-tenant-identity reasoning as routers/jarvis.py's chat
+    # endpoint — see is_personal_integrations_owner()'s docstring for the
+    # live data-leak this closes (proven 23.09.2026 via a real second test
+    # account, reproduced against this exact endpoint too).
+    is_owner = is_personal_integrations_owner(user.id)
+    google_calendar_context = ""
+    outlook_calendar_context = ""
+    tasks_context = ""
 
-    try:
-        outlook_calendar_context, _ = outlook_calendar_service.get_context()
-    except Exception as exc:
-        outlook_calendar_context = ""
-        logger.warning(
-            "Outlook Calendar context fetch failed | %s: %s — continuing without it",
-            type(exc).__name__,
-            str(exc)[:100],
-        )
+    if is_owner:
+        try:
+            google_calendar_context, _ = google_calendar_service.get_context()
+        except Exception as exc:
+            logger.warning(
+                "Google Calendar context fetch failed | %s: %s — continuing without it",
+                type(exc).__name__,
+                str(exc)[:100],
+            )
+
+        try:
+            outlook_calendar_context, _ = outlook_calendar_service.get_context()
+        except Exception as exc:
+            logger.warning(
+                "Outlook Calendar context fetch failed | %s: %s — continuing without it",
+                type(exc).__name__,
+                str(exc)[:100],
+            )
+
+        try:
+            tasks_context, _ = notion_tasks_service.get_context()
+        except Exception as exc:
+            logger.warning(
+                "Notion tasks context fetch failed | %s: %s — continuing without task context",
+                type(exc).__name__,
+                str(exc)[:100],
+            )
 
     calendar_context = "\n\n".join(b for b in (google_calendar_context, outlook_calendar_context) if b)
-
-    try:
-        tasks_context, _ = notion_tasks_service.get_context()
-    except Exception as exc:
-        tasks_context = ""
-        logger.warning(
-            "Notion tasks context fetch failed | %s: %s — continuing without task context",
-            type(exc).__name__,
-            str(exc)[:100],
-        )
 
     vault_context = "\n\n".join(b for b in (vault_context, calendar_context, tasks_context) if b)
 

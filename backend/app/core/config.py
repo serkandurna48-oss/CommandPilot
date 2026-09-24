@@ -48,3 +48,32 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def is_personal_integrations_owner(user_id: str) -> bool:
+    """Gate for the three globally-single-tenant external context sources
+    (Google Calendar, Outlook, Notion) — reuses VAULT_OWNER_USER_ID as the
+    one CommandPilot/Supabase user_id allowed to see them, exactly like
+    vault_service's own internal gate already does for the vault itself.
+    These three services (unlike vault_service) take no user_id parameter
+    at all — they're one Composio-connected identity for the whole backend
+    process — so the gate has to live at the call site (routers/jarvis.py,
+    routers/plans.py) instead of inside each service.
+
+    Found live 23.09.2026 via a real second test account: with
+    VAULT_OWNER_USER_ID unset (the actual state of backend/.env at the
+    time), a completely unrelated authenticated user's Jarvis chat returned
+    the vault owner's real Outlook calendar event and real personal Notion
+    tasks (medical/insurance/tax items) verbatim — a live, reproducible
+    multi-tenant data leak, not a theoretical one. Same fail-open shape as
+    vault_service's own comment already warned about for the vault alone;
+    VAULT_OWNER_USER_ID being unset silently disabled that gate too.
+
+    Empty/unset VAULT_OWNER_USER_ID (default) -> returns False for
+    everyone, i.e. these sources are now off for all users until it's set
+    — matches "fail closed" rather than the previous fail-open behavior.
+    This is a stopgap for single-tenant beta (CLAUDE.md's open decision:
+    "Vault/Kalender/Notion: Single-Tenant beibehalten (Beta = nur Serkan)
+    oder pro Nutzer machen?"), not a real per-user integration system.
+    """
+    return bool(settings.VAULT_OWNER_USER_ID) and user_id == settings.VAULT_OWNER_USER_ID

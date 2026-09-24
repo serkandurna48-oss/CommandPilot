@@ -121,7 +121,12 @@ def test_token_budget_is_respected(tmp_path):
     assert total_chars <= token_budget * vault_service._CHARS_PER_TOKEN + 1  # +1 for the truncation marker
 
 
-def test_get_context_for_query_always_includes_base_context(tmp_path):
+def test_get_context_for_query_always_includes_base_context(tmp_path, monkeypatch):
+    # Not testing the ownership gate here — force it off so this test doesn't
+    # depend on whatever VAULT_OWNER_USER_ID happens to be set to in the real
+    # backend/.env (broke live 23.09.2026 when that var was set for real to
+    # close a genuine multi-tenant data leak — see is_personal_integrations_owner()).
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "")
     _make_vault(tmp_path)
     # Query shares no vocabulary with any note body — only base context should surface,
     # and it must show up as base_sources, not hit_sources (nothing actually matched).
@@ -135,7 +140,9 @@ def test_get_context_for_query_always_includes_base_context(tmp_path):
 
 
 # ── Sources noise reduction (JARVIS-A1, Aufgabe 5) ───────────────────────────────
-def test_hit_sources_and_base_sources_are_kept_separate(tmp_path):
+def test_hit_sources_and_base_sources_are_kept_separate(tmp_path, monkeypatch):
+    # Same reasoning as test_get_context_for_query_always_includes_base_context above.
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "")
     _make_vault(tmp_path)
     block, hit_sources, base_sources = vault_service.get_context_for_query(
         "Was ist die Next Action für CommandPilot?", vault_path=str(tmp_path)

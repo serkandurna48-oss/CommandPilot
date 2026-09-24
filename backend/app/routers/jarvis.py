@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.auth import CurrentUser, ensure_user_workspace, get_current_user
-from app.core.config import settings
+from app.core.config import is_personal_integrations_owner, settings
 from app.models.jarvis import (
     JarvisChatRequest,
     JarvisChatResponse,
@@ -126,41 +126,53 @@ async def chat(
     # independent calendar sources (CLAUDE.md § Jarvis) — either, both, or
     # neither may have a connected account; each is fetched and merged
     # regardless of whether the other succeeded.
+    # Gate: these three sources are one Composio-connected identity for the
+    # whole backend process (CLAUDE.md § Jarvis), not per-Supabase-user —
+    # skip them entirely for anyone but the configured owner. Found live
+    # 23.09.2026: without this gate, a second, completely unrelated
+    # authenticated user's chat returned the owner's real calendar event and
+    # real personal Notion tasks. See is_personal_integrations_owner()'s
+    # docstring for the full incident.
+    is_owner = is_personal_integrations_owner(user.id)
+
     google_calendar_block = ""
     google_calendar_sources: list[dict] = []
-    try:
-        google_calendar_block, google_calendar_sources = google_calendar_service.get_context()
-    except Exception as exc:
-        logger.warning(
-            "Google Calendar context fetch failed | %s: %s — continuing without it",
-            type(exc).__name__,
-            str(exc)[:100],
-        )
+    if is_owner:
+        try:
+            google_calendar_block, google_calendar_sources = google_calendar_service.get_context()
+        except Exception as exc:
+            logger.warning(
+                "Google Calendar context fetch failed | %s: %s — continuing without it",
+                type(exc).__name__,
+                str(exc)[:100],
+            )
 
     outlook_calendar_block = ""
     outlook_calendar_sources: list[dict] = []
-    try:
-        outlook_calendar_block, outlook_calendar_sources = outlook_calendar_service.get_context()
-    except Exception as exc:
-        logger.warning(
-            "Outlook Calendar context fetch failed | %s: %s — continuing without it",
-            type(exc).__name__,
-            str(exc)[:100],
-        )
+    if is_owner:
+        try:
+            outlook_calendar_block, outlook_calendar_sources = outlook_calendar_service.get_context()
+        except Exception as exc:
+            logger.warning(
+                "Outlook Calendar context fetch failed | %s: %s — continuing without it",
+                type(exc).__name__,
+                str(exc)[:100],
+            )
 
     calendar_block = "\n\n".join(b for b in (google_calendar_block, outlook_calendar_block) if b)
     calendar_sources = google_calendar_sources + outlook_calendar_sources
 
     tasks_block = ""
     task_sources: list[dict] = []
-    try:
-        tasks_block, task_sources = notion_tasks_service.get_context()
-    except Exception as exc:
-        logger.warning(
-            "Notion tasks context fetch failed | %s: %s — continuing without task context",
-            type(exc).__name__,
-            str(exc)[:100],
-        )
+    if is_owner:
+        try:
+            tasks_block, task_sources = notion_tasks_service.get_context()
+        except Exception as exc:
+            logger.warning(
+                "Notion tasks context fetch failed | %s: %s — continuing without task context",
+                type(exc).__name__,
+                str(exc)[:100],
+            )
 
     # ── Retrieve work orders: CommandPilot's own DB, not an external source
     # (non-fatal) ──────────────────────────────────────────────────────────
