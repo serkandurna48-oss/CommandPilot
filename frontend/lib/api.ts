@@ -279,7 +279,7 @@ export interface RunnerConnection {
 
 export interface VaultStatus {
   ok: boolean;
-  reason: "not_owner" | "not_configured" | null;
+  reason: "not_owner" | "not_configured" | "read_error" | null;
   notes_found: number;
   checked_at: string;
 }

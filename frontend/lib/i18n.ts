@@ -79,6 +79,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "dashboard.data_source.stale":         { en: "Second Brain — last synced {time}",  de: "Second Brain — zuletzt synchronisiert {time}" },
   "dashboard.data_source.not_configured":{ en: "Second Brain not configured",        de: "Second Brain nicht konfiguriert" },
   "dashboard.data_source.fetch_failed":  { en: "Second Brain — sync failed",         de: "Second Brain — Synchronisierung fehlgeschlagen" },
+  "dashboard.data_source.read_error":    { en: "Second Brain — read error ({n} notes readable)", de: "Second Brain — Lesefehler ({n} Notizen lesbar)" },
   "dashboard.today.priority_label":    { en: "Priority",               de: "Priorität" },
   "dashboard.decision.empty_title":    { en: "Nothing needs your decision.", de: "Nichts wartet auf deine Entscheidung." },
   "dashboard.decision.empty_desc":     { en: "Work orders waiting for your approval will show up here.", de: "Arbeitsaufträge, die auf deine Freigabe warten, erscheinen hier." },

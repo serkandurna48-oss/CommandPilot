@@ -206,8 +206,27 @@ def test_vault_status_ok_for_the_real_owner(tmp_path, monkeypatch):
     status = vault_service.get_vault_status("owner-1")
     assert status["ok"] is True
     assert status["reason"] is None
-    assert status["notes_found"] > 0
+    # 00-Index.md + Projekte/CommandPilot.md + Menschen/Volkan.md — a real,
+    # unbudgeted count, not get_base_context's token-budget-capped one.
+    assert status["notes_found"] == 3
     assert status["checked_at"]
+
+
+def test_vault_status_fails_on_a_real_read_error_but_still_counts_the_rest(tmp_path, monkeypatch):
+    # Confirmed against e8c2b02: get_base_context silently skips a file
+    # that fails to read and this status check reused it, so a genuine
+    # per-file read failure was invisible — reported ok=True with a lower
+    # (but not explained) count. A status check must never call that "ok".
+    _make_vault(tmp_path)
+    (tmp_path / "Projekte" / "Broken.md").write_bytes(b"# Broken\n\xff\xfe invalid utf-8 bytes here")
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "owner-1")
+    monkeypatch.setattr(vault_service.settings, "VAULT_PATH", str(tmp_path))
+    status = vault_service.get_vault_status("owner-1")
+    assert status["ok"] is False
+    assert status["reason"] == "read_error"
+    # The 3 good notes still count — a partial failure reports as partial,
+    # not as a blanket zero/unknown.
+    assert status["notes_found"] == 3
 
 
 def test_vault_status_denies_non_owner_without_touching_the_filesystem(tmp_path, monkeypatch):

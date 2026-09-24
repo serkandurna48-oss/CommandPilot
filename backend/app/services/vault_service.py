@@ -353,24 +353,63 @@ def get_context_for_query(
 
 def get_vault_status(user_id: str) -> dict:
     """Health check for the Home dashboard's data-source indicator — not
-    context, no query, no retrieval budget. Reuses get_base_context (never
-    raises) purely to prove the vault is actually readable right now and to
-    report a real count, not a guess.
+    context, no query. Deliberately does NOT reuse get_base_context/
+    _cap_to_budget: those exist to build a bounded prompt block and, by
+    design, (a) silently skip a file that fails to read (a status check
+    must not report "ok" over a real read failure — reviewed 24.09.2026:
+    the previous version did exactly that, since get_base_context()
+    swallows per-file errors the same way it's supposed to for retrieval),
+    and (b) can silently drop files once a token budget is exceeded (a
+    status check's note count must be the real count, not "however many
+    fit in a budget nobody asked for here").
+
+    This function reads every note directly, counts every real success,
+    and treats even one per-file read failure as ok=False — reason=
+    "read_error" — while still reporting notes_found as the count that DID
+    read cleanly, so a partial failure is visible as partial, not total.
 
     Same fail-closed ownership gate as get_context_for_query — a non-owner
     (or an unset VAULT_OWNER_USER_ID) gets reason="not_owner", never a
     filesystem check, exactly like the real read path would.
 
     Returns {ok, reason, notes_found, checked_at} — reason is one of
-    "not_owner" | "not_configured" | None (ok=True has no reason).
+    "not_owner" | "not_configured" | "read_error" | None (ok=True has no
+    reason).
     """
     checked_at = datetime.now(timezone.utc).isoformat()
     owner_id = settings.VAULT_OWNER_USER_ID
     if not owner_id or user_id != owner_id:
         return {"ok": False, "reason": "not_owner", "notes_found": 0, "checked_at": checked_at}
 
-    if _vault_root(None) is None:
+    root = _vault_root(None)
+    if root is None:
         return {"ok": False, "reason": "not_configured", "notes_found": 0, "checked_at": checked_at}
 
-    matches = get_base_context(4000)
-    return {"ok": True, "reason": None, "notes_found": len(matches), "checked_at": checked_at}
+    notes_found = 0
+    read_errors = 0
+
+    index_path = root / _BASE_INDEX_FILE
+    if index_path.is_file():
+        try:
+            index_path.read_text(encoding="utf-8")
+            notes_found += 1
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.warning("vault_service: status check could not read %s | %s", index_path, exc)
+            read_errors += 1
+
+    for dirname in _ENTITY_DIRS:
+        dir_path = root / dirname
+        if not dir_path.is_dir():
+            continue
+        for file_path in dir_path.glob("*.md"):
+            try:
+                file_path.read_text(encoding="utf-8")
+                notes_found += 1
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.warning("vault_service: status check could not read %s | %s", file_path, exc)
+                read_errors += 1
+
+    if read_errors > 0:
+        return {"ok": False, "reason": "read_error", "notes_found": notes_found, "checked_at": checked_at}
+
+    return {"ok": True, "reason": None, "notes_found": notes_found, "checked_at": checked_at}

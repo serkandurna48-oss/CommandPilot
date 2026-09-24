@@ -72,15 +72,24 @@ export function DataSourceStatus() {
   if (status?.reason === "not_owner") return null;
 
   const isLive = !!status?.ok;
-  const isError = fetchFailed || status?.reason === "not_configured";
+  const isError = fetchFailed || (!!status && !status.ok);
 
+  // A specific reason the backend actually reported (not_configured,
+  // read_error) takes priority over the generic client-side "stale"
+  // fallback below — that fallback exists for "couldn't reach the backend
+  // at all," not for masking a real, current read error behind an old
+  // cached success (confirmed against e8c2b02: a read_error would have
+  // rendered as "last synced HH:MM" if a prior successful check existed
+  // in localStorage, which reads as "basically fine" — it is not).
   let text: string;
   if (isLive && status) {
     text = t("dashboard.data_source.connected").replace("{n}", String(status.notes_found));
-  } else if (lastOk) {
-    text = t("dashboard.data_source.stale").replace("{time}", new Date(lastOk.checked_at).toLocaleTimeString());
   } else if (status?.reason === "not_configured") {
     text = t("dashboard.data_source.not_configured");
+  } else if (status?.reason === "read_error") {
+    text = t("dashboard.data_source.read_error").replace("{n}", String(status.notes_found));
+  } else if (lastOk) {
+    text = t("dashboard.data_source.stale").replace("{time}", new Date(lastOk.checked_at).toLocaleTimeString());
   } else if (fetchFailed) {
     text = t("dashboard.data_source.fetch_failed");
   } else {
