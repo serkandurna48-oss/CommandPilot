@@ -1,11 +1,14 @@
+import hashlib
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from app.db.client import get_db
+from app.services.runner_connection_service import RUNNER_TOKEN_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -30,11 +33,65 @@ def _get_bearer_token(
     return credentials.credentials
 
 
+def _resolve_runner_token(db, token: str) -> CurrentUser | None:
+    """Accepts a paired local-runner token (scripts/run_work_order_daemon.py,
+    supabase/migrations/017_runner_connections.sql) as a drop-in alternative
+    to a real Supabase session — resolves to the SAME CurrentUser shape, so
+    every existing ownership check downstream (require_owned_record,
+    .eq("user_id", ...)) keeps working unchanged; the runner is simply a
+    second way to prove "I am this specific, already-onboarded user."
+
+    Returns None immediately (no DB call at all) for anything that isn't
+    prefixed as a runner token — a real Supabase JWT never matches this, so
+    the normal frontend request path pays nothing for this check existing.
+    An unknown, revoked, or not-yet-approved (user_id still NULL) token
+    returns None too, falling through to the real 401 below — never a
+    silent partial success.
+    """
+    if not token.startswith(RUNNER_TOKEN_PREFIX):
+        return None
+
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    # maybe_single().execute() returns None outright (not a response object
+    # with .data=None) when zero rows match — postgrest-py 2.30.0 behavior,
+    # same as runner_connection_service.py's _find_pending_request/
+    # poll_pairing_status. A revoked or unknown token is the expected common
+    # case here, not an error — caught live 23.09.2026 when revoking a real
+    # paired connection and then reusing its token crashed this dependency
+    # with a 500 instead of the intended clean 401.
+    response = (
+        db.table("runner_connections")
+        .select("*")
+        .eq("token_hash", token_hash)
+        .is_("revoked_at", "null")
+        .maybe_single()
+        .execute()
+    )
+    row = response.data if response else None
+    if not row or not row.get("user_id"):
+        return None
+
+    # Best-effort — a failed timestamp update must never block a real,
+    # already-validated request.
+    try:
+        db.table("runner_connections").update(
+            {"last_used_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("id", row["id"]).execute()
+    except Exception:
+        logger.warning("runner_connections.last_used_at update failed for connection_id=%s", row["id"])
+
+    return CurrentUser(id=row["user_id"], email=None, workspace_id=row.get("workspace_id"))
+
+
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> CurrentUser:
     token = _get_bearer_token(credentials)
     db = get_db()
+
+    runner_user = _resolve_runner_token(db, token)
+    if runner_user is not None:
+        return runner_user
 
     try:
         auth_response = db.auth.get_user(token)

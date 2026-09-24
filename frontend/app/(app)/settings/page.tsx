@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { RunnerConnections } from "@/components/settings/RunnerConnections";
 import { useAuth } from "@/lib/auth";
 import { useT, SUPPORTED_LANGS } from "@/lib/i18n";
 import { api } from "@/lib/api";
@@ -124,6 +125,10 @@ export default function SettingsPage() {
         <Section title={t("settings.ai_model")} description={t("settings.ai_model_desc")}>
           <p className="text-[var(--text-primary)] text-sm font-medium">GPT-4o</p>
           <p className="text-[var(--text-tertiary)] text-xs mt-0.5">{t("settings.ai_model_active")}</p>
+        </Section>
+
+        <Section title={t("settings.runner.title")} description={t("settings.runner.desc")}>
+          <RunnerConnections />
         </Section>
       </div>
     </div>

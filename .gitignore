@@ -22,6 +22,12 @@ env/
 .env.*.local
 backend/.env
 
+# Cached daemon refresh-token session (scripts/run_work_order_daemon.py --refresh-token)
+.cp_daemon_session.json
+
+# Cached runner token from guided pairing (scripts/run_work_order_daemon.py --pair)
+.cp_runner_token.json
+
 # Node
 node_modules/
 .next/

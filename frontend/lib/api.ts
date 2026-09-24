@@ -243,4 +243,31 @@ export const api = {
     upsertReviewPackage: (id: string, data: ApiReviewPackageCreate) =>
       request<ApiReviewPackage>(`/api/work-orders/${id}/review-package`, { method: "PUT", body: JSON.stringify(data) }),
   },
+
+  // ─── Runner connections (guided pairing, 23.09.2026) ───────────────────────────
+  // Replaces "copy a Supabase session token out of browser DevTools" for
+  // scripts/run_work_order_daemon.py — approve/list/revoke run through the
+  // user's normal session (auth handled by request() like everything else
+  // above); request/poll are called by the runner itself, never from this
+  // frontend client, hence no wrappers for those two here.
+  runnerConnections: {
+    listMine: () =>
+      request<RunnerConnection[]>("/api/runner-connections"),
+
+    approve: (data: { user_code: string; label?: string }) =>
+      request<RunnerConnection>("/api/runner-connections/pairing/approve", {
+        method: "POST", body: JSON.stringify(data),
+      }),
+
+    revoke: (id: string) =>
+      request<{ revoked: boolean }>(`/api/runner-connections/${id}/revoke`, { method: "POST" }),
+  },
 };
+
+export interface RunnerConnection {
+  id: string;
+  label: string;
+  created_at: string;
+  last_used_at: string | null;
+  revoked_at: string | null;
+}

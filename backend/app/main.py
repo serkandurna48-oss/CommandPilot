@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from app.routers import auth, health, checkins, jarvis, plans, projects, reviews, rules, work_orders
+from app.routers import auth, health, checkins, jarvis, plans, projects, reviews, rules, runner_pairing, work_orders
 from app.core.config import settings
 
 
@@ -42,3 +42,4 @@ app.include_router(rules.router, prefix="/api/rules", tags=["rules"])
 app.include_router(projects.router, prefix="/api/projects", tags=["projects"])
 app.include_router(work_orders.router, prefix="/api/work-orders", tags=["work_orders"])
 app.include_router(jarvis.router, prefix="/api/jarvis", tags=["jarvis"])
+app.include_router(runner_pairing.router, prefix="/api/runner-connections", tags=["runner_connections"])

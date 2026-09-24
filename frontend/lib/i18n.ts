@@ -108,6 +108,8 @@ const dict: Record<string, Record<Lang, string>> = {
   "morning.history.title":    { en: "Recent check-ins",  de: "Letzte Tagesstarts" },
   "morning.history.energy":   { en: "Energy",             de: "Energie" },
   "morning.history.sleep":    { en: "Sleep",              de: "Schlaf" },
+  "morning.plan_history.title":    { en: "Past plans",             de: "Frühere Tagespläne" },
+  "morning.plan_history.untitled": { en: "(no main win recorded)", de: "(kein Haupt-Ziel hinterlegt)" },
 
   // ── Plan View ──────────────────────────────────────────────────────────────
   "plan.based_on_review":     { en: "Based on your recent evening review", de: "Basierend auf deiner letzten Abend-Reflexion" },
@@ -306,6 +308,26 @@ const dict: Record<string, Record<Lang, string>> = {
   // No internal/dev-facing detail (".env") shown to the user — just the
   // model name and that it's the active one.
   "settings.ai_model_active": { en: "Active AI model", de: "Aktives KI-Modell" },
+  "settings.runner.title": { en: "Local runner", de: "Runner verbinden" },
+  "settings.runner.desc": {
+    en: "Connect a local machine so Jarvis-approved work orders can actually run — no tokens, just a code.",
+    de: "Verbinde einen lokalen Rechner, damit freigegebene Work Orders wirklich ausgeführt werden können — kein Token, nur ein Code.",
+  },
+  "settings.runner.code_label": { en: "Code from the runner", de: "Code vom Runner" },
+  "settings.runner.label_label": { en: "Name (optional)", de: "Name (optional)" },
+  "settings.runner.label_placeholder": { en: "e.g. Work laptop", de: "z. B. Arbeitslaptop" },
+  "settings.runner.connect": { en: "Connect", de: "Verbinden" },
+  "settings.runner.connected_as": { en: "Connected: {label}", de: "Verbunden: {label}" },
+  "settings.runner.hint": {
+    en: "Run \"python scripts/run_work_order_daemon.py --pair\" on the machine you want to connect — it will print a code to enter here.",
+    de: "Führe \"python scripts/run_work_order_daemon.py --pair\" auf dem Rechner aus, den du verbinden willst — er zeigt einen Code, den du hier einträgst.",
+  },
+  "settings.runner.empty": { en: "No runner connected yet.", de: "Noch kein Runner verbunden." },
+  "settings.runner.load_error": { en: "Could not load connections:", de: "Verbindungen konnten nicht geladen werden:" },
+  "settings.runner.connected_since": { en: "connected", de: "verbunden seit" },
+  "settings.runner.last_used": { en: "last used", de: "zuletzt aktiv" },
+  "settings.runner.never_used": { en: "never used yet", de: "noch nie aktiv" },
+  "settings.runner.revoke": { en: "Disconnect", de: "Trennen" },
 
   // ── Login ──────────────────────────────────────────────────────────────────
   "login.title":              { en: "Log in to CommandPilot", de: "Bei CommandPilot anmelden" },
@@ -475,6 +497,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.required":             { en: "required",             de: "erforderlich" },
   "operator.optional":             { en: "optional",             de: "optional" },
   "operator.empty_title":          { en: "No work orders",       de: "Keine Work Orders" },
+  "operator.load_error":           { en: "Could not load this work order:", de: "Work Order konnte nicht geladen werden:" },
   "operator.empty_desc":           { en: "Background work orders will appear here once created.", de: "Background Work Orders erscheinen hier, sobald sie erstellt wurden." },
   "operator.back":                 { en: "Back to Operator",     de: "Zurück zum Operator" },
 
@@ -569,7 +592,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.section.no_scope_warning":    { en: "No approval scope — this work order has no defined boundaries. Treat with extra caution.", de: "Kein Approval Scope — dieses Work Order hat keine definierten Grenzen. Besondere Vorsicht geboten." },
   "operator.section.no_blocked_actions_warning": { en: "This approval scope has no blocked-actions list.", de: "Dieser Approval Scope hat keine Liste blockierter Aktionen." },
 
-  // Live execution view (running state only) — see components/operator/LiveExecutionView.tsx
+  // Live execution / activity stream — see components/operator/StepPipeline.tsx, ActivityFeed.tsx
   "operator.live.badge":         { en: "Live",            de: "Live" },
   "operator.live.stream_title":  { en: "Activity Stream", de: "Activity Stream" },
 
@@ -702,6 +725,10 @@ const dict: Record<string, Record<Lang, string>> = {
   // List page CTA + empty state (OP-Create-001)
   "operator.list.new_button":    { en: "New Work Order", de: "Neue Work Order" },
   "operator.empty_cta":          { en: "Create first Work Order", de: "Erste Work Order erstellen" },
+  "operator.list.needs_attention": { en: "Needs Attention", de: "Braucht Aufmerksamkeit" },
+  "operator.list.in_progress":     { en: "In Progress",     de: "In Arbeit" },
+  "operator.list.queue":           { en: "Queue",           de: "Warteschlange" },
+  "operator.list.completed":       { en: "Completed",       de: "Abgeschlossen" },
 
   // Create flow (OP-Create-001)
   "operator.create.title":                 { en: "New Work Order",        de: "Neue Work Order" },
@@ -747,6 +774,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "common.error":             { en: "Something went wrong", de: "Etwas ist schiefgelaufen" },
   "common.save":              { en: "Save",               de: "Speichern" },
   "common.cancel":            { en: "Cancel",             de: "Abbrechen" },
+  "common.dismiss":           { en: "Dismiss",            de: "Schließen" },
 };
 
 /** Look up a translation. Falls back to "en" then the raw key. */
