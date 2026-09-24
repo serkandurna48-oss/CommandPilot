@@ -180,8 +180,12 @@ export interface ProjectUpdate {
   description?: string;
   status?: ProjectStatus;
   priority?: ProjectPriority;
-  next_action?: string;
-  risk?: string;
+  // null (not just omitted) deliberately clears the field server-side —
+  // see ProjectsManager.tsx's handleUpdate. Omitting the key entirely
+  // means "leave unchanged", the same PATCH-semantics distinction the
+  // backend now makes via exclude_unset.
+  next_action?: string | null;
+  risk?: string | null;
   website_url?: string;
 }
 

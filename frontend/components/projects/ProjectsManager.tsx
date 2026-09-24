@@ -222,8 +222,14 @@ export function ProjectsManager() {
         description: editForm.description.trim() || undefined,
         status: editForm.status,
         priority: editForm.priority,
-        next_action: editForm.next_action.trim() || undefined,
-        risk: editForm.risk.trim() || undefined,
+        // null, not undefined: a deliberately-cleared field must reach the
+        // backend as an explicit "set this to nothing" (exclude_unset on
+        // that side), not be silently omitted from the request — confirmed
+        // against e8c2b02: clearing either field reverted after reload
+        // because `|| undefined` here made JSON.stringify drop the key
+        // entirely, indistinguishable from "field not touched".
+        next_action: editForm.next_action.trim() || null,
+        risk: editForm.risk.trim() || null,
         website_url: editForm.website_url.trim() || undefined,
       });
       setEditingId(null);

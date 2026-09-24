@@ -31,7 +31,13 @@ def update_project(
     user: CurrentUser = Depends(get_current_user),
 ):
     require_owned_record("projects", project_id, user)
-    updates = data.model_dump(exclude_none=True)
+    # exclude_unset, not exclude_none: a field the client actually sent as
+    # null (deliberately clearing next_action/risk) must reach the DB as
+    # NULL. exclude_none would silently drop that same null and leave the
+    # old value in place — confirmed against e8c2b02: clearing either field
+    # in the edit form reverted to its old value after reload, because this
+    # endpoint stripped the null before it ever reached update_project().
+    updates = data.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
     try:
