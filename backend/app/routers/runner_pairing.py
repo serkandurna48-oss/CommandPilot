@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth import CurrentUser, ensure_user_workspace, get_current_user
+from app.auth import CurrentUser, ensure_user_workspace, get_current_browser_user, get_current_user
 from app.models.runner import (
     RunnerConnectionResponse,
     RunnerPairingApprove,
@@ -30,7 +30,7 @@ def poll_pairing(data: RunnerPairingPoll):
 
 # ── Authenticated — called from the logged-in browser session ─────────────
 @router.post("/pairing/approve", response_model=RunnerConnectionResponse)
-def approve_pairing(data: RunnerPairingApprove, user: CurrentUser = Depends(get_current_user)):
+def approve_pairing(data: RunnerPairingApprove, user: CurrentUser = Depends(get_current_browser_user)):
     setup = ensure_user_workspace(user)
     connection = runner_connection_service.approve_pairing(
         user.id, setup.get("workspace_id"), data.user_code, data.label

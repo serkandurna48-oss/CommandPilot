@@ -93,6 +93,31 @@ def get_current_user(
     if runner_user is not None:
         return runner_user
 
+    return _resolve_supabase_session(db, token)
+
+
+def get_current_browser_user(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> CurrentUser:
+    """Same as get_current_user, but never accepts a runner token — only a
+    real Supabase session from a logged-in browser. Use this for endpoints
+    where a runner token must not be sufficient, e.g. approving a NEW
+    pairing request (routers/runner_pairing.py's approve_pairing): a runner
+    token proves "I am this already-onboarded user" for normal API calls,
+    but letting one self-approve further pairing requests would let a
+    single compromised/leaked runner token mint arbitrarily many more
+    runner tokens for itself, with no browser session ever involved.
+    """
+    token = _get_bearer_token(credentials)
+    if token.startswith(RUNNER_TOKEN_PREFIX):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="A runner token cannot be used here — log in via the browser to approve a pairing request.",
+        )
+    return _resolve_supabase_session(get_db(), token)
+
+
+def _resolve_supabase_session(db, token: str) -> CurrentUser:
     try:
         auth_response = db.auth.get_user(token)
     except Exception:

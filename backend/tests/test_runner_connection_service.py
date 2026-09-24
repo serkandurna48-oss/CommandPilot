@@ -14,7 +14,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 BACKEND_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BACKEND_ROOT))
@@ -280,6 +280,45 @@ class GetCurrentUserRunnerTokenTests(unittest.TestCase):
         finally:
             db.table = original_table
         self.assertNotIn("runner_connections", calls)
+
+
+class GetCurrentBrowserUserTests(unittest.TestCase):
+    """app.auth.get_current_browser_user() — used by the pairing-approve
+    endpoint — must reject a runner token outright, even a valid, already-
+    approved one. A runner token proving "I am this onboarded user" is not
+    the same guarantee as an actual logged-in browser session; letting one
+    approve further pairing requests would let a single compromised runner
+    token mint arbitrarily more of itself."""
+
+    def setUp(self):
+        self.fake_db, self.patcher = _patched_db()
+        self.patcher.start()
+        self.get_db_patcher = patch.object(auth, "get_db", return_value=self.fake_db)
+        self.get_db_patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
+        self.get_db_patcher.stop()
+
+    def _bearer(self, token: str):
+        from fastapi.security import HTTPAuthorizationCredentials
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    def test_valid_approved_runner_token_is_still_rejected(self):
+        from fastapi import HTTPException
+        result = svc.create_pairing_request(None)
+        svc.approve_pairing("user-1", "ws-1", result["user_code"], None)
+
+        with self.assertRaises(HTTPException) as ctx:
+            auth.get_current_browser_user(self._bearer(result["runner_token"]))
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_real_supabase_session_is_still_accepted(self):
+        self.fake_db.auth = MagicMock()
+        self.fake_db.auth.get_user.return_value = MagicMock(user=MagicMock(id="user-1", email="a@b.com"))
+
+        user = auth.get_current_browser_user(self._bearer("a-real-looking-jwt"))
+        self.assertEqual(user.id, "user-1")
 
 
 if __name__ == "__main__":
