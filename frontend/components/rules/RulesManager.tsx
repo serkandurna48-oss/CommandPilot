@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea, Select } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/Card";
@@ -8,7 +8,7 @@ import { EmptyState } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import type { UserRule } from "@/types";
-import { Trash2, ToggleLeft, ToggleRight, Plus } from "lucide-react";
+import { Trash2, ToggleLeft, ToggleRight, Plus, RefreshCw } from "lucide-react";
 
 const CATEGORIES = ["scheduling", "energy", "focus", "sport", "study", "business", "social", "general"];
 
@@ -16,21 +16,35 @@ export function RulesManager() {
   const t = useT();
   const [rules, setRules] = useState<UserRule[]>([]);
   const [loading, setLoading] = useState(true);
+  // Found live in production (24.09.2026): this had no catch at all — a
+  // rejected api.rules.listMine() call left `rules` at its initial [] and
+  // rendered the ordinary "no rules yet" empty state, indistinguishable
+  // from a genuine failure. Same anti-pattern already fixed in
+  // ProjectsManager.tsx's loadProjects(); this component just hadn't been.
+  const [hasLoadError, setHasLoadError] = useState(false);
+  const requestId = useRef(0);
   const [showForm, setShowForm] = useState(false);
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({ title: "", rule_text: "", category: "general", priority: 5 });
 
   const loadRules = useCallback(async () => {
+    const currentRequest = ++requestId.current;
     setLoading(true);
+    setHasLoadError(false);
     try {
       const data = await api.rules.listMine();
-      setRules(data);
+      if (currentRequest === requestId.current) setRules(data);
+    } catch {
+      if (currentRequest === requestId.current) setHasLoadError(true);
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { loadRules(); }, [loadRules]);
+  useEffect(() => {
+    loadRules();
+    return () => { requestId.current += 1; };
+  }, [loadRules]);
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
@@ -123,6 +137,14 @@ export function RulesManager() {
       {loading ? (
         <div className="py-8 flex justify-center">
           <div className="h-6 w-6 rounded-full border-2 border-brand-500 border-t-transparent animate-spin" />
+        </div>
+      ) : hasLoadError ? (
+        <div className="py-8 flex flex-col items-center gap-3 text-center">
+          <p className="text-[var(--text-secondary)] text-sm">{t("error.load_failed")}</p>
+          <Button size="sm" variant="secondary" className="rounded-xl" onClick={loadRules}>
+            <RefreshCw className="h-4 w-4" />
+            {t("button.retry")}
+          </Button>
         </div>
       ) : rules.length === 0 ? (
         <EmptyState
