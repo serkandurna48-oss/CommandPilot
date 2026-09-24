@@ -133,9 +133,63 @@ Tages-Kostendeckel hinaus. **Fehlend, nicht begonnen.**
    — Budget-Empfehlungen/Dokumentation für Nutzer sollten das wohl nach oben
    korrigieren, damit `--max-budget-usd 0.30`-artige Versuche nicht
    routinemäßig scheitern.
-4. **Jarvis "genau zwei Vorschläge"-Regel**: GPT-4o hält sich in der Praxis
-   nicht zuverlässig daran (real zweimal nur einen geliefert, korrekt
-   verworfen, aber dem Nutzer dadurch nichts angezeigt) — Prompt- oder
-   Schema-Anpassung (z. B. Retry bei genau einem Treffer, oder das Modell
-   explizit um "genau zwei, andernfalls keinen" bitten lassen) wäre ein
-   sinnvoller nächster Schritt, nicht in dieser Session umgesetzt.
+4. **Behoben (24.09.2026)** — Jarvis "genau zwei Vorschläge"-Regel: GPT-4o
+   hielt sich in der Praxis nicht zuverlässig daran (real wiederholt nur
+   einen geliefert, korrekt verworfen, aber dem Nutzer dadurch nichts
+   angezeigt). Gelockert auf "einen oder zwei" (`JarvisChatAI._cap_at_two`,
+   app/models/jarvis.py; Promptregel und JSON-Schema-Beschreibung in
+   app/prompts/jarvis_chat.py angepasst) — ein einzelner Vorschlag wird jetzt
+   angezeigt statt verworfen, nur >2 wird weiter gekappt.
+
+## Security-Batch vor Tester-Einladung (24.09.2026)
+
+Vier Befunde aus einer unabhängigen Review gegen HEAD, jeweils gegen den
+tatsächlichen Code bestätigt, dann gefixt — je ein Commit, je ein
+Regressionstest, komplette Backend-Suite grün (130 passed, 1 vorbestehender,
+umgebungsabhängiger Fail in `test_jarvis_quality.py` unverändert, siehe
+oben):
+
+1. **`routers/runner_pairing.py`: `approve_pairing` akzeptierte auch einen
+   `cprun_`-Runner-Token statt nur eine echte Supabase-Session** — bestätigt:
+   `get_current_user` (per `Depends`) lässt beides durch. Ein kompromittierter
+   Runner-Token hätte sich damit selbst weitere Runner-Tokens freischalten
+   können, ganz ohne echten Browser-Login. Gefixt: neue Dependency
+   `get_current_browser_user` (`app/auth.py`), die einen `cprun_`-Token explizit
+   mit 401 ablehnt; `approve_pairing` hängt jetzt davon ab statt von
+   `get_current_user`.
+2. **`services/runner_connection_service.py`: `approve_pairing` war nicht
+   atomar** — bestätigt: Prüfung (`_find_pending_request`) und Schreiben
+   liefen als zwei getrennte Schritte; zwei nahezu gleichzeitige Freigaben
+   desselben Codes hätten beide die Prüfung bestanden, die zweite den
+   `user_id` der ersten überschrieben. Gefixt: das Binden ist jetzt ein
+   Compare-and-Set (`UPDATE ... WHERE id = ... AND user_id IS NULL`) — nur
+   die zuerst committende Freigabe gewinnt, die zweite bekommt `None`
+   (identisch zu "Code unbekannt"). Regressionstest simuliert exakt diese
+   Überschneidung (beide lesen denselben "pending"-Snapshot, bevor eine von
+   beiden schreibt).
+3. **`scripts/run_work_order_daemon.py`: Runner-Token und alter
+   Refresh-Token-Cache schlossen sich nicht aus** — bestätigt: war sowohl
+   `.cp_runner_token.json` als auch ein älteres `.cp_daemon_session.json`
+   vorhanden, versuchte der Daemon trotzdem, den (womöglich abgelaufenen)
+   Refresh-Token zu erneuern, und brach bei Fehlschlag komplett ab — obwohl
+   der geladene Runner-Token allein völlig ausgereicht hätte. Gefixt: sobald
+   ein Runner-Token aktiv ist, wird der Refresh-Cache gar nicht erst gelesen.
+4. **`services/vault_service.py` (Zeile ~334): Eigentümer-Gate war fail-open,
+   nicht fail-closed** — bestätigt, derselbe Fehler wie der bereits gefixte
+   `is_personal_integrations_owner`-Fall, aber im Vault selbst nie
+   nachgezogen: ein leeres/ungesetztes `VAULT_OWNER_USER_ID` deaktivierte das
+   Gate komplett statt niemanden durchzulassen. Gefixt: leer/ungesetzt heißt
+   jetzt "niemand", nicht "jeder". `test_vault_service.py`s
+   `test_empty_vault_owner_user_id_behaves_as_before` (erwartete explizit das
+   alte Fail-open-Verhalten) umgedreht zu
+   `test_empty_vault_owner_user_id_fails_closed`.
+
+**Bewusst nicht in diesem Batch gefixt**: CMD-002
+(`docs/reviews/test_review_regressions.py`, "paired runner can read personal
+projects") — gegen HEAD erneut geprüft, weiterhin offen (`xfail(strict=True)`
+schlägt weiterhin korrekt fehl, kein XPASS). Ein Runner-Token löst aktuell zu
+genau demselben `CurrentUser` auf wie eine echte Session und kann damit jeden
+Endpoint des Kontos erreichen, nicht nur Work-Order-bezogene — das ist eine
+größere Scoping-Entscheidung (Runner-Tokens auf work-order-relevante Endpunkte
+begrenzen?), keine punktuelle Fail-closed-Korrektur wie die vier oben. Vor
+einer echten Multi-Tester-Einladung nachziehen.
