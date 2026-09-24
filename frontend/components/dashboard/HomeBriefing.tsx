@@ -125,17 +125,37 @@ export const PROJECT_STATUS_DOT: Record<ProjectStatus, string> = {
 
 export interface HomeBriefingProps {
   plan: DailyPlan | null;
+  planError: string | null;
   needsDecision: WorkOrder[];
   inProgress: WorkOrder[];
+  ordersError: string | null;
   activity: ActivityEvent[];
   projects: Project[];
   projectsError: string | null;
   onRetryProjects: () => void;
+  onRetryOrders: () => void;
+  onRetryPlan: () => void;
   pendingId: string | null;
   onRequeue: (id: string) => void;
 }
 
-export function HomeBriefing({ plan, needsDecision, inProgress, activity, projects, projectsError, onRetryProjects, pendingId, onRequeue }: HomeBriefingProps) {
+// Shared by the three sections below whose data all comes from the same
+// work-orders fetch (Needs Decision, In Progress, Recent Activity) — a
+// failure must read the same way in all three, not as three separately
+// worded errors for one underlying cause.
+function InlineError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  const t = useT();
+  return (
+    <div className="flex items-center justify-between gap-3 px-4 py-3">
+      <p className="text-status-danger text-sm">{t("error.load_failed")} {message}</p>
+      <Button size="sm" variant="outline-accent" onClick={onRetry}>
+        {t("button.retry")}
+      </Button>
+    </div>
+  );
+}
+
+export function HomeBriefing({ plan, planError, needsDecision, inProgress, ordersError, activity, projects, projectsError, onRetryProjects, onRetryOrders, onRetryPlan, pendingId, onRequeue }: HomeBriefingProps) {
   const t = useT();
   const priority = plan?.top_priorities?.[0];
 
@@ -189,7 +209,7 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
           putting Needs Decision + In Progress beside it, not to stretching
           the headline further. Below xl, the rail drops beneath. */}
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-4 items-start mb-5">
-        {plan?.main_win ? (
+        {!planError && plan?.main_win ? (
           <div className="rounded-2xl border border-white/[0.06] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] px-7 py-6">
             {priority?.life_area && (
               <p className="text-[11px] font-mono uppercase tracking-wide text-[var(--text-tertiary)] mb-2">
@@ -224,6 +244,16 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
               </Link>
             </div>
           </div>
+        ) : planError ? (
+          // A failed plans fetch must not read as "no plan today" — that's a
+          // real, common, legitimate state (see the standby branch below)
+          // and would otherwise hide a genuine load failure behind it.
+          <div className="rounded-2xl border border-status-danger/30 bg-status-danger/10 px-7 py-5 flex items-center justify-between gap-4 flex-wrap">
+            <p className="text-status-danger text-sm">{t("error.load_failed")} {planError}</p>
+            <Button size="sm" variant="outline-accent" onClick={onRetryPlan}>
+              {t("button.retry")}
+            </Button>
+          </div>
         ) : (
           <div className="rounded-2xl border border-white/[0.06] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] px-7 py-5 flex items-center justify-between gap-4 flex-wrap">
             <div>
@@ -243,7 +273,9 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
             title={t("dashboard.section.needs_decision")}
             action={needsDecision.length > 0 ? <ViewAllLink href="/operator" /> : undefined}
           >
-            {needsDecision.length === 0 ? (
+            {ordersError ? (
+              <InlineError message={ordersError} onRetry={onRetryOrders} />
+            ) : needsDecision.length === 0 ? (
               <InlineEmpty text={t("dashboard.decision.empty_desc")} />
             ) : (
               <div className="divide-y divide-white/[0.05]">
@@ -286,7 +318,9 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
             title={t("dashboard.section.in_progress")}
             action={inProgress.length > 0 ? <ViewAllLink href="/operator" /> : undefined}
           >
-            {inProgress.length === 0 ? (
+            {ordersError ? (
+              <InlineError message={ordersError} onRetry={onRetryOrders} />
+            ) : inProgress.length === 0 ? (
               <InlineEmpty text={t("dashboard.progress.empty_desc")} />
             ) : (
               <div className="divide-y divide-white/[0.05]">
@@ -320,7 +354,9 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
           last in the flow. Active/waiting/paused projects live in
           ProjectCards above — no longer duplicated here. */}
       <Section title={t("dashboard.section.recent_activity")}>
-        {activity.length === 0 ? (
+        {ordersError ? (
+          <InlineError message={ordersError} onRetry={onRetryOrders} />
+        ) : activity.length === 0 ? (
           <InlineEmpty text={t("dashboard.activity.empty_desc")} />
         ) : (
           <div className="divide-y divide-white/[0.05]">

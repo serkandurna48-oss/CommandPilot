@@ -21,6 +21,15 @@ export default function DashboardPage() {
   // CLAUDE.md already flags for mockWorkOrders.ts: an API failure must
   // never look identical to "nothing here."
   const [projectsError, setProjectsError] = useState<string | null>(null);
+  // Confirmed live in production (24.09.2026): unlike the projects fetch
+  // above, a rejected plans/work-orders call was never surfaced at all —
+  // "Kein Tagesplan bisher" and empty Needs-Decision/In-Progress/Activity
+  // sections are also this page's genuine empty states, so a failure here
+  // was completely indistinguishable from "nothing pending today." Same
+  // anti-pattern, same fix, just not carried over to these two fetches
+  // when projectsError was first added.
+  const [plansError, setPlansError] = useState<string | null>(null);
+  const [ordersError, setOrdersError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingId, setPendingId] = useState<string | null>(null);
 
@@ -30,11 +39,19 @@ export default function DashboardPage() {
       api.workOrders.listMine(),
       api.projects.listMine(),
     ]);
-    if (plansResult.status === "fulfilled" && plansResult.value.length > 0) {
-      setPlan(plansResult.value[0]);
+    if (plansResult.status === "fulfilled") {
+      setPlan(plansResult.value[0] ?? null);
+      setPlansError(null);
+    } else {
+      const err = plansResult.reason;
+      setPlansError(err instanceof Error ? err.message : String(err));
     }
     if (ordersResult.status === "fulfilled") {
       setOrders(ordersResult.value.map(mapWorkOrderFromApi));
+      setOrdersError(null);
+    } else {
+      const err = ordersResult.reason;
+      setOrdersError(err instanceof Error ? err.message : String(err));
     }
     if (projectsResult.status === "fulfilled") {
       setProjects(projectsResult.value);
@@ -159,12 +176,16 @@ export default function DashboardPage() {
   return (
     <HomeBriefing
       plan={plan}
+      planError={plansError}
       needsDecision={needsDecision}
       inProgress={inProgress}
+      ordersError={ordersError}
       activity={activity}
       projects={projects}
       projectsError={projectsError}
       onRetryProjects={load}
+      onRetryOrders={load}
+      onRetryPlan={load}
       pendingId={pendingId}
       onRequeue={requeue}
     />
