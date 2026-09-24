@@ -26,6 +26,22 @@ logger = logging.getLogger(__name__)
 _CHARS_PER_TOKEN = 4
 _MAX_ORDERS = 10
 
+# Same urgency bucket as frontend/components/operator/OperatorManager.tsx's
+# ATTENTION_STATUSES — found 23.09.2026 live: a user asked Jarvis about a
+# work order that was actually blocked, and Jarvis said "nothing found"
+# because that order had fallen out of the top-10-by-created_at window
+# behind newer but inert draft proposals. Pure recency silently drops the
+# one category of work order this feature most needs to surface. Ordering
+# within each bucket stays created_at desc (orders arrives pre-sorted from
+# get_work_orders_for_user — a stable filter preserves that).
+_ATTENTION_STATUSES = {"needs_approval", "blocked", "rework_requested", "failed"}
+
+
+def _prioritize_by_urgency(orders: list[dict]) -> list[dict]:
+    attention = [o for o in orders if o.get("status") in _ATTENTION_STATUSES]
+    rest = [o for o in orders if o.get("status") not in _ATTENTION_STATUSES]
+    return attention + rest
+
 
 def _format_order(order: dict) -> str:
     title = order.get("title") or "(ohne Titel)"
@@ -51,10 +67,12 @@ def _cap_lines_to_budget(lines: list[str], token_budget: int) -> list[str]:
 
 def get_context(user_id: str, token_budget: int = 500) -> tuple[str, list[dict]]:
     """
-    Returns (block, sources): the user's Work Orders, newest first
-    (get_work_orders_for_user already orders by created_at desc), capped to
-    _MAX_ORDERS entries and token_budget by dropping whole entries, never
-    truncating mid-line. sources shaped
+    Returns (block, sources): the user's Work Orders, work orders needing
+    attention (blocked/needs_approval/rework_requested/failed) first, newest
+    first within each group (get_work_orders_for_user already orders by
+    created_at desc — see _prioritize_by_urgency), capped to _MAX_ORDERS
+    entries and token_budget by dropping whole entries, never truncating
+    mid-line. sources shaped
     `[{"file": "Work Orders (CommandPilot)", "heading": <line>}, ...]` — the
     shape routers/jarvis.py turns into SourceRef for the UI's own source
     disclosure, same as the other context sources.
@@ -76,7 +94,7 @@ def get_context(user_id: str, token_budget: int = 500) -> tuple[str, list[dict]]
     if not orders:
         return "", []
 
-    lines = [_format_order(o) for o in orders[:_MAX_ORDERS]]
+    lines = [_format_order(o) for o in _prioritize_by_urgency(orders)[:_MAX_ORDERS]]
     lines = _cap_lines_to_budget(lines, token_budget)
     if not lines:
         return "", []

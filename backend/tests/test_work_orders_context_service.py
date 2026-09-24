@@ -87,6 +87,48 @@ def test_token_budget_drops_whole_orders_not_mid_line(monkeypatch):
     assert all(not s["heading"].endswith("…") for s in sources)
 
 
+def test_blocked_order_survives_the_cap_even_if_older_than_ten_drafts(monkeypatch):
+    # Found 23.09.2026 live: a user asked Jarvis about a work order that was
+    # actually blocked, and Jarvis said "nothing found" — the order existed
+    # but had fallen out of the top-10-by-created_at window behind newer,
+    # inert draft proposals. get_work_orders_for_user already returns
+    # created_at desc, so "oldest" here means "sorted last".
+    orders = [
+        {"id": f"draft-{i}", "title": f"Draft {i}", "status": "draft", "repo": "commandpilot"}
+        for i in range(12)
+    ]
+    orders.append({"id": "blocked-1", "title": "JARVIS-M1 Phase 0b", "status": "blocked", "repo": "commandpilot"})
+    monkeypatch.setattr(
+        work_orders_context_service.work_order_service, "get_work_orders_for_user",
+        MagicMock(return_value=orders),
+    )
+
+    block, sources = work_orders_context_service.get_context("user-1")
+    assert "JARVIS-M1 Phase 0b" in block
+    assert len(sources) == 10
+
+
+def test_blocked_order_wins_the_token_budget_over_older_drafts(monkeypatch):
+    # Prioritization must happen BEFORE the budget cap, not after — otherwise
+    # a tight budget would still fill up on drafts first (since the cap
+    # function just walks the list in order) and drop the blocked order for
+    # a different reason than the recency bug this whole feature exists to
+    # fix. One line is roughly 8-10 tokens here; budget=15 fits about one.
+    orders = [
+        {"id": f"draft-{i}", "title": f"Draft {i}", "status": "draft", "repo": "commandpilot"}
+        for i in range(5)
+    ]
+    orders.append({"id": "blocked-1", "title": "JARVIS-M1 Phase 0b", "status": "blocked", "repo": "commandpilot"})
+    monkeypatch.setattr(
+        work_orders_context_service.work_order_service, "get_work_orders_for_user",
+        MagicMock(return_value=orders),
+    )
+
+    block, sources = work_orders_context_service.get_context("user-1", token_budget=15)
+    assert "JARVIS-M1 Phase 0b" in block
+    assert len(sources) >= 1
+
+
 def test_caps_at_ten_orders_even_within_budget(monkeypatch):
     monkeypatch.setattr(
         work_orders_context_service.work_order_service, "get_work_orders_for_user",
