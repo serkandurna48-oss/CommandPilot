@@ -85,6 +85,18 @@ def update_work_order(
         # other field — nothing to actually apply.
         raise HTTPException(status_code=400, detail="No fields to update")
 
+    if status is None and updates == {"daemon_run_requested_at": None}:
+        # The autonomous daemon's claim signal (scripts/run_work_order_daemon.py)
+        # — must be an atomic compare-and-set, not the generic unconditional
+        # update below, or two daemons polling concurrently could both
+        # "win" the same work order (CMD-004). require_owned_record above
+        # already confirmed this id exists and is owned by this user, so a
+        # failed claim here can only mean someone else already claimed it.
+        claimed = work_order_service.claim_daemon_run(work_order_id)
+        if not claimed:
+            raise HTTPException(status_code=409, detail="Work order already claimed")
+        return claimed
+
     result = None
     if status is not None:
         # transition_work_order() (CP-OP01) is the sole authoritative state

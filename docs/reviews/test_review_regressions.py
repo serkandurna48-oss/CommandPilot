@@ -134,11 +134,28 @@ def test_incomplete_confirmation_resumes_instead_of_returning_a_null_work_order(
     assert response["work_order_id"] == "wo-resumed"
 
 
-@pytest.mark.xfail(strict=True, reason="CMD-004: daemon claim is unconditional, two callers both succeed")
+# CMD-004 fixed, backend side: work_order_service.claim_daemon_run() is now
+# an atomic compare-and-set (UPDATE ... WHERE daemon_run_requested_at IS NOT
+# NULL) instead of an unconditional PATCH — see routers/work_orders.py's
+# special-cased handling for {"daemon_run_requested_at": None} updates. The
+# original test here mocked call_api() to unconditionally succeed for BOTH
+# calls, which can never exercise this fix: the actual winner-decision logic
+# is entirely server-side (this daemon function has none of its own beyond
+# "did call_api raise or not"). Corrected to simulate what the real atomic
+# backend produces for two racing callers: the first PATCH succeeds, the
+# second gets HTTP 409 (already claimed) -> DaemonApiError -> claim()
+# already correctly turns that into False (see claim()'s own except clause,
+# unchanged) — this test now actually verifies that translation.
 def test_two_daemon_claims_have_only_one_winner():
     import run_work_order_daemon as daemon
     session = daemon.TokenSession("synthetic-token")
-    with patch.object(daemon, "call_api", return_value={"id": "wo", "daemon_run_requested_at": None}):
+    with patch.object(
+        daemon, "call_api",
+        side_effect=[
+            {"id": "wo", "daemon_run_requested_at": None},
+            daemon.DaemonApiError("PATCH /api/work-orders/wo -> HTTP 409: Work order already claimed"),
+        ],
+    ):
         winners = [daemon.claim("http://invalid.test", session, "wo") for _ in range(2)]
     assert sum(winners) == 1
 

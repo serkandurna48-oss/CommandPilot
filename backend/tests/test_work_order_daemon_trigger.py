@@ -42,26 +42,45 @@ FAKE_USER = CurrentUser(id="user-1", email="test@example.com", workspace_id=None
 
 class DaemonTriggerFieldTests(unittest.TestCase):
     def test_explicit_null_clears_the_field(self):
+        # CMD-004 (found in review, 24.09.2026): a bare
+        # {"daemon_run_requested_at": None} — exactly what the daemon's
+        # claim() sends — now routes through the atomic claim_daemon_run(),
+        # not the generic (unconditional) update_work_order_fields(). See
+        # ClaimDaemonRunTests in test_work_order_transitions.py for the
+        # atomicity itself; this test only guards the router's routing.
         with patch.object(work_orders_router, "require_owned_record", return_value={"id": "wo-1"}), \
-             patch.object(work_orders_router.work_order_service, "update_work_order_fields", return_value={"id": "wo-1"}) as mock_update:
+             patch.object(work_orders_router.work_order_service, "claim_daemon_run", return_value={"id": "wo-1"}) as mock_claim:
             work_orders_router.update_work_order(
                 "wo-1", WorkOrderUpdate(daemon_run_requested_at=None), user=FAKE_USER,
             )
 
-        # The daemon's claim PATCH sends exactly this body — it must reach
-        # the DB layer as an explicit None, not be silently dropped.
-        mock_update.assert_called_once_with("wo-1", {"daemon_run_requested_at": None})
+        mock_claim.assert_called_once_with("wo-1")
 
     def test_explicit_null_alone_is_not_treated_as_empty_body(self):
-        # Before the fix, model_dump(exclude_none=True) alone would produce
-        # an empty dict for this exact payload, and the router would raise
-        # "No fields to update" (400) instead of clearing the field.
+        # Before the original fix, model_dump(exclude_none=True) alone
+        # would produce an empty dict for this exact payload, and the
+        # router would raise "No fields to update" (400) instead of
+        # clearing the field.
         with patch.object(work_orders_router, "require_owned_record", return_value={"id": "wo-1"}), \
-             patch.object(work_orders_router.work_order_service, "update_work_order_fields", return_value={"id": "wo-1"}):
+             patch.object(work_orders_router.work_order_service, "claim_daemon_run", return_value={"id": "wo-1"}):
             result = work_orders_router.update_work_order(
                 "wo-1", WorkOrderUpdate(daemon_run_requested_at=None), user=FAKE_USER,
             )
         self.assertEqual(result, {"id": "wo-1"})
+
+    def test_claim_conflict_returns_409_not_a_silent_success(self):
+        # CMD-004: require_owned_record already confirmed the id exists and
+        # is owned by this user, so a failed atomic claim here can only
+        # mean someone else (another daemon poll) already won it — must
+        # surface as a real conflict, not a 200 with stale/wrong data.
+        from fastapi import HTTPException
+        with patch.object(work_orders_router, "require_owned_record", return_value={"id": "wo-1"}), \
+             patch.object(work_orders_router.work_order_service, "claim_daemon_run", return_value=None):
+            with self.assertRaises(HTTPException) as ctx:
+                work_orders_router.update_work_order(
+                    "wo-1", WorkOrderUpdate(daemon_run_requested_at=None), user=FAKE_USER,
+                )
+        self.assertEqual(ctx.exception.status_code, 409)
 
     def test_setting_a_real_timestamp_still_works(self):
         # The "Start autonom" button's PATCH — the other direction, unaffected

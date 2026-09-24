@@ -272,6 +272,32 @@ def transition_work_order(work_order_id: str, to_status: str, source: str = "ui"
     return _attach_approval_scope_id(data, scope)
 
 
+def claim_daemon_run(work_order_id: str) -> dict | None:
+    """Atomic compare-and-set claim for the autonomous daemon
+    (scripts/run_work_order_daemon.py's claim()). CMD-004 (found in
+    review, 24.09.2026): the previous plain update_work_order_fields()
+    call was a blind, unconditional PATCH regardless of the column's
+    current value — clearing an already-null daemon_run_requested_at to
+    null is a no-op success from the DB's perspective either way, so two
+    daemons polling concurrently for the same work order could BOTH
+    successfully "claim" it. This adds the actual precondition: only
+    succeeds (returns the row) if daemon_run_requested_at was NOT already
+    null; the loser's update matches zero rows and gets None back — same
+    "someone already won this" shape as
+    runner_connection_service.approve_pairing()'s atomic fix for the
+    identical race.
+    """
+    db = get_db()
+    result = (
+        db.table("work_orders")
+        .update({"daemon_run_requested_at": None})
+        .eq("id", work_order_id)
+        .not_.is_("daemon_run_requested_at", "null")
+        .execute()
+    )
+    return result.data[0] if result.data else None
+
+
 def update_work_order_fields(work_order_id: str, updates: dict) -> dict | None:
     """Applies non-status work_order field updates (recommended_next_step,
     missing_context). Status changes must go through transition_work_order()

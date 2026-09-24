@@ -188,5 +188,82 @@ class UpdateWorkOrderFieldsTests(unittest.TestCase):
         fake_table.update.assert_called_once_with({"recommended_next_step": "ship it"})
 
 
+class _ClaimFakeQuery:
+    """Minimal fake supporting exactly the chain claim_daemon_run() uses —
+    .update(...).eq("id", ...).not_.is_("daemon_run_requested_at", "null")
+    — with REAL row-state filtering (unlike a MagicMock chain, which can't
+    distinguish "matched" from "didn't match" based on current field
+    values). That distinction is the entire point of this test: a plain
+    MagicMock would report "success" regardless of whether
+    daemon_run_requested_at was actually still non-null."""
+
+    def __init__(self, rows: list[dict]):
+        self._rows = rows
+        self._eq_filters: dict = {}
+        self._not_is_null_cols: list[str] = []
+        self._payload: dict | None = None
+
+    def update(self, payload):
+        self._payload = payload
+        return self
+
+    def eq(self, col, val):
+        self._eq_filters[col] = val
+        return self
+
+    @property
+    def not_(self):
+        return _ClaimFakeNot(self)
+
+    def execute(self):
+        matched = [
+            r for r in self._rows
+            if all(r.get(k) == v for k, v in self._eq_filters.items())
+            and all(r.get(k) is not None for k in self._not_is_null_cols)
+        ]
+        for r in matched:
+            r.update(self._payload)
+        return FakeResult(matched)
+
+
+class _ClaimFakeNot:
+    def __init__(self, query: _ClaimFakeQuery):
+        self._query = query
+
+    def is_(self, col, val):
+        if val in (None, "null"):
+            self._query._not_is_null_cols.append(col)
+        return self._query
+
+
+class ClaimDaemonRunTests(unittest.TestCase):
+    """CMD-004 (found in review, 24.09.2026): claim_daemon_run() must be an
+    atomic compare-and-set — only the caller whose UPDATE actually matches
+    a row with a still-non-null daemon_run_requested_at wins."""
+
+    def test_only_one_of_two_concurrent_claims_wins(self):
+        rows = [{"id": "wo-1", "daemon_run_requested_at": "2026-09-24T10:00:00+00:00"}]
+        fake_db = MagicMock()
+        fake_db.table.side_effect = lambda name: _ClaimFakeQuery(rows)
+
+        with patch.object(work_order_service, "get_db", return_value=fake_db):
+            first = work_order_service.claim_daemon_run("wo-1")
+            second = work_order_service.claim_daemon_run("wo-1")
+
+        self.assertIsNotNone(first)
+        self.assertIsNone(second)
+        self.assertIsNone(rows[0]["daemon_run_requested_at"])
+
+    def test_already_null_never_matches(self):
+        rows = [{"id": "wo-1", "daemon_run_requested_at": None}]
+        fake_db = MagicMock()
+        fake_db.table.side_effect = lambda name: _ClaimFakeQuery(rows)
+
+        with patch.object(work_order_service, "get_db", return_value=fake_db):
+            result = work_order_service.claim_daemon_run("wo-1")
+
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()
