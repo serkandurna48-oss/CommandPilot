@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { PageLoader } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
@@ -32,13 +32,16 @@ export default function DashboardPage() {
   const [ordersError, setOrdersError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [pendingId, setPendingId] = useState<string | null>(null);
+  const requestId = useRef(0);
 
   const load = useCallback(async () => {
+    const currentRequest = ++requestId.current;
     const [plansResult, ordersResult, projectsResult] = await Promise.allSettled([
       api.plans.listMine(),
       api.workOrders.listMine(),
       api.projects.listMine(),
     ]);
+    if (currentRequest !== requestId.current) return;
     if (plansResult.status === "fulfilled") {
       setPlan(plansResult.value[0] ?? null);
       setPlansError(null);
@@ -70,6 +73,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     load();
+    return () => { requestId.current += 1; };
   }, [load]);
 
   const needsDecision = useMemo(
@@ -105,12 +109,12 @@ export default function DashboardPage() {
       snapshot: [
         {
           label: t("jarvis.snapshot.today"),
-          value: plan
+          value: loading ? t("common.loading") : plansError !== null ? t("error.load_failed") : plan
             ? plan.main_win || plan.status_summary || `${t("jarvis.snapshot.plan_for")}: ${plan.plan_date}`
             : t("jarvis.snapshot.no_plan"),
         },
-        { label: t("jarvis.snapshot.decisions"), value: `${needsDecision.length} ${t("jarvis.snapshot.awaiting_approval")}` },
-        { label: t("jarvis.snapshot.running"), value: `${inProgress.length} ${t("jarvis.snapshot.in_progress_suffix")}` },
+        { label: t("jarvis.snapshot.decisions"), value: loading ? t("common.loading") : ordersError !== null ? t("error.load_failed") : `${needsDecision.length} ${t("jarvis.snapshot.awaiting_approval")}` },
+        { label: t("jarvis.snapshot.running"), value: loading ? t("common.loading") : ordersError !== null ? t("error.load_failed") : `${inProgress.length} ${t("jarvis.snapshot.in_progress_suffix")}` },
       ],
       quickActions: [
         {
@@ -121,9 +125,10 @@ export default function DashboardPage() {
           resultLabel: t("jarvis.qa.review_today_result"),
           prompt:
             `Review today's plan.` +
+            (loading || plansError !== null ? " The dashboard could not verify the current plan; do not assume there is no plan." :
             (plan?.main_win ? ` Main win on file: ${plan.main_win}.` : "") +
             (plan?.status_summary ? ` Status: ${plan.status_summary}.` : "") +
-            (!plan ? " No plan has been generated yet." : ""),
+            (!plan ? " No plan has been generated yet." : "")),
         },
         {
           label: t("jarvis.qa.check_blocked"),
@@ -131,7 +136,9 @@ export default function DashboardPage() {
           icon: "blocked" as const,
           workingLabel: t("jarvis.qa.check_blocked_working"),
           resultLabel: t("jarvis.qa.check_blocked_result"),
-          prompt: `Check blocked work. ${needsDecision.length} work order(s) currently need my approval.`,
+          prompt: loading || ordersError !== null
+            ? "Check blocked work. The dashboard could not verify work orders; do not assume the approval count is zero."
+            : `Check blocked work. ${needsDecision.length} work order(s) currently need my approval.`,
         },
         {
           label: t("jarvis.qa.prioritize_projects"),
@@ -139,7 +146,9 @@ export default function DashboardPage() {
           icon: "priority" as const,
           workingLabel: t("jarvis.qa.prioritize_projects_working"),
           resultLabel: t("jarvis.qa.prioritize_projects_result"),
-          prompt: `Help me prioritize my projects. I currently have ${projects.length} project(s) on file.`,
+          prompt: loading || projectsError !== null
+            ? "Help me prioritize my projects. The dashboard could not verify projects; the project count is unknown."
+            : `Help me prioritize my projects. I currently have ${projects.length} project(s) on file.`,
         },
         {
           label: t("jarvis.suggestion.3"),
@@ -151,7 +160,7 @@ export default function DashboardPage() {
         },
       ],
     }),
-    [t, plan, needsDecision.length, inProgress.length, projects.length]
+    [t, plan, needsDecision.length, inProgress.length, projects.length, loading, plansError, ordersError, projectsError]
   );
 
   useSetJarvisContext(jarvisCtx);

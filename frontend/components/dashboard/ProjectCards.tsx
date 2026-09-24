@@ -151,7 +151,7 @@ export function ProjectCards({
   // (confirmed against e8c2b02: projects silently stayed [] on a rejected
   // request, indistinguishable from a real empty state) — this takes
   // priority over the active/other empty-return below, checked first.
-  if (loadError) {
+  if (loadError !== null) {
     return (
       <div className="rounded-2xl border border-status-danger/30 bg-status-danger/10 px-4 py-3 mb-4 flex items-center justify-between gap-3">
         <p className="text-status-danger text-sm">

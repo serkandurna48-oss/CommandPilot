@@ -209,7 +209,7 @@ export function HomeBriefing({ plan, planError, needsDecision, inProgress, order
           putting Needs Decision + In Progress beside it, not to stretching
           the headline further. Below xl, the rail drops beneath. */}
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px] gap-4 items-start mb-5">
-        {!planError && plan?.main_win ? (
+        {planError === null && plan?.main_win ? (
           <div className="rounded-2xl border border-white/[0.06] bg-[var(--bg-elevated)] shadow-[var(--shadow-card)] px-7 py-6">
             {priority?.life_area && (
               <p className="text-[11px] font-mono uppercase tracking-wide text-[var(--text-tertiary)] mb-2">
@@ -244,7 +244,7 @@ export function HomeBriefing({ plan, planError, needsDecision, inProgress, order
               </Link>
             </div>
           </div>
-        ) : planError ? (
+        ) : planError !== null ? (
           // A failed plans fetch must not read as "no plan today" — that's a
           // real, common, legitimate state (see the standby branch below)
           // and would otherwise hide a genuine load failure behind it.
@@ -273,7 +273,7 @@ export function HomeBriefing({ plan, planError, needsDecision, inProgress, order
             title={t("dashboard.section.needs_decision")}
             action={needsDecision.length > 0 ? <ViewAllLink href="/operator" /> : undefined}
           >
-            {ordersError ? (
+            {ordersError !== null ? (
               <InlineError message={ordersError} onRetry={onRetryOrders} />
             ) : needsDecision.length === 0 ? (
               <InlineEmpty text={t("dashboard.decision.empty_desc")} />
@@ -318,7 +318,7 @@ export function HomeBriefing({ plan, planError, needsDecision, inProgress, order
             title={t("dashboard.section.in_progress")}
             action={inProgress.length > 0 ? <ViewAllLink href="/operator" /> : undefined}
           >
-            {ordersError ? (
+            {ordersError !== null ? (
               <InlineError message={ordersError} onRetry={onRetryOrders} />
             ) : inProgress.length === 0 ? (
               <InlineEmpty text={t("dashboard.progress.empty_desc")} />
@@ -354,7 +354,7 @@ export function HomeBriefing({ plan, planError, needsDecision, inProgress, order
           last in the flow. Active/waiting/paused projects live in
           ProjectCards above — no longer duplicated here. */}
       <Section title={t("dashboard.section.recent_activity")}>
-        {ordersError ? (
+        {ordersError !== null ? (
           <InlineError message={ordersError} onRetry={onRetryOrders} />
         ) : activity.length === 0 ? (
           <InlineEmpty text={t("dashboard.activity.empty_desc")} />
