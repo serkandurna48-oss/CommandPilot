@@ -38,6 +38,15 @@ export function formatDateShort(dateStr: string): string {
   });
 }
 
+// Whole days between dateStr and now, floored — used by ProjectCards.tsx's
+// "Stand: vor X Tagen" and its stale-after-3-days marker. Floor (not round)
+// so "updated 20 hours ago" reads as 0 (today), not 1.
+export function daysSince(dateStr: string): number {
+  const then = new Date(dateStr).getTime();
+  const now = Date.now();
+  return Math.max(0, Math.floor((now - then) / (1000 * 60 * 60 * 24)));
+}
+
 export function today(): string {
   const d = new Date();
   const yyyy = d.getFullYear();

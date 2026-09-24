@@ -7,6 +7,7 @@ import { useT } from "@/lib/i18n";
 import { cn, formatDate, formatDateShort, getUserLanguage } from "@/lib/utils";
 import { WORK_ORDER_STATUS_COLORS, WORK_ORDER_STATUS_DOT } from "@/lib/operatorStyles";
 import { ProductWebsites } from "@/components/dashboard/ProductWebsites";
+import { ProjectCards } from "@/components/dashboard/ProjectCards";
 import type { DailyPlan, Project, ProjectStatus, WorkOrder } from "@/types";
 import { ChevronRight, X } from "lucide-react";
 
@@ -112,7 +113,7 @@ function ViewAllLink({ href }: { href: string }) {
   );
 }
 
-const PROJECT_STATUS_DOT: Record<ProjectStatus, string> = {
+export const PROJECT_STATUS_DOT: Record<ProjectStatus, string> = {
   active:   "bg-status-success",
   waiting:  "bg-status-warning",
   paused:   "bg-[var(--text-tertiary)]",
@@ -134,7 +135,6 @@ export interface HomeBriefingProps {
 export function HomeBriefing({ plan, needsDecision, inProgress, activity, projects, pendingId, onRequeue }: HomeBriefingProps) {
   const t = useT();
   const priority = plan?.top_priorities?.[0];
-  const activeProjects = projects.filter((p) => p.status !== "archived" && p.status !== "done").slice(0, 7);
 
   const [introDismissed, setIntroDismissed] = useState(false);
   useEffect(() => {
@@ -178,6 +178,8 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
           </div>
         )}
       </div>
+
+      <ProjectCards projects={projects} />
 
       {/* ROW 1 — TODAY stays the dominant editorial moment, now alongside
           (not above) the operational rail: the recovered width goes to
@@ -309,54 +311,31 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
 
       <ProductWebsites projects={projects} />
 
-      {/* ROW 2 — Recent activity + active projects: supporting context,
-          clearly subordinate, densest rows, last in the flow. */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <Section title={t("dashboard.section.recent_activity")}>
-          {activity.length === 0 ? (
-            <InlineEmpty text={t("dashboard.activity.empty_desc")} />
-          ) : (
-            <div className="divide-y divide-white/[0.05]">
-              {activity.slice(0, 6).map((e) => (
-                <Link
-                  key={e.key}
-                  href={`/operator/${e.workOrderId}`}
-                  className="flex items-center gap-3 px-4 py-2.5 motion-safe:transition-colors duration-150 hover:bg-[var(--interactive-bg-secondary-hover)]"
-                >
-                  <span className={cn("h-2 w-2 rounded-full shrink-0", WORK_ORDER_STATUS_DOT[e.status])} />
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-[var(--text-primary)] truncate">{e.title}</p>
-                    <p className="text-[var(--text-tertiary)] text-[11px] mt-0.5">{t(e.verbKey)}</p>
-                  </div>
-                  <p className="text-[var(--text-tertiary)] text-[11px] font-mono whitespace-nowrap shrink-0">{formatClock(e.at)}</p>
-                </Link>
-              ))}
-            </div>
-          )}
-        </Section>
-
-        <Section title={t("dashboard.section.active_projects")} action={activeProjects.length > 0 ? <ViewAllLink href="/projects" /> : undefined}>
-          {activeProjects.length === 0 ? (
-            <InlineEmpty text={t("projects.empty_desc")} />
-          ) : (
-            <div className="divide-y divide-white/[0.05]">
-              {activeProjects.map((p) => (
-                <Link
-                  key={p.id}
-                  href={`/projects?project=${p.id}`}
-                  className="flex items-center gap-3 px-4 py-2.5 motion-safe:transition-colors duration-150 hover:bg-[var(--interactive-bg-secondary-hover)]"
-                >
-                  <span className={cn("h-2 w-2 rounded-full shrink-0", PROJECT_STATUS_DOT[p.status])} />
-                  <p className="text-sm font-medium text-[var(--text-primary)] truncate flex-1">{p.name}</p>
-                  <p className="text-[var(--text-tertiary)] text-[11px] font-mono whitespace-nowrap shrink-0">
-                    {t(`projects.priority.${p.priority}`)}
-                  </p>
-                </Link>
-              ))}
-            </div>
-          )}
-        </Section>
-      </div>
+      {/* ROW 2 — Recent activity: supporting context, clearly subordinate,
+          last in the flow. Active projects moved up into ProjectCards
+          above — no longer duplicated here. */}
+      <Section title={t("dashboard.section.recent_activity")}>
+        {activity.length === 0 ? (
+          <InlineEmpty text={t("dashboard.activity.empty_desc")} />
+        ) : (
+          <div className="divide-y divide-white/[0.05]">
+            {activity.slice(0, 6).map((e) => (
+              <Link
+                key={e.key}
+                href={`/operator/${e.workOrderId}`}
+                className="flex items-center gap-3 px-4 py-2.5 motion-safe:transition-colors duration-150 hover:bg-[var(--interactive-bg-secondary-hover)]"
+              >
+                <span className={cn("h-2 w-2 rounded-full shrink-0", WORK_ORDER_STATUS_DOT[e.status])} />
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-[var(--text-primary)] truncate">{e.title}</p>
+                  <p className="text-[var(--text-tertiary)] text-[11px] mt-0.5">{t(e.verbKey)}</p>
+                </div>
+                <p className="text-[var(--text-tertiary)] text-[11px] font-mono whitespace-nowrap shrink-0">{formatClock(e.at)}</p>
+              </Link>
+            ))}
+          </div>
+        )}
+      </Section>
     </div>
   );
 }
