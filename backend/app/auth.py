@@ -86,6 +86,35 @@ def _resolve_runner_token(db, token: str) -> CurrentUser | None:
 def get_current_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> CurrentUser:
+    """Browser-session only — a runner token is NOT accepted here.
+
+    CMD-002 (found in review, 24.09.2026): this used to accept a runner
+    token transparently, same as a real Supabase session, for EVERY
+    endpoint that depends on it — including routers with nothing to do
+    with work orders (projects.py, plans.py, jarvis.py, rules.py, ...). A
+    runner script only ever needs to claim/report on work orders; a runner
+    token resolving to full account access everywhere else meant a single
+    leaked/compromised runner token could read or write anything the real
+    account owner could, in any router, not just work_orders.py. Live-
+    reproduced: a paired runner token successfully called GET
+    /api/projects/me and got the owner's real projects back.
+
+    Runner tokens are now opt-in per router via get_current_user_or_runner
+    (see below) — work_orders.py is the only router that should ever use
+    it, since that's the only surface a runner script actually calls.
+    """
+    return get_current_browser_user(credentials)
+
+
+def get_current_user_or_runner(
+    credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
+) -> CurrentUser:
+    """Accepts EITHER a real Supabase session OR a paired runner token.
+    Use only where a local runner script legitimately needs to call the
+    endpoint — currently just routers/work_orders.py. Every other router
+    should keep using the browser-only get_current_user (see its
+    docstring for why — CMD-002).
+    """
     token = _get_bearer_token(credentials)
     db = get_db()
 
@@ -99,14 +128,16 @@ def get_current_user(
 def get_current_browser_user(
     credentials: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
 ) -> CurrentUser:
-    """Same as get_current_user, but never accepts a runner token — only a
-    real Supabase session from a logged-in browser. Use this for endpoints
-    where a runner token must not be sufficient, e.g. approving a NEW
-    pairing request (routers/runner_pairing.py's approve_pairing): a runner
-    token proves "I am this already-onboarded user" for normal API calls,
-    but letting one self-approve further pairing requests would let a
-    single compromised/leaked runner token mint arbitrarily many more
-    runner tokens for itself, with no browser session ever involved.
+    """Same as get_current_user, but explicitly, locally rejects a runner
+    token with 401 rather than just never having accepted one — for
+    endpoints where being extra explicit about "no runner token, ever"
+    earns its keep, e.g. approving a NEW pairing request
+    (routers/runner_pairing.py's approve_pairing): letting a runner token
+    self-approve further pairing requests would let a single compromised/
+    leaked runner token mint arbitrarily more of itself, with no browser
+    session ever involved. get_current_user (above) now has the same
+    effective behavior; this name stays for that self-documenting intent
+    at the call site.
     """
     token = _get_bearer_token(credentials)
     if token.startswith(RUNNER_TOKEN_PREFIX):

@@ -226,11 +226,13 @@ class PairingFlowTests(unittest.TestCase):
         self.assertEqual(connection["user_id"], "user-1")
 
 
-class GetCurrentUserRunnerTokenTests(unittest.TestCase):
-    """app.auth.get_current_user() must accept an approved runner token
-    exactly like a real Supabase session — and reject anything else the
-    same way it always has (unknown token, revoked connection, or a
-    not-yet-approved one)."""
+class GetCurrentUserOrRunnerTokenTests(unittest.TestCase):
+    """app.auth.get_current_user_or_runner() must accept an approved runner
+    token exactly like a real Supabase session — and reject anything else
+    the same way it always has (unknown token, revoked connection, or a
+    not-yet-approved one). Renamed from get_current_user (24.09.2026,
+    CMD-002 fix) — see GetCurrentUserIsBrowserOnlyTests below for the
+    regression test on the plain, now browser-only get_current_user."""
 
     def setUp(self):
         self.fake_db, self.patcher = _patched_db()
@@ -250,7 +252,7 @@ class GetCurrentUserRunnerTokenTests(unittest.TestCase):
         result = svc.create_pairing_request(None)
         svc.approve_pairing("user-1", "ws-1", result["user_code"], None)
 
-        user = auth.get_current_user(self._bearer(result["runner_token"]))
+        user = auth.get_current_user_or_runner(self._bearer(result["runner_token"]))
         self.assertEqual(user.id, "user-1")
         self.assertEqual(user.workspace_id, "ws-1")
 
@@ -265,7 +267,7 @@ class GetCurrentUserRunnerTokenTests(unittest.TestCase):
         # kept reporting green.
         from fastapi import HTTPException
         with self.assertRaises(HTTPException) as ctx:
-            auth.get_current_user(self._bearer(svc.create_pairing_request(None)["runner_token"]))
+            auth.get_current_user_or_runner(self._bearer(svc.create_pairing_request(None)["runner_token"]))
         self.assertEqual(ctx.exception.status_code, 401)
 
     def test_revoked_runner_token_is_rejected(self):
@@ -275,13 +277,13 @@ class GetCurrentUserRunnerTokenTests(unittest.TestCase):
         svc.revoke_connection("user-1", connection["id"])
 
         with self.assertRaises(HTTPException) as ctx:
-            auth.get_current_user(self._bearer(result["runner_token"]))
+            auth.get_current_user_or_runner(self._bearer(result["runner_token"]))
         self.assertEqual(ctx.exception.status_code, 401)
 
     def test_unknown_runner_prefixed_token_is_rejected_not_treated_as_jwt(self):
         from fastapi import HTTPException
         with self.assertRaises(HTTPException) as ctx:
-            auth.get_current_user(self._bearer(svc.RUNNER_TOKEN_PREFIX + "totally-made-up"))
+            auth.get_current_user_or_runner(self._bearer(svc.RUNNER_TOKEN_PREFIX + "totally-made-up"))
         self.assertEqual(ctx.exception.status_code, 401)
 
     def test_non_runner_token_never_touches_runner_connections_table(self):
@@ -295,7 +297,7 @@ class GetCurrentUserRunnerTokenTests(unittest.TestCase):
         db.table = lambda name: (calls.append(name), original_table(name))[1]
         try:
             with self.assertRaises(Exception):
-                auth.get_current_user(self._bearer(real_jwt_like))
+                auth.get_current_user_or_runner(self._bearer(real_jwt_like))
         finally:
             db.table = original_table
         self.assertNotIn("runner_connections", calls)
@@ -337,6 +339,47 @@ class GetCurrentBrowserUserTests(unittest.TestCase):
         self.fake_db.auth.get_user.return_value = MagicMock(user=MagicMock(id="user-1", email="a@b.com"))
 
         user = auth.get_current_browser_user(self._bearer("a-real-looking-jwt"))
+        self.assertEqual(user.id, "user-1")
+
+
+class GetCurrentUserIsBrowserOnlyTests(unittest.TestCase):
+    """CMD-002 fix (24.09.2026): the plain get_current_user — used by every
+    router except work_orders.py (projects.py, plans.py, jarvis.py,
+    rules.py, checkins.py, reviews.py, runner_pairing.py's list/revoke) —
+    must reject a runner token outright, even a valid, already-approved
+    one. Before this fix a runner token resolved to full account access
+    on ANY of those routers, not just work-order operations; live-
+    reproduced via GET /api/projects/me returning the owner's real
+    projects for a paired runner token."""
+
+    def setUp(self):
+        self.fake_db, self.patcher = _patched_db()
+        self.patcher.start()
+        self.get_db_patcher = patch.object(auth, "get_db", return_value=self.fake_db)
+        self.get_db_patcher.start()
+
+    def tearDown(self):
+        self.patcher.stop()
+        self.get_db_patcher.stop()
+
+    def _bearer(self, token: str):
+        from fastapi.security import HTTPAuthorizationCredentials
+        return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+    def test_valid_approved_runner_token_is_rejected_by_plain_get_current_user(self):
+        from fastapi import HTTPException
+        result = svc.create_pairing_request(None)
+        svc.approve_pairing("user-1", "ws-1", result["user_code"], None)
+
+        with self.assertRaises(HTTPException) as ctx:
+            auth.get_current_user(self._bearer(result["runner_token"]))
+        self.assertEqual(ctx.exception.status_code, 401)
+
+    def test_real_supabase_session_is_still_accepted_by_plain_get_current_user(self):
+        self.fake_db.auth = MagicMock()
+        self.fake_db.auth.get_user.return_value = MagicMock(user=MagicMock(id="user-1", email="a@b.com"))
+
+        user = auth.get_current_user(self._bearer("a-real-looking-jwt"))
         self.assertEqual(user.id, "user-1")
 
 

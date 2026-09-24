@@ -72,7 +72,12 @@ def test_external_context_is_not_shared_with_another_user():
     assert result.calendar_sources == []
 
 
-@pytest.mark.xfail(strict=True, reason="CMD-002: paired runner can read personal projects")
+# CMD-002 fixed: get_current_user (app/auth.py) is now browser-session-only
+# by default — a runner token is only accepted by get_current_user_or_runner,
+# which just routers/work_orders.py uses. projects.py never switched to it,
+# so a runner token no longer authenticates there at all: 401 (the token
+# doesn't resolve to any recognized session for this endpoint), not 403
+# (which would imply a recognized-but-insufficiently-privileged identity).
 def test_runner_cannot_access_personal_projects():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
@@ -85,7 +90,7 @@ def test_runner_cannot_access_personal_projects():
         pairing = runners.create_pairing_request("test")
         runners.approve_pairing("owner", "workspace", pairing["user_code"], None)
         response = TestClient(app).get("/projects/me", headers={"Authorization": "Bearer " + pairing["runner_token"]})
-    assert response.status_code == 403
+    assert response.status_code == 401
 
 
 @pytest.mark.xfail(strict=True, reason="CMD-003: audit failure removes claim but leaves created order; retry duplicates")

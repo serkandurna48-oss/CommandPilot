@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth import CurrentUser, ensure_user_workspace, get_current_user, require_owned_record
+from app.auth import CurrentUser, ensure_user_workspace, get_current_user_or_runner, require_owned_record
 from app.models.work_order import (
     ActivityLogCreate,
     ActivityLogResponse,
@@ -27,7 +27,7 @@ router = APIRouter()
 @router.post("", response_model=WorkOrderResponse)
 def create_work_order(
     data: WorkOrderCreate,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_runner),
 ):
     setup = ensure_user_workspace(user)
     profile = setup.get("profile") or {}
@@ -39,14 +39,14 @@ def create_work_order(
 
 
 @router.get("/me", response_model=list[WorkOrderResponse])
-def fetch_my_work_orders(user: CurrentUser = Depends(get_current_user)):
+def fetch_my_work_orders(user: CurrentUser = Depends(get_current_user_or_runner)):
     return work_order_service.get_work_orders_for_user(user.id)
 
 
 @router.get("/{work_order_id}", response_model=WorkOrderDetailResponse)
 def fetch_work_order(
     work_order_id: str,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_runner),
 ):
     order = require_owned_record("work_orders", work_order_id, user)
     children = work_order_service.get_work_order_children(work_order_id)
@@ -59,7 +59,7 @@ def fetch_work_order(
 def update_work_order(
     work_order_id: str,
     data: WorkOrderUpdate,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_runner),
 ):
     require_owned_record("work_orders", work_order_id, user)
     updates = data.model_dump(exclude_none=True)
@@ -114,7 +114,7 @@ def update_work_order(
 def add_activity_log_entry(
     work_order_id: str,
     data: ActivityLogCreate,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_runner),
 ):
     require_owned_record("work_orders", work_order_id, user)
     try:
@@ -127,7 +127,7 @@ def add_activity_log_entry(
 def add_agent_run(
     work_order_id: str,
     data: AgentRunCreate,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_runner),
 ):
     require_owned_record("work_orders", work_order_id, user)
     try:
@@ -141,7 +141,7 @@ def update_agent_run(
     work_order_id: str,
     run_id: str,
     data: AgentRunUpdate,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_runner),
 ):
     require_owned_record("work_orders", work_order_id, user)
     updates = data.model_dump(exclude_none=True)
@@ -157,7 +157,7 @@ def update_agent_run(
 def add_step(
     work_order_id: str,
     data: WorkOrderStepCreate,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_runner),
 ):
     require_owned_record("work_orders", work_order_id, user)
     try:
@@ -171,7 +171,7 @@ def update_step(
     work_order_id: str,
     step_id: str,
     data: WorkOrderStepUpdate,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_runner),
 ):
     require_owned_record("work_orders", work_order_id, user)
     updates = data.model_dump(exclude_none=True)
@@ -187,7 +187,7 @@ def update_step(
 def add_artifact(
     work_order_id: str,
     data: ArtifactCreate,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_runner),
 ):
     require_owned_record("work_orders", work_order_id, user)
     try:
@@ -200,7 +200,7 @@ def add_artifact(
 def upsert_review_package(
     work_order_id: str,
     data: ReviewPackageCreate,
-    user: CurrentUser = Depends(get_current_user),
+    user: CurrentUser = Depends(get_current_user_or_runner),
 ):
     require_owned_record("work_orders", work_order_id, user)
     try:
