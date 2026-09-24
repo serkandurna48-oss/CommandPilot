@@ -30,6 +30,7 @@ import logging
 import re
 from collections import Counter
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from app.core.config import settings
@@ -348,3 +349,28 @@ def get_context_for_query(
     block = format_context_block(base_matches + hit_matches)
 
     return block, _dedupe_sources(hit_matches), _dedupe_sources(base_matches)
+
+
+def get_vault_status(user_id: str) -> dict:
+    """Health check for the Home dashboard's data-source indicator — not
+    context, no query, no retrieval budget. Reuses get_base_context (never
+    raises) purely to prove the vault is actually readable right now and to
+    report a real count, not a guess.
+
+    Same fail-closed ownership gate as get_context_for_query — a non-owner
+    (or an unset VAULT_OWNER_USER_ID) gets reason="not_owner", never a
+    filesystem check, exactly like the real read path would.
+
+    Returns {ok, reason, notes_found, checked_at} — reason is one of
+    "not_owner" | "not_configured" | None (ok=True has no reason).
+    """
+    checked_at = datetime.now(timezone.utc).isoformat()
+    owner_id = settings.VAULT_OWNER_USER_ID
+    if not owner_id or user_id != owner_id:
+        return {"ok": False, "reason": "not_owner", "notes_found": 0, "checked_at": checked_at}
+
+    if _vault_root(None) is None:
+        return {"ok": False, "reason": "not_configured", "notes_found": 0, "checked_at": checked_at}
+
+    matches = get_base_context(4000)
+    return {"ok": True, "reason": None, "notes_found": len(matches), "checked_at": checked_at}

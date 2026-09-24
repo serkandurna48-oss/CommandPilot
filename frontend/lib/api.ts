@@ -262,6 +262,11 @@ export const api = {
     revoke: (id: string) =>
       request<{ revoked: boolean }>(`/api/runner-connections/${id}/revoke`, { method: "POST" }),
   },
+
+  // ─── Data-source status (Home dashboard indicator, 24.09.2026) ─────────────────
+  integrations: {
+    vaultStatus: () => request<VaultStatus>("/api/integrations/vault-status"),
+  },
 };
 
 export interface RunnerConnection {
@@ -270,4 +275,11 @@ export interface RunnerConnection {
   created_at: string;
   last_used_at: string | null;
   revoked_at: string | null;
+}
+
+export interface VaultStatus {
+  ok: boolean;
+  reason: "not_owner" | "not_configured" | null;
+  notes_found: number;
+  checked_at: string;
 }

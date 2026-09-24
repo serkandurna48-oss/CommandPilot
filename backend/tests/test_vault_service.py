@@ -198,6 +198,40 @@ def test_empty_vault_owner_user_id_fails_closed(tmp_path, monkeypatch):
     assert hit_sources == []
 
 
+# ── Data-source status (Home dashboard indicator, 24.09.2026) ───────────────────
+def test_vault_status_ok_for_the_real_owner(tmp_path, monkeypatch):
+    _make_vault(tmp_path)
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "owner-1")
+    monkeypatch.setattr(vault_service.settings, "VAULT_PATH", str(tmp_path))
+    status = vault_service.get_vault_status("owner-1")
+    assert status["ok"] is True
+    assert status["reason"] is None
+    assert status["notes_found"] > 0
+    assert status["checked_at"]
+
+
+def test_vault_status_denies_non_owner_without_touching_the_filesystem(tmp_path, monkeypatch):
+    _make_vault(tmp_path)
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "owner-1")
+    monkeypatch.setattr(vault_service.settings, "VAULT_PATH", str(tmp_path))
+    status = vault_service.get_vault_status("someone-else")
+    assert status == {"ok": False, "reason": "not_owner", "notes_found": 0, "checked_at": status["checked_at"]}
+
+
+def test_vault_status_fails_closed_when_owner_id_is_unset(monkeypatch):
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "")
+    status = vault_service.get_vault_status("anyone-at-all")
+    assert status["ok"] is False
+    assert status["reason"] == "not_owner"
+
+
+def test_vault_status_reports_not_configured_for_a_missing_path(monkeypatch):
+    monkeypatch.setattr(vault_service.settings, "VAULT_OWNER_USER_ID", "owner-1")
+    monkeypatch.setattr(vault_service.settings, "VAULT_PATH", "")
+    status = vault_service.get_vault_status("owner-1")
+    assert status == {"ok": False, "reason": "not_configured", "notes_found": 0, "checked_at": status["checked_at"]}
+
+
 # ── Invalid UTF-8 handling (JARVIS-A1, Aufgabe 3) ────────────────────────────────
 def test_invalid_utf8_file_is_skipped_other_files_still_found(tmp_path):
     _make_vault(tmp_path)

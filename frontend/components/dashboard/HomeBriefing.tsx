@@ -8,6 +8,7 @@ import { cn, formatDate, formatDateShort, getUserLanguage } from "@/lib/utils";
 import { WORK_ORDER_STATUS_COLORS, WORK_ORDER_STATUS_DOT } from "@/lib/operatorStyles";
 import { ProductWebsites } from "@/components/dashboard/ProductWebsites";
 import { ProjectCards } from "@/components/dashboard/ProjectCards";
+import { DataSourceStatus } from "@/components/dashboard/DataSourceStatus";
 import type { DailyPlan, Project, ProjectStatus, WorkOrder } from "@/types";
 import { ChevronRight, X } from "lucide-react";
 
@@ -178,6 +179,8 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
           </div>
         )}
       </div>
+
+      <DataSourceStatus />
 
       {/* ROW 1 — TODAY stays the dominant editorial moment, now alongside
           (not above) the operational rail: the recovered width goes to
