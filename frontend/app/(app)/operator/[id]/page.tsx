@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { PageLoader } from "@/components/ui/Spinner";
 import { WorkOrderDetail } from "@/components/operator/WorkOrderDetail";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
 import { supabase } from "@/lib/supabase";
 import { mapWorkOrderDetailFromApi, type WorkOrderDetailBundle } from "@/lib/workOrderMapper";
 import {
@@ -45,23 +45,36 @@ export default function WorkOrderPage({ params }: Props) {
   const [bundle, setBundle] = useState<WorkOrderDetailBundle | null>(null);
   const [loading, setLoading] = useState(true);
   const [isLive, setIsLive] = useState(false);
+  // A genuine 404 (this id really doesn't exist for this user) still falls
+  // back to the mock/demo lookup below. Anything else — expired token,
+  // network error, a transient 503 — is a real, distinguishable failure and
+  // must show up as one. Found live 23.09.2026: this page used to fall back
+  // to mock data (and, since the real id isn't in the mock seed set, render
+  // the generic "no work orders" empty state) on ANY fetch failure including
+  // a transient 503 — a real backend hiccup was indistinguishable from "this
+  // work order doesn't exist," with only a console.error nobody sees. Same
+  // anti-pattern CLAUDE.md already flags for mockWorkOrders.ts in general;
+  // this route just hadn't been fixed yet. See RunnerConnections.tsx's
+  // loadError for the established pattern this mirrors.
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
+    setLoadError(null);
     try {
       const raw = await api.workOrders.get(id);
       setBundle(mapWorkOrderDetailFromApi(raw));
       setIsLive(true);
     } catch (err) {
-      // API/table not deployed yet, this id only exists as seed data, or a
-      // real request failure (expired token, network issue, 500) — fall
-      // back to the mock lookup so the detail view stays demonstrable
-      // either way. Logged (not swallowed) so a genuine live-system
-      // problem isn't indistinguishable from "no backend deployed"
-      // (OP-UX-001).
-      console.error(`Operator: falling back to Demo Mode for work order ${id}, fetch failed:`, err);
-      setBundle(mockBundle(id));
-      setIsLive(false);
+      if (err instanceof ApiError && err.status === 404) {
+        // Genuinely unknown id — demo/seed data is the honest fallback here.
+        setBundle(mockBundle(id));
+        setIsLive(false);
+      } else {
+        console.error(`Operator: failed to load work order ${id}:`, err);
+        setBundle(null);
+        setLoadError(err instanceof Error ? err.message : "error");
+      }
     } finally {
       setLoading(false);
     }
@@ -143,8 +156,17 @@ export default function WorkOrderPage({ params }: Props) {
 
       {loading ? (
         <PageLoader />
+      ) : loadError ? (
+        <div className="rounded-lg bg-status-danger/10 border border-status-danger/30 px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-status-danger text-sm">
+            {t("operator.load_error")} {loadError}
+          </p>
+          <Button size="sm" variant="outline-accent" onClick={load}>
+            {t("button.retry")}
+          </Button>
+        </div>
       ) : !bundle ? (
-        <p className="text-slate-400 text-sm">{t("operator.empty_title")}</p>
+        <p className="text-[var(--text-tertiary)] text-sm">{t("operator.empty_title")}</p>
       ) : (
         <WorkOrderDetail
           {...bundle}
