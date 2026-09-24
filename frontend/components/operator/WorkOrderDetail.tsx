@@ -150,6 +150,29 @@ export function WorkOrderDetail({
             </div>
           )}
 
+          {/* Found during the five-day self-test prep (24.09.2026): a work
+              order reaching "running" — whether via the script or the "Als
+              laufend markieren" button — gives no indication anywhere on
+              this always-visible block that a local runner still has to
+              actually do the work. Points at the Local Runner tab (the one
+              place the real start command lives) instead of duplicating it
+              here. */}
+          {isLive && order.status === "running" && (
+            <div className="mt-4 rounded-lg bg-status-info/10 border border-status-info/30 px-3 py-2 flex items-start gap-2">
+              <Info className="h-4 w-4 shrink-0 mt-0.5 text-status-info" />
+              <div className="text-xs flex-1 min-w-0">
+                <p className="text-status-info/90">{t("operator.running_needs_runner_banner")}</p>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab("runner")}
+                  className="mt-1.5 text-status-info font-medium hover:underline"
+                >
+                  {t("operator.running_needs_runner_cta")} →
+                </button>
+              </div>
+            </div>
+          )}
+
           {order.recommendedNextStep && (
             <p className="text-[var(--text-primary)] text-sm flex items-start gap-2 mt-4">
               <span className="text-brand-400 shrink-0">→</span>

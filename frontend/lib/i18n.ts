@@ -515,6 +515,17 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.empty_desc":           { en: "Background work orders will appear here once created.", de: "Background Work Orders erscheinen hier, sobald sie erstellt wurden." },
   "operator.back":                 { en: "Back to Operator",     de: "Zurück zum Operator" },
 
+  // "running" needs a local runner (24.09.2026) — found during the five-day
+  // self-test prep: nothing here executes automatically. Points at the
+  // existing, already-correct "Local Runner" tab/commands (LocalRunnerPanel.tsx)
+  // instead of restating a command here, so there is exactly one place the
+  // real start command lives.
+  "operator.running_needs_runner_banner": {
+    en: "This work order is running — but nothing executes automatically. A local runner on your machine (or your running daemon) has to do the work. Open the \"Local Runner\" tab below for the exact start command.",
+    de: "Diese Work Order läuft — aber nichts passiert automatisch. Ein lokaler Runner auf deinem Rechner (oder dein laufender Daemon) muss die Arbeit ausführen. Öffne unten den Tab „Lokaler Runner\" für den genauen Startbefehl.",
+  },
+  "operator.running_needs_runner_cta": { en: "Open Local Runner", de: "Lokalen Runner öffnen" },
+
   // Work order status (11 states)
   "operator.status.draft":             { en: "Draft",              de: "Entwurf" },
   "operator.status.approved":          { en: "Approved",           de: "Genehmigt" },
@@ -717,8 +728,8 @@ const dict: Record<string, Record<Lang, string>> = {
   },
   "operator.runner.phase.prompt_generated": { en: "Prompt generated", de: "Prompt erzeugt" },
   "operator.runner.phase.prompt_generated_hint": {
-    en: "The prompt was written and the work order was marked running, but no AgentRun record was confirmed — check run.log in the run folder above.",
-    de: "Der Prompt wurde geschrieben und die Work Order auf running gesetzt, aber kein AgentRun-Record bestätigt — prüfe run.log im Run-Ordner oben.",
+    en: "Work order is running, but no AgentRun record is confirmed yet. If you haven't started a local runner yet, run step 3 (or step 4) below. If a runner already ran here (e.g. via the script), check run.log in the run folder above.",
+    de: "Work Order steht auf running, aber es gibt noch keinen bestätigten AgentRun-Eintrag. Falls du noch keinen lokalen Runner gestartet hast, führe unten Schritt 3 (oder Schritt 4) aus. Falls hier bereits ein Runner lief (z. B. über das Skript), prüfe run.log im Run-Ordner oben.",
   },
   "operator.runner.phase.awaiting_result": { en: "Awaiting result", de: "Wartet auf Ergebnis" },
   "operator.runner.phase.awaiting_result_hint": {
