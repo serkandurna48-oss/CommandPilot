@@ -179,8 +179,6 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
         )}
       </div>
 
-      <ProjectCards projects={projects} />
-
       {/* ROW 1 — TODAY stays the dominant editorial moment, now alongside
           (not above) the operational rail: the recovered width goes to
           putting Needs Decision + In Progress beside it, not to stretching
@@ -309,11 +307,13 @@ export function HomeBriefing({ plan, needsDecision, inProgress, activity, projec
         </div>
       </div>
 
+      <ProjectCards projects={projects} />
+
       <ProductWebsites projects={projects} />
 
       {/* ROW 2 — Recent activity: supporting context, clearly subordinate,
-          last in the flow. Active projects moved up into ProjectCards
-          above — no longer duplicated here. */}
+          last in the flow. Active/waiting/paused projects live in
+          ProjectCards above — no longer duplicated here. */}
       <Section title={t("dashboard.section.recent_activity")}>
         {activity.length === 0 ? (
           <InlineEmpty text={t("dashboard.activity.empty_desc")} />
