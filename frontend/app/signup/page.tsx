@@ -52,7 +52,7 @@ export default function SignupPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-6">
+    <main className="min-h-screen bg-[var(--bg-app)] text-[var(--text-primary)] flex items-center justify-center px-6">
       <Card variant="elevated" className="w-full max-w-md">
         <CardHeader>
           <div className="mb-3 h-10 w-10 rounded-md bg-brand-600 flex items-center justify-center">
@@ -63,12 +63,12 @@ export default function SignupPage() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             {error && (
-              <div className="rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm">
+              <div className="rounded-lg bg-status-danger/10 border border-status-danger/30 px-4 py-3 text-status-danger text-sm">
                 {error}
               </div>
             )}
             {message && (
-              <div className="rounded-lg bg-emerald-950 border border-emerald-800 px-4 py-3 text-emerald-300 text-sm">
+              <div className="rounded-lg bg-status-success/10 border border-status-success/30 px-4 py-3 text-status-success text-sm">
                 {message}
               </div>
             )}
@@ -100,7 +100,7 @@ export default function SignupPage() {
               {t("signup.submit", lang)}
             </Button>
           </form>
-          <p className="mt-4 text-sm text-slate-500">
+          <p className="mt-4 text-sm text-[var(--text-tertiary)]">
             {t("signup.have_account", lang)}{" "}
             <Link href="/login" className="text-brand-400 hover:text-brand-300">
               {t("signup.login_link", lang)}

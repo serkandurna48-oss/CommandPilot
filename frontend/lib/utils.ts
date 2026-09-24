@@ -57,13 +57,18 @@ export const BLOCK_TYPE_LABELS: Record<string, string> = {
   other: "Other",
 };
 
+// Category colors, not status colors — deep_work is the one brand-tinted
+// entry, sport/social/learning/personal keep their own deliberate hues
+// (a Google-Calendar-style category palette, not the status family). Neutral
+// entries (admin/break/other, no strong category identity) use Focus Deck
+// tokens instead of raw slate (23.09.2026 — same debt as operatorStyles.ts).
 export const BLOCK_TYPE_COLORS: Record<string, string> = {
   deep_work: "bg-brand-600 text-white",
-  admin: "bg-slate-600 text-slate-100",
+  admin: "bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-secondary)]",
   sport: "bg-amber-500 text-slate-900",
-  break: "bg-slate-700 text-slate-300",
+  break: "bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-tertiary)]",
   social: "bg-pink-600 text-white",
   learning: "bg-violet-600 text-white",
   personal: "bg-indigo-500 text-white",
-  other: "bg-slate-600 text-slate-100",
+  other: "bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-secondary)]",
 };

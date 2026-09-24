@@ -141,10 +141,10 @@ function SuggestedActionCard({
 
         {action.sources.length > 0 && (
           <div>
-            <p className="text-[10px] uppercase tracking-wide text-slate-500 mb-0.5">{t("jarvis.sources")}</p>
+            <p className="text-[10px] uppercase tracking-wide text-[var(--text-tertiary)] mb-0.5">{t("jarvis.sources")}</p>
             <ul className="space-y-0.5">
               {action.sources.map((s, si) => (
-                <li key={si} className="text-[11px] text-slate-500 font-mono">
+                <li key={si} className="text-[11px] text-[var(--text-tertiary)] font-mono">
                   {s.source_file}
                   {s.source_heading ? ` — ${s.source_heading}` : ""}
                 </li>
@@ -157,7 +157,7 @@ function SuggestedActionCard({
           <div
             className={cn(
               "flex items-center gap-1.5 pt-1 text-xs",
-              status === "confirmed" ? "text-green-400/80" : "text-slate-500"
+              status === "confirmed" ? "text-status-success" : "text-[var(--text-tertiary)]"
             )}
           >
             {status === "confirmed" ? <Check className="h-3.5 w-3.5" /> : <X className="h-3.5 w-3.5" />}
@@ -181,7 +181,7 @@ function SuggestedActionCard({
               </Button>
             </div>
             {decision?.error && (
-              <p className="text-[11px] text-rose-400/80">
+              <p className="text-[11px] text-status-danger">
                 {t("jarvis.suggested_action.error_retry")} {decision.error}
               </p>
             )}

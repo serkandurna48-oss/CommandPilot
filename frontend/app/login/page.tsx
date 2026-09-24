@@ -48,7 +48,7 @@ function LoginForm() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-slate-100 flex items-center justify-center px-6">
+    <main className="min-h-screen bg-[var(--bg-app)] text-[var(--text-primary)] flex items-center justify-center px-6">
       <Card variant="elevated" className="w-full max-w-md">
         <CardHeader>
           <div className="mb-3 h-10 w-10 rounded-md bg-brand-600 flex items-center justify-center">
@@ -59,12 +59,12 @@ function LoginForm() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             {reason === "session_expired" && !error && (
-              <div className="rounded-lg bg-amber-950 border border-amber-800 px-4 py-3 text-amber-300 text-sm">
+              <div className="rounded-lg bg-status-warning/10 border border-status-warning/30 px-4 py-3 text-status-warning text-sm">
                 {t("login.session_expired", lang)}
               </div>
             )}
             {error && (
-              <div className="rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm">
+              <div className="rounded-lg bg-status-danger/10 border border-status-danger/30 px-4 py-3 text-status-danger text-sm">
                 {error}
               </div>
             )}
@@ -88,7 +88,7 @@ function LoginForm() {
               {t("login.submit", lang)}
             </Button>
           </form>
-          <p className="mt-4 text-sm text-slate-500">
+          <p className="mt-4 text-sm text-[var(--text-tertiary)]">
             {t("login.new_here", lang)}{" "}
             <Link href="/signup" className="text-brand-400 hover:text-brand-300">
               {t("login.create_account", lang)}

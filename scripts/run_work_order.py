@@ -975,8 +975,8 @@ def _run_step_by_step(
     in order_index order, writing each step's result back IMMEDIATELY
     (PATCH step status + POST activityLogs/artifacts via import_result())
     instead of waiting for one final whole-order result — this is what
-    actually makes LiveExecutionView show real, individual step
-    transitions instead of only the first step ever leaving 'pending'.
+    actually makes the Operator UI's step pipeline show real, individual
+    step transitions instead of only the first step ever leaving 'pending'.
 
     Each step gets its own AgentRun (role = the step's own assigned_role)
     with its own bounded retry — see _run_one_step_with_bounded_retry().

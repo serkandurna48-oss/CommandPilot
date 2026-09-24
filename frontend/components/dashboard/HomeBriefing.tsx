@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { useT } from "@/lib/i18n";
 import { cn, formatDate, formatDateShort, getUserLanguage } from "@/lib/utils";
-import { WORK_ORDER_STATUS_COLORS } from "@/lib/operatorStyles";
+import { WORK_ORDER_STATUS_COLORS, WORK_ORDER_STATUS_DOT } from "@/lib/operatorStyles";
 import { ProductWebsites } from "@/components/dashboard/ProductWebsites";
 import type { DailyPlan, Project, ProjectStatus, WorkOrder } from "@/types";
 import { ChevronRight, X } from "lucide-react";
@@ -119,20 +119,6 @@ const PROJECT_STATUS_DOT: Record<ProjectStatus, string> = {
   backlog:  "bg-[var(--text-placeholder)]",
   done:     "bg-status-info",
   archived: "bg-[var(--text-placeholder)]",
-};
-
-const WORK_ORDER_STATUS_DOT: Record<WorkOrder["status"], string> = {
-  draft:            "bg-[var(--text-placeholder)]",
-  approved:         "bg-status-success",
-  queued:           "bg-[var(--text-tertiary)]",
-  running:          "bg-brand-400",
-  needs_approval:   "bg-status-warning",
-  blocked:          "bg-status-warning",
-  failed:           "bg-status-danger",
-  review_ready:     "bg-status-info",
-  accepted:         "bg-status-success",
-  rework_requested: "bg-status-warning",
-  cancelled:        "bg-[var(--text-placeholder)]",
 };
 
 export interface HomeBriefingProps {

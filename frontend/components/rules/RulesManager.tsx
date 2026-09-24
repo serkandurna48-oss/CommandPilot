@@ -66,7 +66,7 @@ export function RulesManager() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <p className="text-slate-400 text-sm">
+        <p className="text-[var(--text-tertiary)] text-sm">
           {rules.length} {rules.length !== 1 ? t("rules.rules") : t("rules.rule")} {t("rules.active_suffix")}
         </p>
         <Button size="sm" onClick={() => setShowForm((v) => !v)}>
@@ -103,7 +103,7 @@ export function RulesManager() {
                   ))}
                 </Select>
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-medium text-slate-400 uppercase tracking-wide">
+                  <label className="text-xs font-medium text-[var(--text-tertiary)] uppercase tracking-wide">
                     {t("rules.form_priority")} — {form.priority}
                   </label>
                   <input
@@ -139,20 +139,20 @@ export function RulesManager() {
               <CardContent className="py-3 flex gap-3 items-start">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                    <p className="text-slate-200 text-sm font-medium">{rule.title}</p>
+                    <p className="text-[var(--text-primary)] text-sm font-medium">{rule.title}</p>
                     {rule.category && (
-                      <span className="text-xs text-slate-500 bg-slate-800 px-2 py-0.5 rounded">
+                      <span className="text-xs text-[var(--text-tertiary)] bg-[var(--bg-elevated)] px-2 py-0.5 rounded">
                         {rule.category}
                       </span>
                     )}
-                    <span className="text-xs text-slate-600">p{rule.priority}</span>
+                    <span className="text-xs text-[var(--text-placeholder)]">p{rule.priority}</span>
                   </div>
-                  <p className="text-slate-400 text-xs">{rule.rule_text}</p>
+                  <p className="text-[var(--text-secondary)] text-xs">{rule.rule_text}</p>
                 </div>
                 <div className="flex gap-1 shrink-0">
                   <button
                     onClick={() => toggleRule(rule)}
-                    className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-slate-200 transition-colors"
+                    className="p-1.5 rounded hover:bg-[var(--interactive-bg-secondary-hover)] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] transition-colors"
                     title={rule.is_active ? t("rules.disable") : t("rules.enable")}
                   >
                     {rule.is_active
@@ -162,7 +162,7 @@ export function RulesManager() {
                   </button>
                   <button
                     onClick={() => deleteRule(rule.id)}
-                    className="p-1.5 rounded hover:bg-slate-800 text-slate-400 hover:text-red-400 transition-colors"
+                    className="p-1.5 rounded hover:bg-[var(--interactive-bg-secondary-hover)] text-[var(--text-tertiary)] hover:text-status-danger transition-colors"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>

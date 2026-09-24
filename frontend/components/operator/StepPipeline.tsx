@@ -25,13 +25,13 @@ function formatElapsed(startedAt: string): string {
 }
 
 const NODE_STYLES: Record<WorkOrderStepStatus, { circle: string; icon: JSX.Element | null }> = {
-  completed: { circle: "bg-emerald-500 border-emerald-400 text-black", icon: <Check className="h-4 w-4" strokeWidth={3} /> },
-  running: { circle: "bg-black border-emerald-400 text-emerald-400", icon: <Loader2 className="h-4 w-4 motion-safe:animate-spin" /> },
-  blocked: { circle: "bg-black border-amber-500 text-amber-400", icon: <AlertTriangle className="h-4 w-4" /> },
-  failed: { circle: "bg-black border-rose-500 text-rose-400", icon: <X className="h-4 w-4" strokeWidth={3} /> },
-  skipped: { circle: "bg-black border-slate-700 text-slate-500", icon: <Minus className="h-4 w-4" /> },
-  pending: { circle: "bg-black border-slate-800 text-slate-600", icon: null },
-  queued: { circle: "bg-black border-slate-700 text-slate-500", icon: null },
+  completed: { circle: "bg-status-success border-status-success text-[var(--bg-app)]", icon: <Check className="h-4 w-4" strokeWidth={3} /> },
+  running: { circle: "bg-[var(--bg-app)] border-brand-400 text-brand-400", icon: <Loader2 className="h-4 w-4 motion-safe:animate-spin" /> },
+  blocked: { circle: "bg-[var(--bg-app)] border-status-warning text-status-warning", icon: <AlertTriangle className="h-4 w-4" /> },
+  failed: { circle: "bg-[var(--bg-app)] border-status-danger text-status-danger", icon: <X className="h-4 w-4" strokeWidth={3} /> },
+  skipped: { circle: "bg-[var(--bg-app)] border-[var(--border-default)] text-[var(--text-tertiary)]", icon: <Minus className="h-4 w-4" /> },
+  pending: { circle: "bg-[var(--bg-app)] border-[var(--border-light)] text-[var(--text-placeholder)]", icon: null },
+  queued: { circle: "bg-[var(--bg-app)] border-[var(--border-default)] text-[var(--text-tertiary)]", icon: null },
 };
 
 /**
@@ -46,17 +46,18 @@ const NODE_STYLES: Record<WorkOrderStepStatus, { circle: string; icon: JSX.Eleme
  * shows the exact same pipeline shape, just without the "something is
  * happening right now" animation.
  *
- * Deliberately breaks from the Focus Deck system (Serkan's explicit,
- * repeated choice for this one surface — see WorkOrderDetail.tsx). Every
- * value here is real data already in `steps` — progressPercent() is the
- * one canonical calculation, no separate/invented number.
+ * Focus Deck tokens (23.09.2026) — this surface used to deliberately break
+ * from the design system ("Mission Control" terminal look); Serkan reversed
+ * that decision and asked for it to be unified with the rest of the app.
+ * Every value here is real data already in `steps` — progressPercent() is
+ * the one canonical calculation, no separate/invented number.
  */
 export function StepPipeline({ steps, isLive }: { steps: WorkOrderStep[]; isLive: boolean }) {
   const t = useT();
   useTick(1000);
 
   if (steps.length === 0) {
-    return <p className="text-slate-500 text-xs font-mono">{t("operator.section.no_steps")}</p>;
+    return <p className="text-[var(--text-tertiary)] text-xs font-mono">{t("operator.section.no_steps")}</p>;
   }
 
   const pct = progressPercent(steps);
@@ -66,8 +67,8 @@ export function StepPipeline({ steps, isLive }: { steps: WorkOrderStep[]; isLive
     <div className="space-y-5">
       <style>{`
         @keyframes cp-live-pulse-ring {
-          0%, 100% { box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.35), 0 0 20px 3px rgba(52, 211, 153, 0.25); }
-          50% { box-shadow: 0 0 0 4px rgba(52, 211, 153, 0), 0 0 28px 7px rgba(52, 211, 153, 0.4); }
+          0%, 100% { box-shadow: 0 0 0 0 rgba(156, 94, 51, 0.35), 0 0 20px 3px rgba(156, 94, 51, 0.25); }
+          50% { box-shadow: 0 0 0 4px rgba(156, 94, 51, 0), 0 0 28px 7px rgba(156, 94, 51, 0.4); }
         }
       `}</style>
 
@@ -75,15 +76,15 @@ export function StepPipeline({ steps, isLive }: { steps: WorkOrderStep[]; isLive
         <div className="flex items-center gap-2">
           {isLive && (
             <span className="relative flex h-2 w-2">
-              <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+              <span className="motion-safe:animate-ping absolute inline-flex h-full w-full rounded-full bg-brand-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-brand-400" />
             </span>
           )}
-          <span className={cn("text-[11px] font-mono uppercase tracking-[0.2em]", isLive ? "text-emerald-400" : "text-slate-500")}>
+          <span className={cn("text-[11px] font-mono uppercase tracking-[0.2em]", isLive ? "text-brand-400" : "text-[var(--text-tertiary)]")}>
             {isLive ? t("operator.live.badge") : t("operator.section.execution_plan")}
           </span>
         </div>
-        <span className="text-slate-400 text-xs font-mono tabular-nums">{pct}%</span>
+        <span className="text-[var(--text-secondary)] text-xs font-mono tabular-nums">{pct}%</span>
       </div>
 
       <div className="relative">
@@ -95,9 +96,9 @@ export function StepPipeline({ steps, isLive }: { steps: WorkOrderStep[]; isLive
             row to bisect, so the track is hidden below that breakpoint rather than
             drawn across a column of stacked nodes where it wouldn't align to
             anything. */}
-        <div className="hidden sm:block absolute top-4 left-4 right-4 h-0.5 bg-slate-800" />
+        <div className="hidden sm:block absolute top-4 left-4 right-4 h-0.5 bg-[var(--border-default)]" />
         <div
-          className="hidden sm:block absolute top-4 left-4 h-0.5 bg-gradient-to-r from-emerald-600 to-emerald-400 motion-safe:transition-all motion-safe:duration-700"
+          className="hidden sm:block absolute top-4 left-4 h-0.5 bg-gradient-to-r from-brand-600 to-brand-400 motion-safe:transition-all motion-safe:duration-700"
           style={{ width: steps.length > 1 ? `calc(${pct}% * (100% - 2rem) / 100%)` : 0 }}
         />
 
@@ -128,28 +129,28 @@ export function StepPipeline({ steps, isLive }: { steps: WorkOrderStep[]; isLive
                 >
                   {style.icon ?? i + 1}
                 </div>
-                <p className={cn("mt-2 text-xs font-medium line-clamp-2", isRunning ? "text-emerald-100" : step.status === "pending" ? "text-slate-600" : "text-slate-300")}>
+                <p className={cn("mt-2 text-xs font-medium line-clamp-2", isRunning ? "text-[var(--text-primary)]" : step.status === "pending" ? "text-[var(--text-placeholder)]" : "text-[var(--text-secondary)]")}>
                   {step.title}
                 </p>
-                <span className="mt-1 text-[10px] font-mono text-slate-500 uppercase tracking-wide">{t(`operator.role.${step.assignedRole}`)}</span>
+                <span className="mt-1 text-[10px] font-mono text-[var(--text-tertiary)] uppercase tracking-wide">{t(`operator.role.${step.assignedRole}`)}</span>
                 {isRunning && step.startedAt && (
-                  <span className="mt-1 text-[10px] text-emerald-400/80 font-mono tabular-nums">{formatElapsed(step.startedAt)}</span>
+                  <span className="mt-1 text-[10px] text-brand-400 font-mono tabular-nums">{formatElapsed(step.startedAt)}</span>
                 )}
                 <span
                   className={cn(
                     "mt-1 text-[9px] px-1.5 py-0.5 rounded uppercase tracking-wider",
                     isRunning
-                      ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"
-                      : "bg-slate-900 text-slate-500 border border-slate-800"
+                      ? "bg-brand-500/15 text-brand-400 border border-brand-500/30"
+                      : "bg-[var(--bg-elevated)] text-[var(--text-tertiary)] border border-[var(--border-default)]"
                   )}
                 >
                   {t(`operator.step_status.${step.status}`)}
                 </span>
                 {step.blockedReason && (
-                  <p className="mt-1.5 text-[10px] text-amber-400/80 line-clamp-3">{step.blockedReason}</p>
+                  <p className="mt-1.5 text-[10px] text-status-warning line-clamp-3">{step.blockedReason}</p>
                 )}
                 {!step.blockedReason && step.outputSummary && (
-                  <p className="mt-1.5 text-[10px] text-slate-500 line-clamp-3">{step.outputSummary}</p>
+                  <p className="mt-1.5 text-[10px] text-[var(--text-tertiary)] line-clamp-3">{step.outputSummary}</p>
                 )}
               </div>
             );

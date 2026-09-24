@@ -20,11 +20,11 @@ import { Copy, Check, AlertTriangle, Coins, ShieldCheck, FolderGit2, FolderOpen,
 type RunnerPhase = "not_started" | "prompt_generated" | "awaiting_result" | "import_failed" | "review_ready";
 
 const RUNNER_PHASE_COLORS: Record<RunnerPhase, string> = {
-  not_started:      "bg-slate-800 border border-slate-700 text-slate-500",
-  prompt_generated: "bg-slate-800 border border-slate-600 text-slate-300",
-  awaiting_result:  "bg-slate-800 border border-brand-700/40 text-brand-400/80",
-  import_failed:    "bg-slate-800 border border-status-danger/40 text-status-danger",
-  review_ready:     "bg-slate-800 border border-status-info/40 text-status-info",
+  not_started:      "bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-tertiary)]",
+  prompt_generated: "bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-secondary)]",
+  awaiting_result:  "bg-[var(--bg-elevated)] border border-brand-700/40 text-brand-400",
+  import_failed:    "bg-[var(--bg-elevated)] border border-status-danger/40 text-status-danger",
+  review_ready:     "bg-[var(--bg-elevated)] border border-status-info/40 text-status-info",
 };
 
 function deriveRunnerPhase(

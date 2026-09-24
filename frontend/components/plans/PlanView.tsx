@@ -10,13 +10,13 @@ import { useT } from "@/lib/i18n";
 // encoding, not a status color, kept as-is from the prior implementation.
 const BLOCK_ACCENT_BG: Record<string, string> = {
   deep_work: "bg-brand-500",
-  admin:     "bg-slate-500",
+  admin:     "bg-[var(--text-placeholder)]",
   sport:     "bg-amber-500/70",
-  break:     "bg-slate-600",
+  break:     "bg-[var(--text-placeholder)]",
   social:    "bg-pink-500/60",
   learning:  "bg-violet-500/60",
   personal:  "bg-indigo-400/60",
-  other:     "bg-slate-500",
+  other:     "bg-[var(--text-placeholder)]",
 };
 
 // Priority badge styles: 1st = prominent, 2nd/3rd = subdued
@@ -117,7 +117,7 @@ export function PlanView({ plan }: PlanViewProps) {
                   <div className="min-w-0 flex-1 flex rounded-lg overflow-hidden border border-[var(--border-light)] group-hover:border-[var(--border-default)] motion-safe:transition-colors bg-[var(--bg-elevated)]/50">
                     <div className={cn(
                       "w-[3px] shrink-0",
-                      BLOCK_ACCENT_BG[block.block_type ?? "other"] ?? "bg-slate-500"
+                      BLOCK_ACCENT_BG[block.block_type ?? "other"] ?? "bg-[var(--text-placeholder)]"
                     )} />
                     <div className="flex-1 px-4 py-2.5">
                       <div className="flex items-center gap-2 flex-wrap">
@@ -125,7 +125,7 @@ export function PlanView({ plan }: PlanViewProps) {
                         {block.block_type && (
                           <span className={cn(
                             "px-1.5 py-0.5 rounded text-[10px] font-medium",
-                            BLOCK_TYPE_COLORS[block.block_type] ?? "bg-slate-700 text-slate-300"
+                            BLOCK_TYPE_COLORS[block.block_type] ?? "bg-[var(--bg-elevated)] text-[var(--text-secondary)]"
                           )}>
                             {t(`block.${block.block_type}`)}
                           </span>

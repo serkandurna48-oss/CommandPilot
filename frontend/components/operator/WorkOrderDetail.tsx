@@ -11,6 +11,7 @@ import { useT } from "@/lib/i18n";
 import {
   AGENT_RUN_STATUS_COLORS,
   VERDICT_COLORS,
+  WORK_ORDER_STATUS_COLORS,
 } from "@/lib/operatorStyles";
 import type { WorkOrderDetailBundle } from "@/lib/workOrderMapper";
 import type { WorkOrderStatus } from "@/types";
@@ -50,16 +51,18 @@ interface WorkOrderDetailProps extends WorkOrderDetailBundle {
 }
 
 /**
- * "Mission Control" — Serkan's explicit, repeated choice to deliberately
- * break from the locked Focus Deck system for this one surface (see
- * StepPipeline.tsx/ActivityFeed.tsx docstrings for the same note). Two
- * tiers: everything you need to see WITHOUT clicking anything (status,
- * controls, the live step pipeline, the activity stream) stays permanently
- * visible up top; everything else that used to be a wall of stacked
- * sections (acceptance criteria, approval scope, agent runs, artifacts,
- * the runner command panels, safety rules) moves behind a small tab bar —
- * reorganized, not deleted. Every one of those tabs still renders the
- * exact same real data the old stacked layout did.
+ * "Mission Control" layout — two tiers: everything you need to see WITHOUT
+ * clicking anything (status, controls, the live step pipeline, the activity
+ * stream) stays permanently visible up top; everything else that used to be
+ * a wall of stacked sections (acceptance criteria, approval scope, agent
+ * runs, artifacts, the runner command panels, safety rules) moves behind a
+ * small tab bar — reorganized, not deleted. Every one of those tabs still
+ * renders the exact same real data the old stacked layout did.
+ *
+ * Focus Deck tokens (23.09.2026) — this surface previously broke from the
+ * design system on purpose (a green/black terminal look); Serkan reversed
+ * that decision and asked for it to be unified with the rest of the app,
+ * same as StepPipeline.tsx/ActivityFeed.tsx/LifecycleControls.tsx.
  */
 export function WorkOrderDetail({
   order,
@@ -105,25 +108,27 @@ export function WorkOrderDetail({
     <div className="space-y-4">
       {/* ── Data source banner — mirrors OperatorManager's list-page banner
           so /operator and /operator/[id] never let API failures look like
-          real data (OP-UX-001) ──────────────────────────────────────────── */}
-      <div className="text-[11px] font-mono text-status-warning/80 bg-status-warning/10 border border-status-warning/30 rounded-lg px-3 py-2">
+          real data (OP-UX-001). Only the real (mock) case gets the warning
+          treatment — the normal "live" case is a quiet caption, not a
+          permanent amber box. ─────────────────────────────────────────── */}
+      <p className={cn("text-xs", isLive ? "text-[var(--text-tertiary)]" : "text-status-warning font-medium")}>
         {isLive ? t("operator.live_banner") : t("operator.mock_banner")}
-      </div>
+      </p>
 
       {/* ── Always visible: status, controls, pipeline, live feed ───────── */}
-      <div className="rounded-lg border border-emerald-900/30 bg-black/40 p-5 space-y-5">
+      <div className="rounded-lg border border-[var(--border-light)] bg-[var(--bg-surface)] p-5 space-y-5">
         <div>
           <div className="flex items-start justify-between gap-3 flex-wrap">
             <div>
               <p className="text-[var(--text-primary)] text-base font-semibold mb-1">{order.title}</p>
               <p className="text-[var(--text-secondary)] text-sm">{order.goal}</p>
             </div>
-            <span className="text-xs px-2 py-1 rounded font-mono shrink-0 bg-black/60 border border-emerald-900/40 text-emerald-300/90 uppercase tracking-wide">
+            <span className={cn("text-xs px-2 py-1 rounded font-mono shrink-0 uppercase tracking-wide", WORK_ORDER_STATUS_COLORS[order.status])}>
               {t(`operator.status.${order.status}`)}
             </span>
           </div>
 
-          <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-slate-500 font-mono mt-3">
+          <div className="flex flex-wrap gap-x-5 gap-y-1.5 text-xs text-[var(--text-tertiary)] font-mono mt-3">
             <span className="flex items-center gap-1.5">
               <FolderTree className="h-3.5 w-3.5" /> {order.repo}
             </span>
@@ -147,7 +152,7 @@ export function WorkOrderDetail({
 
           {order.recommendedNextStep && (
             <p className="text-[var(--text-primary)] text-sm flex items-start gap-2 mt-4">
-              <span className="text-emerald-400 shrink-0">→</span>
+              <span className="text-brand-400 shrink-0">→</span>
               <span>{order.recommendedNextStep}</span>
             </p>
           )}
@@ -168,7 +173,7 @@ export function WorkOrderDetail({
             visible (not behind a tab) since it's directly tied to the
             Accept/Rework buttons above ──────────────────────────────────── */}
         {reviewPackage && (
-          <div className="rounded-lg border border-slate-800 bg-black/30 p-4 space-y-3">
+          <div className="rounded-lg border border-[var(--border-light)] bg-[var(--bg-app)] p-4 space-y-3">
             <div className="flex items-center gap-2">
               <span className={cn("text-[10px] px-1.5 py-0.5 rounded font-mono", VERDICT_COLORS[reviewPackage.verdict])}>
                 {t(`operator.verdict.${reviewPackage.verdict}`)}
@@ -252,7 +257,7 @@ export function WorkOrderDetail({
               className={cn(
                 "px-4 py-2.5 text-[11px] font-mono uppercase tracking-wide border-b-2 -mb-px transition-colors",
                 activeTab === tab.id
-                  ? "border-emerald-500 text-emerald-400"
+                  ? "border-brand-500 text-brand-400"
                   : "border-transparent text-[var(--text-tertiary)] hover:text-[var(--text-secondary)]"
               )}
             >

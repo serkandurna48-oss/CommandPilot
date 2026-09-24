@@ -16,21 +16,22 @@ import { Archive, Pencil, Plus, X, RefreshCw, AlertTriangle, ChevronRight, Spark
 const STATUS_OPTIONS: ProjectStatus[] = ["active", "waiting", "paused", "backlog", "done"];
 const PRIORITY_OPTIONS: ProjectPriority[] = ["high", "medium", "low"];
 
-// Restrained status badges
+// Restrained status badges — Focus Deck tokens (23.09.2026, was raw slate/
+// green/rose Tailwind, same debt as operatorStyles.ts had).
 const STATUS_COLORS: Record<ProjectStatus, string> = {
-  active:   "bg-slate-800 border border-green-800/40 text-green-400/80",
-  waiting:  "bg-slate-800 border border-slate-600 text-slate-300",
-  paused:   "bg-slate-800 border border-slate-700 text-slate-500",
-  backlog:  "bg-slate-800 border border-slate-700 text-slate-600",
-  done:     "bg-slate-800 border border-slate-700 text-slate-400",
-  archived: "bg-slate-800 border border-slate-800 text-slate-700",
+  active:   "bg-[var(--bg-elevated)] border border-status-success/40 text-status-success",
+  waiting:  "bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-secondary)]",
+  paused:   "bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-tertiary)]",
+  backlog:  "bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-tertiary)]",
+  done:     "bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-secondary)]",
+  archived: "bg-[var(--bg-elevated)] border border-[var(--border-default)] text-[var(--text-placeholder)]",
 };
 
 // Priority text color (restrained)
 const PRIORITY_COLORS: Record<ProjectPriority, string> = {
-  high:   "text-rose-400/80",
-  medium: "text-slate-400",
-  low:    "text-slate-600",
+  high:   "text-status-danger",
+  medium: "text-[var(--text-tertiary)]",
+  low:    "text-[var(--text-placeholder)]",
 };
 
 const STATUS_DOT: Record<ProjectStatus, string> = {

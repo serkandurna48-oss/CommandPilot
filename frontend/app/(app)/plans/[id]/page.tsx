@@ -49,7 +49,7 @@ export default function PlanPage({ params }: Props) {
       {loading && <PageLoader />}
 
       {error && (
-        <div className="rounded-lg bg-red-950 border border-red-800 px-4 py-3 text-red-300 text-sm">
+        <div className="rounded-lg bg-status-danger/10 border border-status-danger/30 px-4 py-3 text-status-danger text-sm">
           {t("plan.load_error")} {error}
         </div>
       )}
