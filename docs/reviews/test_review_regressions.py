@@ -160,7 +160,10 @@ def test_two_daemon_claims_have_only_one_winner():
     assert sum(winners) == 1
 
 
-@pytest.mark.xfail(strict=True, reason="CMD-005: UTC yesterday is labelled today after Berlin midnight")
+# CMD-005 fixed: HEUTIGES DATUM now resolves Europe/Berlin via zoneinfo
+# (backend/requirements.txt gained tzdata so this also works on Windows dev
+# machines, not just Render's Linux runtime) instead of raw UTC — 22:30 UTC
+# is already past local midnight in Berlin during CEST.
 def test_today_is_berlin_date_at_local_midnight():
     with patch.object(jarvis_chat, "datetime") as clock:
         clock.now.return_value = datetime(2026, 9, 23, 22, 30, tzinfo=timezone.utc)

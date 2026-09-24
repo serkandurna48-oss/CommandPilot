@@ -82,14 +82,14 @@ def test_nonempty_context_block_is_included_verbatim():
     assert "leer" not in prompt.split("SECOND-BRAIN-KONTEXT:")[1].split("\n\n")[0]
 
 
-def test_date_line_advances_across_the_utc_midnight_boundary():
-    # The one real risk in "just call datetime.now(timezone.utc)" is a caller
-    # someday caching the date across a request boundary, or a future
-    # timezone change reintroducing an off-by-one. Freeze time on both sides
-    # of UTC midnight and assert the date line actually tracks it — this
-    # would fail if HEUTIGES DATUM were ever computed once and reused.
-    before_midnight = datetime(2026, 9, 23, 23, 59, 59, tzinfo=timezone.utc)
-    after_midnight = datetime(2026, 9, 24, 0, 0, 1, tzinfo=timezone.utc)
+def test_date_line_advances_across_the_berlin_midnight_boundary():
+    # CMD-005 (found in review, 24.09.2026): HEUTIGES DATUM resolves
+    # Europe/Berlin, not raw UTC — Berlin midnight (during CEST, UTC+2)
+    # falls at 22:00 UTC the previous day, not at UTC midnight. This test
+    # used to freeze time around UTC midnight, which no longer crosses
+    # any boundary the date line actually cares about now.
+    before_midnight = datetime(2026, 9, 23, 21, 59, 59, tzinfo=timezone.utc)  # 23:59:59 CEST
+    after_midnight = datetime(2026, 9, 23, 22, 0, 1, tzinfo=timezone.utc)  # 00:00:01 CEST, next day
 
     class _FrozenDatetime(datetime):
         _now = before_midnight
@@ -116,7 +116,7 @@ def test_prompt_grounds_the_model_in_todays_date():
     # Calendar/Notion context arrives as absolute ISO timestamps — without
     # this anchor the model cannot correctly reason about "heute"/"morgen".
     prompt = build_chat_prompt("Was steht heute an?", [], "")
-    today = datetime.now(timezone.utc).date().isoformat()
+    today = datetime.now(timezone.utc).astimezone(jarvis_chat._BERLIN_TZ).date().isoformat()
     assert f"HEUTIGES DATUM: {today}" in prompt
     assert prompt.index("HEUTIGES DATUM") < prompt.index("SECOND-BRAIN-KONTEXT")
 

@@ -9,6 +9,9 @@ app/models/jarvis.py's JarvisChatAI for where JSON_SCHEMA is used and parsed.
 """
 
 from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
+
+_BERLIN_TZ = ZoneInfo("Europe/Berlin")
 
 _DE_WEEKDAYS = ["Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag"]
 
@@ -131,18 +134,22 @@ def build_chat_prompt(message: str, history: list[dict], context_block: str, lan
     ISO timestamps, and without this line the model has no way to know what
     "today" even is. daily_plan.py's build_user_prompt() already includes
     checkin['checkin_date'] for the same reason — this brings jarvis_chat.py
-    to parity. UTC, not localized — see the inline comment above date_line
-    for why.
+    to parity.
+
+    Berlin-local, not raw UTC (CMD-005, found in review 24.09.2026): the
+    first version of this line used datetime.now(timezone.utc) directly,
+    reasoning that Windows dev machines lack the IANA tzdata a real
+    Europe/Berlin lookup needs — true, but that made the date wrong for
+    up to two hours around actual local midnight (22:30 UTC is already
+    00:30 the next day in Berlin during CEST), for every user of this
+    single-tenant, one-timezone product. Fixed the real gap instead of
+    working around it: the tzdata PyPI package (backend/requirements.txt)
+    is the standard fallback zoneinfo uses automatically when the OS has
+    none — Render's Linux runtime already ships a system one, so this
+    only changes local Windows dev/test to match production, not
+    production itself.
     """
-    # UTC, not a local Europe/Berlin zoneinfo lookup — matches
-    # google_calendar_service.py/outlook_calendar_service.py's own
-    # datetime.now(timezone.utc) (they pass "Europe/Berlin" only as a string
-    # to the Composio API, never resolve it locally, precisely because
-    # Windows dev machines don't ship IANA tzdata without an extra
-    # dependency). Worst case this is off by the UTC/CET(-2) offset for an
-    # hour or two around local midnight — negligible next to having no
-    # "today" anchor at all, which is the bug this line fixes.
-    now = datetime.now(timezone.utc)
+    now = datetime.now(timezone.utc).astimezone(_BERLIN_TZ)
     date_line = f"HEUTIGES DATUM: {now.date().isoformat()} ({_DE_WEEKDAYS[now.weekday()]})"
 
     context_section = (

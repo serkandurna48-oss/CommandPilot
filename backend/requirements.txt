@@ -6,6 +6,17 @@ pydantic-settings==2.6.1
 supabase==2.30.0
 python-dotenv==1.0.1
 
+# CMD-005 (found in review, 24.09.2026): zoneinfo.ZoneInfo("Europe/Berlin")
+# raises ZoneInfoNotFoundError on Windows dev machines with no system tz
+# database — the exact reason jarvis_chat.py's HEUTIGES DATUM line used
+# raw UTC instead, which is wrong at the actual local-midnight boundary
+# (22:30 UTC is already 00:30 the next day in Berlin during CEST). tzdata
+# is the standard, official fix: a pure-Python vendored IANA database that
+# zoneinfo automatically falls back to when the OS has none. Render's
+# Linux runtime already has a system tzdata, so this changes nothing
+# there — it only makes local Windows dev/test match production.
+tzdata==2026.4
+
 # composio==0.22.0 hard-requires openai>=2.48.0 (imports the OpenAI provider
 # unconditionally at `import composio` time — see CLAUDE.md § Jarvis, external
 # context). Bumped from 1.54.4 for that reason. ai_service.py's chat.completions
