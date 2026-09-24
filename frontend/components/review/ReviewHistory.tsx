@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/Button";
 import { api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { formatDateShort } from "@/lib/utils";
@@ -8,25 +9,47 @@ import type { EveningReview } from "@/types";
 
 // Same fix as CheckinHistory.tsx: GET /api/reviews/me already existed and
 // worked, just was never called from the frontend. No new backend work.
-// Renders nothing until at least one real review exists.
+// Renders nothing while loading or once confirmed empty.
+//
+// Found live in production (24.09.2026), same bug as CheckinHistory.tsx: a
+// failed fetch was treated as "confirmed empty" and rendered nothing.
 export function ReviewHistory() {
   const t = useT();
   const [reviews, setReviews] = useState<EveningReview[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const requestId = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(() => {
+    const currentRequest = ++requestId.current;
+    setError(null);
     api.reviews
       .listMine()
-      .then((res) => {
-        if (!cancelled) setReviews(res);
+      .then((data) => {
+        if (currentRequest === requestId.current) setReviews(data);
       })
-      .catch(() => {
-        if (!cancelled) setReviews([]);
+      .catch((e: unknown) => {
+        if (currentRequest === requestId.current) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       });
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    load();
+    // Ignore responses from an earlier request or a cleaned-up effect.
+    return () => { requestId.current += 1; };
+  }, [load]);
+
+  if (error !== null) {
+    return (
+      <div className="mt-8 flex items-center justify-between gap-3 rounded-2xl border border-status-danger/30 bg-status-danger/10 px-4 py-3">
+        <p className="text-status-danger text-sm">{t("error.load_failed")} {error}</p>
+        <Button size="sm" variant="outline-accent" onClick={load}>
+          {t("button.retry")}
+        </Button>
+      </div>
+    );
+  }
 
   if (!reviews || reviews.length === 0) return null;
 

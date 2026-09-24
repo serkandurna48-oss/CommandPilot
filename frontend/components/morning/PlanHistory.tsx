@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { Button } from "@/components/ui/Button";
 import { api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { formatDateShort } from "@/lib/utils";
@@ -12,25 +13,48 @@ import type { DailyPlan } from "@/types";
 // reachable only by already knowing its URL (e.g. from a stale bookmark or
 // the dashboard's "open today's plan" link), never browsable. Same fix as
 // CheckinHistory.tsx for the equivalent gap: pure read-surface, no backend
-// change. Renders nothing until at least one plan exists.
+// change. Renders nothing while loading or once confirmed empty.
+//
+// Found live in production (24.09.2026), same bug as CheckinHistory.tsx: a
+// failed fetch was treated as "confirmed empty" and rendered nothing — a
+// real plan history could silently vanish with no indication of failure.
 export function PlanHistory() {
   const t = useT();
   const [plans, setPlans] = useState<DailyPlan[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const requestId = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(() => {
+    const currentRequest = ++requestId.current;
+    setError(null);
     api.plans
       .listMine()
-      .then((res) => {
-        if (!cancelled) setPlans(res);
+      .then((data) => {
+        if (currentRequest === requestId.current) setPlans(data);
       })
-      .catch(() => {
-        if (!cancelled) setPlans([]);
+      .catch((e: unknown) => {
+        if (currentRequest === requestId.current) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       });
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    load();
+    // Ignore responses from an earlier request or a cleaned-up effect.
+    return () => { requestId.current += 1; };
+  }, [load]);
+
+  if (error !== null) {
+    return (
+      <div className="mt-8 flex items-center justify-between gap-3 rounded-2xl border border-status-danger/30 bg-status-danger/10 px-4 py-3">
+        <p className="text-status-danger text-sm">{t("error.load_failed")} {error}</p>
+        <Button size="sm" variant="outline-accent" onClick={load}>
+          {t("button.retry")}
+        </Button>
+      </div>
+    );
+  }
 
   if (!plans || plans.length === 0) return null;
 

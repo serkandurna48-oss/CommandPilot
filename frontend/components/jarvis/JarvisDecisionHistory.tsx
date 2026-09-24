@@ -1,8 +1,9 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, X } from "lucide-react";
+import { Button } from "@/components/ui/Button";
 import { api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { cn, formatDateShort } from "@/lib/utils";
@@ -12,26 +13,47 @@ import type { JarvisSuggestedActionDecisionListItem } from "@/types";
 // has confirmed or rejected is recorded in suggested_action_decisions, but
 // until now that audit trail was never surfaced anywhere — a decision
 // vanished from view the moment you left the chat turn that produced it.
-// Loads once per panel/page mount; a load failure just means the section
-// stays empty (real audit data or nothing — never a placeholder).
+// Renders nothing while loading or once confirmed empty.
+//
+// Found live in production (24.09.2026), same bug as CheckinHistory.tsx: a
+// failed fetch was treated as "confirmed empty" and rendered nothing.
 export function JarvisDecisionHistory() {
   const t = useT();
   const [decisions, setDecisions] = useState<JarvisSuggestedActionDecisionListItem[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const requestId = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(() => {
+    const currentRequest = ++requestId.current;
+    setError(null);
     api.jarvis
       .listDecisions()
-      .then((res) => {
-        if (!cancelled) setDecisions(res.decisions);
+      .then((data) => {
+        if (currentRequest === requestId.current) setDecisions(data.decisions);
       })
-      .catch(() => {
-        if (!cancelled) setDecisions([]);
+      .catch((e: unknown) => {
+        if (currentRequest === requestId.current) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       });
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    load();
+    // Ignore responses from an earlier request or a cleaned-up effect.
+    return () => { requestId.current += 1; };
+  }, [load]);
+
+  if (error !== null) {
+    return (
+      <div className="flex items-center justify-between gap-3 rounded-lg border border-status-danger/30 bg-status-danger/10 px-3 py-2">
+        <p className="text-status-danger text-xs">{t("error.load_failed")}</p>
+        <Button size="sm" variant="outline-accent" onClick={load}>
+          {t("button.retry")}
+        </Button>
+      </div>
+    );
+  }
 
   if (!decisions || decisions.length === 0) return null;
 

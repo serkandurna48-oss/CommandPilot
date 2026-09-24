@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Button } from "@/components/ui/Button";
 import { api } from "@/lib/api";
 import { useT } from "@/lib/i18n";
 import { formatDateShort } from "@/lib/utils";
@@ -10,25 +11,51 @@ import type { Checkin } from "@/types";
 // never called from the frontend — every morning check-in a user has ever
 // submitted (energy, sleep, mood) was captured and then permanently
 // invisible again. No new backend work; this is a pure read-surface fix.
-// Renders nothing until at least one real check-in exists.
+// Renders nothing while loading or once confirmed empty — a "no check-ins
+// yet" first-day state should stay unobtrusive.
+//
+// Found live in production (24.09.2026): a failed fetch (cold backend,
+// expired token, network blip) was caught and treated as "confirmed
+// empty," rendering nothing — a real check-in history could silently
+// vanish with zero indication anything went wrong. Failure now gets its
+// own visible state instead of being folded into "no history."
 export function CheckinHistory() {
   const t = useT();
   const [checkins, setCheckins] = useState<Checkin[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const requestId = useRef(0);
 
-  useEffect(() => {
-    let cancelled = false;
+  const load = useCallback(() => {
+    const currentRequest = ++requestId.current;
+    setError(null);
     api.checkins
       .listMine()
-      .then((res) => {
-        if (!cancelled) setCheckins(res);
+      .then((data) => {
+        if (currentRequest === requestId.current) setCheckins(data);
       })
-      .catch(() => {
-        if (!cancelled) setCheckins([]);
+      .catch((e: unknown) => {
+        if (currentRequest === requestId.current) {
+          setError(e instanceof Error ? e.message : String(e));
+        }
       });
-    return () => {
-      cancelled = true;
-    };
   }, []);
+
+  useEffect(() => {
+    load();
+    // Ignore responses from an earlier request or a cleaned-up effect.
+    return () => { requestId.current += 1; };
+  }, [load]);
+
+  if (error !== null) {
+    return (
+      <div className="mt-8 flex items-center justify-between gap-3 rounded-2xl border border-status-danger/30 bg-status-danger/10 px-4 py-3">
+        <p className="text-status-danger text-sm">{t("error.load_failed")} {error}</p>
+        <Button size="sm" variant="outline-accent" onClick={load}>
+          {t("button.retry")}
+        </Button>
+      </div>
+    );
+  }
 
   if (!checkins || checkins.length === 0) return null;
 
