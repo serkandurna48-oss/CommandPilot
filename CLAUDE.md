@@ -514,6 +514,27 @@ Dokument, im Ordner aber vorhanden.
   Single-Tenant** — der Fix beschränkt auf den einen Eigentümer, macht daraus
   keine Pro-Nutzer-Integration; das ist weiterhin eine offene Entscheidung
   für echte eingeladene Tester (siehe `docs/saas-roadmap.md`).
+- **Neu (24.09.2026): Vault-Status in Produktion tatsächlich "nicht
+  verbunden", nicht nur lokal ungetestet.** `GET /api/integrations/
+  vault-status` live gegen `commandpilot.onrender.com` mit Serkans echtem
+  Token geprüft: `{"ok": false, "reason": "not_owner", "notes_found": 0}` —
+  sein eigener Account gilt dort als Nicht-Eigentümer. Ursache: "jetzt real
+  gesetzt" oben (508) bezog sich auf `backend/.env`, eine rein lokale Datei
+  — sie wurde nie als Render-Umgebungsvariable nachgezogen, dort ist
+  `VAULT_OWNER_USER_ID` also weiterhin faktisch unkonfiguriert. Selbst nach
+  einem Fix dieser einen Variable bliebe der Status vermutlich
+  `not_configured` statt `verbunden`: `VAULT_PATH` zeigt auf einen lokalen
+  Ordner auf Serkans Windows-Maschine, den der Render-Prozess strukturell
+  nie erreichen kann (kein Sync, kein gemeinsames Dateisystem) — das
+  MVP-Ziel "eine Datenquelle mit sichtbarem Status" ist mit der aktuellen
+  Architektur in Produktion nicht erfüllbar, nur lokal. `DataSourceStatus.tsx`
+  zeigt für `not_owner` bewusst nichts an (Zeile "showing anything here to
+  another authenticated user would just be noise") — das ist für einen
+  echten fremden Tester richtig, verdeckt hier aber, dass es sich um
+  Serkans eigenen, fehlkonfigurierten Zugriff handelt. Nicht behoben in
+  diesem Durchgang (Render-Dashboard-Zugriff nötig, architektonische
+  Vault-Sync-Frage offen) — siehe `docs/saas-roadmap.md` für die
+  Priorisierung.
 - **Safety-Rules dreifach dupliziert**: `frontend/lib/safetyRules.ts` (nur Anzeige)
   vs. `backend/app/core/safety_rules.py` (echte Enforcement) vs. Runner-Prompt-Text
   — Drift-Risiko. Bei Änderungen an Approval-Scopes zuerst `safety_rules.py`
