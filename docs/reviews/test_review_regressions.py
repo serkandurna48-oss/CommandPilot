@@ -31,8 +31,20 @@ from test_runner_connection_service import _FakeDB as RunnerDB
 @pytest.fixture(autouse=True)
 def no_network(monkeypatch):
     import socket
-    def blocked(*args, **kwargs):
+    real_connect = socket.socket.connect
+
+    def blocked(self, address, *args, **kwargs):
+        # Loopback is exempted: asyncio's ProactorEventLoop (Windows) opens
+        # a real loopback socket pair internally as its self-pipe on every
+        # asyncio.run() — found the hard way when de-xfailing CMD-001 here
+        # made that plumbing detail surface as a hard failure instead of
+        # being silently absorbed by strict xfail. Not the "network access
+        # by code under test" this fixture exists to catch.
+        host = address[0] if isinstance(address, tuple) else address
+        if host in ("127.0.0.1", "::1", "localhost"):
+            return real_connect(self, address, *args, **kwargs)
         raise AssertionError("Review tests must never open network connections")
+
     monkeypatch.setattr(socket.socket, "connect", blocked)
 
 
