@@ -1,11 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { EmptyState } from "@/components/ui/Spinner";
 import { SafetyRulesPanel } from "@/components/operator/SafetyRulesPanel";
-import { MOCK_WORK_ORDERS } from "@/lib/mockWorkOrders";
 import { WORK_ORDER_STATUS_COLORS, WORK_ORDER_STATUS_DOT } from "@/lib/operatorStyles";
 import { api } from "@/lib/api";
 import { mapWorkOrderFromApi } from "@/lib/workOrderMapper";
@@ -103,30 +102,39 @@ export function OperatorManager() {
   const t = useT();
   const [orders, setOrders] = useState<WorkOrder[]>([]);
   const [loading, setLoading] = useState(true);
-  const [usingMocks, setUsingMocks] = useState(false);
+  // Found live in production (24.09.2026): a real request failure (cold
+  // backend, expired token, transient 500) silently swapped in
+  // MOCK_WORK_ORDERS with only a small amber banner as the tell — a
+  // genuine outage rendered as plausible-looking but entirely fabricated
+  // work orders, not as "no data." Same anti-pattern CLAUDE.md flags for
+  // mockWorkOrders.ts in general; the detail page (operator/[id]/page.tsx)
+  // was already fixed to distinguish a real 404 from a real failure — this
+  // list view hadn't been. No genuine "backend not deployed yet" case
+  // exists to preserve here (that shipped before this repo had real
+  // testers), so the fallback is removed rather than narrowed.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const requestId = useRef(0);
 
   const load = useCallback(async () => {
+    const currentRequest = ++requestId.current;
     setLoading(true);
+    setLoadError(null);
     try {
       const raw = await api.workOrders.listMine();
-      setOrders(raw.map(mapWorkOrderFromApi));
-      setUsingMocks(false);
+      if (currentRequest === requestId.current) setOrders(raw.map(mapWorkOrderFromApi));
     } catch (err) {
-      // Backend/table not deployed yet, or a real request failure (expired
-      // token, network issue, 500) — fall back to seed data so the control
-      // plane stays demonstrable either way. Logged (not swallowed) so a
-      // genuine live-system problem isn't indistinguishable from "no
-      // backend deployed" (OP-UX-001) — the amber banner alone can't carry
-      // which case this actually is.
-      console.error("Operator: falling back to Demo Mode, work order fetch failed:", err);
-      setOrders(MOCK_WORK_ORDERS);
-      setUsingMocks(true);
+      if (currentRequest === requestId.current) {
+        setLoadError(err instanceof Error ? err.message : String(err));
+      }
     } finally {
-      setLoading(false);
+      if (currentRequest === requestId.current) setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => {
+    load();
+    return () => { requestId.current += 1; };
+  }, [load]);
 
   // Real data only, grouped by urgency (not fabricated counts — see
   // ATTENTION/PROGRESS/QUEUE/DONE partitions of the actual fetched orders):
@@ -143,9 +151,7 @@ export function OperatorManager() {
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-5">
-        <p className={cn("text-xs", usingMocks ? "text-status-warning font-medium" : "text-[var(--text-tertiary)]")}>
-          {usingMocks ? t("operator.mock_banner") : t("operator.live_banner")}
-        </p>
+        <p className="text-xs text-[var(--text-tertiary)]">{t("operator.live_banner")}</p>
         <Link href="/operator/new" className="shrink-0">
           <Button size="sm" className="rounded-xl">
             <Plus className="h-4 w-4" />
@@ -157,6 +163,13 @@ export function OperatorManager() {
       {loading ? (
         <div className="py-16 flex justify-center">
           <div className="h-6 w-6 rounded-full border-2 border-[var(--interactive-bg-primary-default)] border-t-transparent animate-spin" />
+        </div>
+      ) : loadError !== null ? (
+        <div className="rounded-2xl border border-status-danger/30 bg-status-danger/10 px-4 py-3 flex items-center justify-between gap-3">
+          <p className="text-status-danger text-sm">{t("error.load_failed")} {loadError}</p>
+          <Button size="sm" variant="outline-accent" onClick={load}>
+            {t("button.retry")}
+          </Button>
         </div>
       ) : orders.length === 0 ? (
         <EmptyState
