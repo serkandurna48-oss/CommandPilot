@@ -2,7 +2,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    # extra="ignore": found 23.09.2026 the hard way — a stray, unrelated
+    # variable in backend/.env (COMMANDPILOT_API_TOKEN, meant for
+    # scripts/run_work_order_daemon.py's shell environment, not this file)
+    # made pydantic's strict default (extra="forbid") crash the ENTIRE
+    # backend on startup with a validation error, not just fail to read
+    # that one value. A config file with one unrelated line in it is a
+    # completely ordinary user mistake — it must never take the whole API
+    # down. Unknown keys are silently ignored, exactly like an unset key
+    # already is for every Optional/defaulted field below.
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     SUPABASE_URL: str
     SUPABASE_SERVICE_ROLE_KEY: str
