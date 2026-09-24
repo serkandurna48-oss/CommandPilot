@@ -395,6 +395,11 @@ export interface JarvisChatResponse {
   // own database, not an external system. Empty when the user has no work
   // orders on file.
   work_order_sources: JarvisSourceRef[];
+  // The user's real CommandPilot Projects (status/next_action/risk), via
+  // projects_context_service — reads CommandPilot's own database, not an
+  // external system. Empty when the user has no active/waiting/paused/
+  // backlog projects on file.
+  project_sources: JarvisSourceRef[];
   suggested_actions: JarvisSuggestedAction[];
 }
 

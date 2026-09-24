@@ -181,6 +181,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "jarvis.calendar_sources":  { en: "Calendar",           de: "Kalender" },
   "jarvis.task_sources":      { en: "Open tasks (Notion)", de: "Offene Aufgaben (Notion)" },
   "jarvis.work_order_sources": { en: "Work Orders",         de: "Work Orders" },
+  "jarvis.project_sources":    { en: "Projects",            de: "Projekte" },
   "jarvis.you_label":         { en: "You",                de: "Du" },
   "jarvis.error_banner":      { en: "Jarvis could not answer:", de: "Jarvis konnte nicht antworten:" },
   "jarvis.retry":             { en: "Retry",              de: "Nochmal versuchen" },

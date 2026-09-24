@@ -18,6 +18,7 @@ from app.services import (
     google_calendar_service,
     notion_tasks_service,
     outlook_calendar_service,
+    projects_context_service,
     suggested_action_service,
     vault_service,
     work_orders_context_service,
@@ -191,7 +192,26 @@ async def chat(
             str(exc)[:100],
         )
 
-    context_block = "\n\n".join(b for b in (context_block, calendar_block, tasks_block, work_orders_block) if b)
+    # ── Retrieve projects: CommandPilot's own DB, not an external source
+    # (non-fatal) ──────────────────────────────────────────────────────────
+    # Same reasoning as work orders above — without this, a "where do we
+    # stand" question could only be answered from the Obsidian vault, which
+    # is a separate system not guaranteed to reflect the live Projects table
+    # (status/next_action/risk edited in the app's own Projects UI).
+    projects_block = ""
+    project_sources: list[dict] = []
+    try:
+        projects_block, project_sources = projects_context_service.get_context(user.id)
+    except Exception as exc:
+        logger.warning(
+            "Projects context fetch failed | %s: %s — continuing without it",
+            type(exc).__name__,
+            str(exc)[:100],
+        )
+
+    context_block = "\n\n".join(
+        b for b in (context_block, calendar_block, tasks_block, work_orders_block, projects_block) if b
+    )
 
     # ── Generate reply via AI ─────────────────────────────────────────────────
     history = [turn.model_dump() for turn in req.history]
@@ -277,6 +297,7 @@ async def chat(
         calendar_sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in calendar_sources],
         task_sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in task_sources],
         work_order_sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in work_order_sources],
+        project_sources=[SourceRef(source_file=s["file"], source_heading=s["heading"]) for s in project_sources],
         # Proposals only — nothing is written here. See suggested_action_service
         # and the confirm/reject endpoints below for the only place a
         # suggestion can become a real work order (JARVIS-C1).

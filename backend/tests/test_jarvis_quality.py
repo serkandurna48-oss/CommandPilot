@@ -216,6 +216,7 @@ class Case10ProposalNeverWritesWithoutConfirmation(unittest.TestCase):
              patch.object(jarvis_router, "check_daily_cap", return_value=None), \
              patch.object(jarvis_router.vault_service, "get_context_for_query", return_value=("", [], [])), \
              patch.object(jarvis_router.work_orders_context_service, "get_context", return_value=("", [])), \
+             patch.object(jarvis_router.projects_context_service, "get_context", return_value=("", [])), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
                  return_value=(

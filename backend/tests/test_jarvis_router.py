@@ -73,6 +73,7 @@ class JarvisChatEndpointTests(unittest.TestCase):
                  ),
              ), \
              patch.object(jarvis_router.work_orders_context_service, "get_context", return_value=("", [])), \
+             patch.object(jarvis_router.projects_context_service, "get_context", return_value=("", [])), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
                  return_value=(
@@ -140,6 +141,7 @@ class JarvisChatEndpointTests(unittest.TestCase):
                      [{"file": "Work Orders (CommandPilot)", "heading": "Update KSV Baunatal — Status: needs_approval"}],
                  ),
              ), \
+             patch.object(jarvis_router.projects_context_service, "get_context", return_value=("", [])), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
                  return_value=(JarvisChatAI(reply="ok", suggested_actions=[]), 10, 5),
@@ -203,6 +205,7 @@ class JarvisChatEndpointTests(unittest.TestCase):
              patch.object(
                  jarvis_router.work_orders_context_service, "get_context", return_value=("", []),
              ), \
+             patch.object(jarvis_router.projects_context_service, "get_context", return_value=("", [])), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
                  return_value=(JarvisChatAI(reply="ok", suggested_actions=[]), 10, 5),
@@ -250,6 +253,10 @@ class JarvisChatEndpointTests(unittest.TestCase):
                  side_effect=RuntimeError("db down"),
              ), \
              patch.object(
+                 jarvis_router.projects_context_service, "get_context",
+                 side_effect=RuntimeError("db down"),
+             ), \
+             patch.object(
                  jarvis_router, "generate_chat_reply",
                  return_value=(JarvisChatAI(reply="ok", suggested_actions=[]), 10, 5),
              ) as mock_generate, \
@@ -283,6 +290,7 @@ class JarvisChatEndpointTests(unittest.TestCase):
                  return_value=("", [], []),
              ), \
              patch.object(jarvis_router.work_orders_context_service, "get_context", return_value=("", [])), \
+             patch.object(jarvis_router.projects_context_service, "get_context", return_value=("", [])), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
                  return_value=(JarvisChatAI(reply="Your project is active.", suggested_actions=[]), 10, 5),
@@ -311,6 +319,7 @@ class JarvisChatEndpointTests(unittest.TestCase):
                  return_value=("", [], []),
              ), \
              patch.object(jarvis_router.work_orders_context_service, "get_context", return_value=("", [])), \
+             patch.object(jarvis_router.projects_context_service, "get_context", return_value=("", [])), \
              patch.object(
                  jarvis_router, "generate_chat_reply",
                  return_value=(JarvisChatAI(reply="ok", suggested_actions=[]), 10, 5),

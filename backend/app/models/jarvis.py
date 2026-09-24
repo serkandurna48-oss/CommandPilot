@@ -70,6 +70,14 @@ class JarvisChatResponse(BaseModel):
     # instead of an actual work order, because no work-order context existed
     # at all. Empty when the user has no work orders on file.
     work_order_sources: list[SourceRef] = []
+    # The user's real CommandPilot Projects (status/next_action/risk — the
+    # same fields ProjectCards.tsx renders on Home), via
+    # projects_context_service. Added 24.09.2026 so "where do we stand"
+    # answers ground in the live Projects table rather than whatever
+    # happens to be written in the (separate, not-guaranteed-in-sync)
+    # Obsidian vault. Empty when the user has no active/waiting/paused/
+    # backlog projects on file.
+    project_sources: list[SourceRef] = []
     # JARVIS-C1: populated with exactly two entries when the message
     # described a goal, empty for ordinary knowledge questions. Never
     # persisted by the chat endpoint itself — see JarvisChatAI below and
