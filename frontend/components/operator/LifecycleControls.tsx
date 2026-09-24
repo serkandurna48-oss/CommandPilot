@@ -1,10 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { Button } from "@/components/ui/Button";
 import { useT } from "@/lib/i18n";
-import { cn } from "@/lib/utils";
 import type { WorkOrderStatus } from "@/types";
-import { Loader2 } from "lucide-react";
 
 interface Props {
   status: WorkOrderStatus;
@@ -19,49 +18,36 @@ interface Props {
   onRequestAutonomousStart?: () => Promise<void> | void;
 }
 
-// Mission Control's own button — deliberately NOT the shared
-// components/ui/Button (whose bronze/graphite variants are the locked
-// Focus Deck palette used everywhere else in the app). Fighting that
-// component's variant classes via a className override risks a CSS
-// specificity gamble depending on Tailwind's generated stylesheet order;
-// a small, fully self-contained button here keeps the shared Button (and
-// therefore every other page) completely untouched, matching this
-// redesign's explicit "only /operator" scope.
-function MissionButton({
+// Maps this component's semantic tones onto the shared Button's variants —
+// Focus Deck tokens (23.09.2026). Used to render its own terminal-styled
+// LifecycleButton (bypassing the shared Button to avoid a Tailwind
+// specificity gamble against this surface's now-removed emerald palette);
+// that reason no longer applies now that this surface uses the same
+// palette as the shared Button itself.
+const TONE_TO_VARIANT = {
+  primary: "primary",
+  danger: "danger",
+  neutral: "secondary",
+  ghost: "ghost",
+} as const;
+
+function LifecycleButton({
   tone = "neutral",
-  size = "sm",
   disabled,
   loading,
   onClick,
   children,
 }: {
   tone?: "primary" | "danger" | "neutral" | "ghost";
-  size?: "sm" | "md";
   disabled?: boolean;
   loading?: boolean;
   onClick?: () => void;
   children: React.ReactNode;
 }) {
-  const toneClasses: Record<string, string> = {
-    primary: "bg-emerald-500 hover:bg-emerald-400 text-black border-emerald-400",
-    danger: "bg-transparent hover:bg-rose-950/40 text-rose-400 border-rose-800",
-    neutral: "bg-black/40 hover:bg-black/60 text-slate-300 border-slate-700",
-    ghost: "bg-transparent hover:bg-white/5 text-slate-500 border-transparent",
-  };
   return (
-    <button
-      type="button"
-      disabled={disabled || loading}
-      onClick={onClick}
-      className={cn(
-        "inline-flex items-center justify-center gap-1.5 rounded-md border font-mono uppercase tracking-wide motion-safe:transition-colors disabled:opacity-40 disabled:cursor-not-allowed",
-        size === "sm" ? "px-3 py-1.5 text-[11px]" : "px-4 py-2 text-xs",
-        toneClasses[tone]
-      )}
-    >
-      {loading && <Loader2 className="h-3 w-3 motion-safe:animate-spin" />}
+    <Button size="sm" variant={TONE_TO_VARIANT[tone]} disabled={disabled} loading={loading} onClick={onClick} className="rounded-xl">
       {children}
-    </button>
+    </Button>
   );
 }
 
@@ -127,6 +113,13 @@ const TRANSITIONS: Partial<Record<WorkOrderStatus, { action: WorkOrderStatus; la
 export function LifecycleControls({ status, isLive, onStatusChange, onRequestAutonomousStart }: Props) {
   const t = useT();
   const [pending, setPending] = useState<WorkOrderStatus | null>(null);
+  // Found 23.09.2026: both handlers below previously had try/finally with no
+  // catch — an API failure (e.g. PATCH daemon_run_requested_at against a DB
+  // missing migration 016, an expired session, a 403) reset the button back
+  // to idle with zero visible feedback; the real error only ever reached the
+  // browser console. Every lifecycle action was affected, not just
+  // "Autonom starten". This is the one state both handlers now write to.
+  const [error, setError] = useState<string | null>(null);
   // Inline confirm — no new modal/dialog component introduced. Cancel/Stop is
   // the one irreversible-feeling action here (every other transition can
   // itself be undone or re-driven; cancelling a work order withdraws it for
@@ -152,8 +145,11 @@ export function LifecycleControls({ status, isLive, onStatusChange, onRequestAut
     }
     setConfirmingCancel(false);
     setPending(action);
+    setError(null);
     try {
       await onStatusChange(action);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("common.error"));
     } finally {
       setPending(null);
     }
@@ -166,8 +162,11 @@ export function LifecycleControls({ status, isLive, onStatusChange, onRequestAut
     }
     setConfirmingAutonomousStart(false);
     setAutonomousStartPending(true);
+    setError(null);
     try {
       await onRequestAutonomousStart?.();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("common.error"));
     } finally {
       setAutonomousStartPending(false);
     }
@@ -177,38 +176,51 @@ export function LifecycleControls({ status, isLive, onStatusChange, onRequestAut
 
   return (
     <div className="space-y-2">
-      {!isLive && <p className="text-slate-500 text-xs font-mono">{t("operator.lifecycle.demo_note")}</p>}
+      {!isLive && <p className="text-[var(--text-tertiary)] text-xs font-mono">{t("operator.lifecycle.demo_note")}</p>}
+      {error && (
+        <div className="rounded-lg bg-status-danger/10 border border-status-danger/30 px-3 py-2 flex items-start justify-between gap-2">
+          <p className="text-status-danger text-xs">{error}</p>
+          <button
+            type="button"
+            onClick={() => setError(null)}
+            aria-label={t("common.dismiss")}
+            className="text-status-danger/70 hover:text-status-danger shrink-0 leading-none"
+          >
+            ×
+          </button>
+        </div>
+      )}
       {confirmingCancel && (
-        <div className="rounded-lg bg-rose-950/20 border border-rose-900/40 px-3 py-2 space-y-2">
-          <p className="text-rose-300/90 text-xs">
+        <div className="rounded-lg bg-status-danger/10 border border-status-danger/30 px-3 py-2 space-y-2">
+          <p className="text-status-danger text-xs">
             {t(isStop ? "operator.lifecycle.stop_confirm_message" : "operator.lifecycle.cancel_confirm_message")}
           </p>
           <div className="flex gap-2">
-            <MissionButton tone="danger" disabled={pending !== null} loading={pending === "cancelled"} onClick={() => handleClick("cancelled")}>
+            <LifecycleButton tone="danger" disabled={pending !== null} loading={pending === "cancelled"} onClick={() => handleClick("cancelled")}>
               {t(isStop ? "operator.lifecycle.stop_confirm_yes" : "operator.lifecycle.cancel_confirm_yes")}
-            </MissionButton>
-            <MissionButton tone="ghost" disabled={pending !== null} onClick={() => setConfirmingCancel(false)}>
+            </LifecycleButton>
+            <LifecycleButton tone="ghost" disabled={pending !== null} onClick={() => setConfirmingCancel(false)}>
               {t("operator.lifecycle.cancel_confirm_no")}
-            </MissionButton>
+            </LifecycleButton>
           </div>
         </div>
       )}
       {confirmingAutonomousStart && (
-        <div className="rounded-lg bg-emerald-950/20 border border-emerald-900/40 px-3 py-2 space-y-2">
-          <p className="text-emerald-300/90 text-xs">{t("operator.lifecycle.autonomous_start_confirm_message")}</p>
+        <div className="rounded-lg bg-brand-500/10 border border-brand-500/30 px-3 py-2 space-y-2">
+          <p className="text-brand-400 text-xs">{t("operator.lifecycle.autonomous_start_confirm_message")}</p>
           <div className="flex gap-2">
-            <MissionButton tone="primary" disabled={autonomousStartPending} loading={autonomousStartPending} onClick={handleAutonomousStartClick}>
+            <LifecycleButton tone="primary" disabled={autonomousStartPending} loading={autonomousStartPending} onClick={handleAutonomousStartClick}>
               {t("operator.lifecycle.autonomous_start_confirm_yes")}
-            </MissionButton>
-            <MissionButton tone="ghost" disabled={autonomousStartPending} onClick={() => setConfirmingAutonomousStart(false)}>
+            </LifecycleButton>
+            <LifecycleButton tone="ghost" disabled={autonomousStartPending} onClick={() => setConfirmingAutonomousStart(false)}>
               {t("operator.lifecycle.cancel_confirm_no")}
-            </MissionButton>
+            </LifecycleButton>
           </div>
         </div>
       )}
       <div className="flex flex-wrap gap-2">
         {options?.map(({ action, labelKey, tone }) => (
-          <MissionButton
+          <LifecycleButton
             key={action}
             tone={action === "cancelled" ? "danger" : tone}
             disabled={!isLive || pending !== null || (action === "cancelled" && confirmingCancel)}
@@ -216,17 +228,17 @@ export function LifecycleControls({ status, isLive, onStatusChange, onRequestAut
             onClick={() => handleClick(action)}
           >
             {t(labelKey)}
-          </MissionButton>
+          </LifecycleButton>
         ))}
         {canRequestAutonomousStart && (
-          <MissionButton
+          <LifecycleButton
             tone="primary"
             disabled={!isLive || pending !== null || autonomousStartPending || confirmingAutonomousStart}
             loading={autonomousStartPending && !confirmingAutonomousStart}
             onClick={handleAutonomousStartClick}
           >
             {t("operator.lifecycle.autonomous_start")}
-          </MissionButton>
+          </LifecycleButton>
         )}
       </div>
     </div>
