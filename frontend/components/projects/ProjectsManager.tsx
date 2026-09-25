@@ -1,12 +1,13 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Input, Textarea, Select } from "@/components/ui/Input";
 import { Card, CardContent } from "@/components/ui/Card";
 import { EmptyState } from "@/components/ui/Spinner";
 import { api } from "@/lib/api";
+import { revealProjectDetail } from "@/lib/projectDetailNavigation";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useSetJarvisContext, useJarvisPanelControl } from "@/lib/jarvisContext";
@@ -75,6 +76,7 @@ export function ProjectsManager() {
   const [form, setForm] = useState({ ...EMPTY_FORM });
   const [editForm, setEditForm] = useState({ ...EMPTY_FORM });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const detailRef = useRef<HTMLDivElement>(null);
 
   const loadProjects = useCallback(async () => {
     setLoading(true);
@@ -99,6 +101,12 @@ export function ProjectsManager() {
   }, [searchParams, projects]);
 
   const selectedProject = useMemo(() => projects.find((p) => p.id === selectedId) ?? null, [projects, selectedId]);
+
+  useEffect(() => {
+    if (selectedProject) {
+      revealProjectDetail(detailRef.current, window.matchMedia("(max-width: 1279px)").matches);
+    }
+  }, [selectedProject]);
 
   const jarvisCtx = useMemo(() => {
     if (!selectedProject) return null;
@@ -401,7 +409,7 @@ export function ProjectsManager() {
             })}
           </div>
 
-          <div className="rounded-2xl border border-white/[0.06] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden xl:sticky xl:top-8">
+          <div ref={detailRef} className="rounded-2xl border border-white/[0.06] bg-[var(--bg-surface)] shadow-[var(--shadow-card)] overflow-hidden xl:sticky xl:top-8">
             {!selectedProject ? (
               <div className="px-6 py-10 text-center">
                 <p className="text-sm font-medium text-[var(--text-secondary)]">{t("projects.detail.empty_title")}</p>
