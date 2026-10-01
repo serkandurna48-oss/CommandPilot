@@ -246,6 +246,28 @@ def transition_work_order(work_order_id: str, to_status: str, source: str = "ui"
             callers should map this to HTTP 400.
     """
     db = get_db()
+
+    # R1: queuing a work order requires at least one acceptance criterion —
+    # the Judge stage (R2, scripts/judge_review.py) grades the executor's
+    # result criterion by criterion, so an order with none can never be
+    # judged. Checked here (not only in the Postgres transition function)
+    # because no migration may be added in this change; existing orders with
+    # [] stay fully readable, only the move into the queue is blocked. If the
+    # row can't be read (None), the check is skipped and the authoritative
+    # transition_work_order() RPC below decides existence as usual — this
+    # never masks a "work_order_not_found".
+    if to_status == "queued":
+        row = _maybe_single(
+            db.table("work_orders").select("acceptance_criteria").eq("id", work_order_id).maybe_single()
+        )
+        if row is not None:
+            criteria = row.get("acceptance_criteria") or []
+            if not any(isinstance(c, str) and c.strip() for c in criteria):
+                raise ValueError(
+                    "Akzeptanzkriterien fehlen: ein Work Order braucht mindestens ein "
+                    "Akzeptanzkriterium, bevor es in die Queue darf."
+                )
+
     try:
         result = db.rpc(
             "transition_work_order",

@@ -53,7 +53,8 @@ AUSGABEFORMAT: reines JSON-Objekt, keine Markdown-Codeblöcke, keine Erklärung 
 suggested_actions — Vorschläge für mögliche Work Orders, NICHT deren Ausführung:
 - Beschreibt die Nachricht ein konkretes Ziel oder Vorhaben, das zu Code-/Projektarbeit werden könnte (z. B. "bereite X vor", "leg mir Work Orders an für Y", "plane Z"): fülle suggested_actions mit EINEM ODER ZWEI Einträgen (bevorzugt zwei) — nie mehr als zwei.
 - Ist die Nachricht eine gewöhnliche Wissensfrage ohne erkennbares Handlungsziel: suggested_actions bleibt ein leeres Array [].
-- Jeder Eintrag hat genau diese Felder: title, description, team_type (Standard "development", falls kein anderes Team erkennbar ist), target_repo_name (Repo-Name oder null, falls unklar), risk ("low"|"medium"|"high"), requires_approval (true/false — ob ein Mensch vor jeder Teilaktion nicken muss), sources (Liste aus source_file/source_heading — nur Quellen, die die Beschreibung tatsächlich stützen, sonst ein leeres Array).
+- Jeder Eintrag hat genau diese Felder: title, description, team_type (Standard "development", falls kein anderes Team erkennbar ist), target_repo_name (Repo-Name oder null, falls unklar), risk ("low"|"medium"|"high"), requires_approval (true/false — ob ein Mensch vor jeder Teilaktion nicken muss), acceptance_criteria, sources (Liste aus source_file/source_heading — nur Quellen, die die Beschreibung tatsächlich stützen, sonst ein leeres Array).
+- acceptance_criteria: PFLICHT, ein bis fünf Einträge. Jeder Eintrag ist ein kurzes, konkret prüfbares Ja/Nein-Kriterium, an dem sich das Ergebnis eindeutig abnehmen lässt (z. B. "Die neue Seite /foo lädt ohne Fehler", "Es gibt einen Test, der X abdeckt"). Keine vagen Wünsche ("sieht gut aus"), sondern Dinge, die ein unabhängiger Prüfer mit ja oder nein beantworten kann. Ohne mindestens ein Kriterium ist der Vorschlag wertlos — fülle sie immer.
 - suggested_actions sind Vorschläge zur Vorschau in der Oberfläche — niemals eine Ausführung, niemals eine automatische Bestätigung. Ein Mensch entscheidet dort explizit über Bestätigen oder Ablehnen; ohne diesen Klick passiert nichts.
 """
 
@@ -86,7 +87,7 @@ JSON_SCHEMA = {
                 "additionalProperties": False,
                 "required": [
                     "title", "description", "team_type", "target_repo_name",
-                    "risk", "requires_approval", "sources",
+                    "risk", "requires_approval", "acceptance_criteria", "sources",
                 ],
                 "properties": {
                     "title": {"type": "string", "description": "Short, specific work order title."},
@@ -95,6 +96,17 @@ JSON_SCHEMA = {
                     "target_repo_name": {"type": ["string", "null"], "description": "Target repo name, or null if unclear."},
                     "risk": {"type": "string", "enum": ["low", "medium", "high"]},
                     "requires_approval": {"type": "boolean", "description": "Whether a human should approve every sub-action, not just the sensitive ones."},
+                    "acceptance_criteria": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 5,
+                        "description": (
+                            "One to five short, checkable yes/no acceptance criteria an "
+                            "independent judge can grade the result against. Never empty — a "
+                            "proposal without criteria cannot become a work order."
+                        ),
+                        "items": {"type": "string"},
+                    },
                     "sources": {
                         "type": "array",
                         "description": "Only sources that actually support this proposal — empty array if none.",

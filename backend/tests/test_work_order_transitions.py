@@ -265,5 +265,94 @@ class ClaimDaemonRunTests(unittest.TestCase):
         self.assertIsNone(result)
 
 
+class _CriteriaQuery:
+    """Fakes db.table("work_orders").select(...).eq(...).maybe_single() for
+    the R1 queue-criteria lookup — resolves to a single row (or None)."""
+
+    def __init__(self, row: dict | None):
+        self._row = row
+
+    def select(self, *_a, **_k):
+        return self
+
+    def eq(self, *_a, **_k):
+        return self
+
+    def maybe_single(self):
+        return self
+
+    def execute(self):
+        return FakeResult(self._row) if self._row is not None else None
+
+
+class _RpcExec:
+    def __init__(self, data):
+        self._data = data
+
+    def execute(self):
+        return FakeResult(self._data)
+
+
+class _QueueFakeDB:
+    """Combined fake for transition_work_order("...","queued"): a
+    work_orders criteria lookup before the RPC, _NullScopeTable for the
+    approval_scopes lookup after it, and a recorded rpc() call."""
+
+    def __init__(self, criteria_row: dict | None, rpc_result):
+        self.criteria_row = criteria_row
+        self.rpc_result = rpc_result
+        self.rpc_calls: list[tuple[str, dict]] = []
+
+    def table(self, name):
+        if name == "work_orders":
+            return _CriteriaQuery(self.criteria_row)
+        return _NullScopeTable()
+
+    def rpc(self, name, params):
+        self.rpc_calls.append((name, params))
+        return _RpcExec(self.rpc_result)
+
+
+class QueueRequiresAcceptanceCriteriaTests(unittest.TestCase):
+    """R1: a transition into 'queued' is refused unless the work order has at
+    least one non-empty acceptance criterion. The RPC is never even called in
+    that case."""
+
+    def test_queue_with_criteria_proceeds_to_rpc(self):
+        fake_db = _QueueFakeDB(
+            criteria_row={"acceptance_criteria": ["Seite /foo lädt ohne Fehler"]},
+            rpc_result={"id": "wo-1", "status": "queued"},
+        )
+        with patch.object(work_order_service, "get_db", return_value=fake_db):
+            result = work_order_service.transition_work_order("wo-1", "queued")
+        self.assertEqual(result["status"], "queued")
+        self.assertEqual(len(fake_db.rpc_calls), 1)
+
+    def test_queue_without_criteria_raises_and_skips_rpc(self):
+        fake_db = _QueueFakeDB(criteria_row={"acceptance_criteria": []}, rpc_result=None)
+        with patch.object(work_order_service, "get_db", return_value=fake_db):
+            with self.assertRaises(ValueError) as ctx:
+                work_order_service.transition_work_order("wo-1", "queued")
+        self.assertIn("Akzeptanzkriterien fehlen", str(ctx.exception))
+        self.assertEqual(fake_db.rpc_calls, [])
+
+    def test_queue_with_only_blank_criteria_raises(self):
+        fake_db = _QueueFakeDB(criteria_row={"acceptance_criteria": ["   ", ""]}, rpc_result=None)
+        with patch.object(work_order_service, "get_db", return_value=fake_db):
+            with self.assertRaises(ValueError) as ctx:
+                work_order_service.transition_work_order("wo-1", "queued")
+        self.assertIn("Akzeptanzkriterien fehlen", str(ctx.exception))
+        self.assertEqual(fake_db.rpc_calls, [])
+
+    def test_non_queue_transition_skips_criteria_check(self):
+        # A row lookup that would fail the criteria check must NOT block a
+        # transition to any other status — only 'queued' is gated.
+        fake_db = _QueueFakeDB(criteria_row={"acceptance_criteria": []}, rpc_result={"id": "wo-1", "status": "approved"})
+        with patch.object(work_order_service, "get_db", return_value=fake_db):
+            result = work_order_service.transition_work_order("wo-1", "approved")
+        self.assertEqual(result["status"], "approved")
+        self.assertEqual(len(fake_db.rpc_calls), 1)
+
+
 if __name__ == "__main__":
     unittest.main()

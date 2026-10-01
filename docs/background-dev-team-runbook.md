@@ -476,6 +476,46 @@ Read the Review Package. If it's genuinely done and safe: click **Accept**.
 If something needs fixing: click **Request Rework** and go back to step 4
 with updated instructions.
 
+## 7b. Judge stage (automatische Vorprüfung, R2)
+
+Wird der Work Order über den **autonomen Daemon** (`scripts/
+run_work_order_daemon.py`, siehe oben) ausgeführt, läuft nach dem
+Result-Import automatisch eine **unabhängige Judge-Stufe**
+(`scripts/judge_review.py`), sobald die Order `review_ready` ist — vor jeder
+menschlichen Abnahme.
+
+Was sie tut:
+- Startet einen **separaten, nur-lesenden** `claude`-Prozess
+  (`--allowedTools "Read,Grep,Glob"`, kein Bash/Edit, nie
+  `--dangerously-skip-permissions`). Modell per Env `JUDGE_MODEL`
+  (Default `opus`), Timeout per Env `JUDGE_TIMEOUT_SECONDS` (Default 600 s).
+- Bewertet **Kriterium für Kriterium**: Eingabe sind Ziel + Akzeptanzkriterien
+  der Order, der echte `git diff` des Laufs und (falls vorhanden) das
+  `test_output`-Artefakt. Der Bericht des Executors ist nur Hinweis, nie
+  Wahrheit.
+- Schreibt das Urteil als Artefakt `type="review"`, `title="Judge-Urteil"`
+  (strenges JSON: pro Kriterium `verdict` = `pass`/`fail`/`unclear` + Beleg,
+  plus `overall`) und eine Activity-Log-Zeile. In der UI erscheint es im Tab
+  **Akzeptanzkriterien / Approval Scope** als Liste je Kriterium.
+- **overall = pass nur, wenn jedes Kriterium `pass` ist** (wird selbst
+  nachgerechnet, nicht dem Modell geglaubt; `unclear` zählt nicht als
+  bestanden).
+  - **pass** → Order bleibt `review_ready` (die menschliche Abnahme bleibt
+    der letzte Schritt — der Judge nimmt nie selbst an).
+  - **fail** → Order geht automatisch `review_ready → rework_requested`, mit
+    der Liste der nicht erfüllten Kriterien als Grund.
+- **Fail-closed**: jedes Judge-Problem (kein `claude` gefunden, Timeout,
+  kaputtes JSON, fehlende Kriterien) lässt die Order unberührt auf
+  `review_ready` und schreibt eine `warning`-Log-Zeile „Judge nicht gelaufen –
+  manuell prüfen". Es wird **nie** automatisch abgenommen.
+
+Abschaltbar per Env `JUDGE_ENABLED=0` (Default an) — dann überspringt der
+Daemon die Prüfung komplett. Manuell auslösbar:
+`python scripts/judge_review.py <work_order_id> --token <...>`.
+
+Beim manuellen Fast-Path (§5/§6 ohne Daemon) läuft der Judge nicht
+automatisch — dort entscheidet weiterhin direkt der Mensch in §7.
+
 ## Known Issues
 
 **API tokens expire after ~1 hour.** The bearer token from §1 is a

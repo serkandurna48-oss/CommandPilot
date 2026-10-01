@@ -178,6 +178,8 @@ class PollOnceTests(unittest.TestCase):
             return MagicMock(returncode=0)
 
         with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+             patch.object(daemon, "maybe_run_judge"), \
+             patch.object(daemon, "get_head_sha", return_value="base-sha"), \
              patch.object(daemon.subprocess, "run", side_effect=fake_subprocess_run):
             daemon.poll_once(_args(), _session())
 
@@ -214,12 +216,44 @@ class PollOnceTests(unittest.TestCase):
             return MagicMock(returncode=0)
 
         with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+             patch.object(daemon, "maybe_run_judge"), \
+             patch.object(daemon, "get_head_sha", return_value="base-sha"), \
              patch.object(daemon.subprocess, "run", side_effect=fake_subprocess_run):
             daemon.poll_once(_args(), _session())
 
         # Oldest first, and both processed sequentially within one poll cycle.
         self.assertEqual(claimed, ["wo-oldest", "wo-newer"])
         self.assertEqual(started, ["wo-oldest", "wo-newer"])
+
+
+class MaybeRunJudgeTests(unittest.TestCase):
+    """R2: after a run, the daemon invokes the independent Judge stage iff the
+    work order is now review_ready, and respects JUDGE_ENABLED."""
+
+    def test_runs_judge_when_review_ready(self):
+        with patch.object(daemon, "call_api", return_value={"id": "wo-1", "status": "review_ready"}), \
+             patch("judge_review.run_judge", return_value={"status": "pass"}) as mock_judge, \
+             patch("judge_review.judge_enabled", return_value=True):
+            daemon.maybe_run_judge(_args(), _session(), "wo-1", base_sha="abc123")
+        mock_judge.assert_called_once()
+        self.assertEqual(mock_judge.call_args.args[2], "wo-1")
+        # R2b: the claim-time base SHA is forwarded to the judge.
+        self.assertEqual(mock_judge.call_args.kwargs["base_sha"], "abc123")
+
+    def test_skips_judge_when_not_review_ready(self):
+        with patch.object(daemon, "call_api", return_value={"id": "wo-1", "status": "blocked"}), \
+             patch("judge_review.run_judge") as mock_judge, \
+             patch("judge_review.judge_enabled", return_value=True):
+            daemon.maybe_run_judge(_args(), _session(), "wo-1")
+        mock_judge.assert_not_called()
+
+    def test_skips_judge_when_disabled(self):
+        with patch.object(daemon, "call_api") as mock_call, \
+             patch("judge_review.run_judge") as mock_judge, \
+             patch("judge_review.judge_enabled", return_value=False):
+            daemon.maybe_run_judge(_args(), _session(), "wo-1")
+        mock_judge.assert_not_called()
+        mock_call.assert_not_called()  # doesn't even fetch status when disabled
 
     def test_no_matches_makes_no_calls_beyond_the_initial_fetch(self):
         with patch.object(daemon, "call_api", return_value=[]) as mock_call, \

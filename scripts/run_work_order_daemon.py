@@ -418,6 +418,54 @@ def run_one(args: argparse.Namespace, session: TokenSession, work_order_id: str)
     return result.returncode
 
 
+def get_head_sha(repo_root: Path | str = REPO_ROOT) -> str | None:
+    """HEAD SHA of repo_root, or None if it can't be read (not a git repo,
+    git missing). Captured at claim time — BEFORE the executor runs — so the
+    judge's gather_diff() has a stable baseline predating the run and can diff
+    everything the run changed since, committed or not (R2b). See
+    judge_review.gather_diff()."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=str(repo_root),
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def maybe_run_judge(args: argparse.Namespace, session: TokenSession, work_order_id: str,
+                    base_sha: str | None = None) -> None:
+    """After a run finishes and its result is imported, run the independent
+    Judge stage (scripts/judge_review.py) IFF the order is now review_ready.
+    Adapter-independent, read-only, fail-closed — see judge_review's module
+    docstring. Toggleable via JUDGE_ENABLED. Any failure here is swallowed
+    with a warning: the judge can only ever block an acceptance, never the
+    daemon's own progress, and judge_review itself already leaves the work
+    order untouched (review_ready) on any internal problem."""
+    import judge_review  # noqa: E402 — stdlib-only sibling, imported lazily so a judge bug never blocks startup
+
+    if not judge_review.judge_enabled():
+        log("Judge deaktiviert (JUDGE_ENABLED) — überspringe Prüfung.")
+        return
+    try:
+        order = call_api(args.api_url, session, "GET", f"/api/work-orders/{work_order_id}")
+    except DaemonApiError as exc:
+        log(f"WARNUNG: konnte Status für Judge nicht abrufen ({work_order_id}): {exc}")
+        return
+    if order.get("status") != "review_ready":
+        # blocked/failed/cancelled — nothing for the judge to grade.
+        return
+    log(f"Work Order {work_order_id} ist review_ready — starte unabhängige Judge-Prüfung (model={os.environ.get('JUDGE_MODEL', 'opus')}, base_sha={base_sha or 'kein'}).")
+    try:
+        result = judge_review.run_judge(args.api_url, session.access_token, work_order_id, base_sha=base_sha)
+        log(f"Judge-Ergebnis für {work_order_id}: {result.get('status')}")
+    except Exception as exc:
+        log(f"WARNUNG: Judge-Prüfung für {work_order_id} unerwartet abgebrochen: {exc}")
+
+
 def poll_once(args: argparse.Namespace, session: TokenSession) -> None:
     try:
         requested = fetch_requested_work_orders(args.api_url, session)
@@ -433,7 +481,12 @@ def poll_once(args: argparse.Namespace, session: TokenSession) -> None:
         work_order_id = order["id"]
         if not claim(args.api_url, session, work_order_id):
             continue
+        # Record HEAD of the adapter's working dir (REPO_ROOT — run_one passes
+        # cwd=REPO_ROOT) right after claiming, BEFORE the executor runs, so the
+        # judge can diff everything this run changes since this point (R2b).
+        base_sha = get_head_sha(REPO_ROOT)
         run_one(args, session, work_order_id)
+        maybe_run_judge(args, session, work_order_id, base_sha)
 
 
 def main() -> int:

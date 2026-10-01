@@ -38,6 +38,19 @@ Invoke-Check -Name "backend: pytest" `
     -FilePath $pythonExe `
     -ArgumentList @("-m", "pytest", "backend/tests", "-q")
 
+# Stdlib-only standalone scripts/ tests (not pytest-discoverable by design —
+# see CLAUDE.md). The Judge stage (R2) and the daemon that invokes it are
+# covered here so they run in the standard check, not only when run by hand.
+Invoke-Check -Name "scripts: judge_review" `
+    -WorkingDirectory $repoRoot `
+    -FilePath $pythonExe `
+    -ArgumentList @("scripts/test_judge_review.py")
+
+Invoke-Check -Name "scripts: run_work_order_daemon" `
+    -WorkingDirectory $repoRoot `
+    -FilePath $pythonExe `
+    -ArgumentList @("scripts/test_run_work_order_daemon.py")
+
 Invoke-Check -Name "frontend: type-check" `
     -WorkingDirectory $frontendDir `
     -FilePath "npm" `

@@ -223,7 +223,7 @@ export function CreateWorkOrderForm() {
           <p className="text-[var(--text-tertiary)] text-xs">{t("operator.create.field_target_repo_path_safety")}</p>
         </FormSection>
 
-        <FormSection title={t("operator.create.section_criteria")}>
+        <FormSection title={t("operator.create.section_criteria")} description={t("operator.create.section_criteria_hint")}>
           <Textarea
             label={t("operator.create.field_criteria")}
             rows={4}
