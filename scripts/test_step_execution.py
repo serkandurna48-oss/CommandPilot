@@ -257,6 +257,35 @@ class StepExecutionTests(unittest.TestCase):
         self.assertEqual(adapter.calls[1]["prior_steps"][0]["id"], "s1")
         self.assertEqual(adapter.calls[1]["prior_steps"][0]["outputSummary"], "wrote the plan")
 
+    def test_exit0_no_step_result_fails_result_missing_without_retry(self):
+        # R3 finding A (per-step sibling): exit_code 0 but no usable step
+        # result and no fresh result_step file → failed 'result_missing', the
+        # step is NOT retried.
+        order = _order(2)
+        outcome = StepExecuteOutcome(exit_code=0, output_log_path=Path("log"), step_result=None)
+        adapter = FakeStepAdapter([outcome])
+        calls = []
+
+        def call_api_side_effect(api_url, token, method, path, payload, dry_run):
+            calls.append((method, path, payload))
+            if method == "POST" and path.endswith("/agent-runs"):
+                return {"id": "run-1"}
+            return {}
+
+        rc, mock_call_api, mock_import_result = self._run(
+            adapter, order,
+            call_api_side_effect=call_api_side_effect,
+            status_sequence=["running"] * 5,
+            git_snapshots=[UNCHANGED] * 3,
+        )
+
+        self.assertEqual(len(adapter.calls), 1)  # s1 tried once, never retried; s2 never reached
+        self.assertEqual(rc, 1)
+        mock_import_result.assert_not_called()
+        final_patch = [p for (m, path, p) in calls if m == "PATCH" and path == "/api/work-orders/wo-1"][-1]
+        self.assertEqual(final_patch["status"], "failed")
+        self.assertEqual(final_patch["reason"], "result_missing")
+
 
 class FinalStatusHelpersTests(unittest.TestCase):
     def test_final_status_prefers_failed_over_blocked(self):

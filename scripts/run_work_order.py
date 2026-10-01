@@ -89,6 +89,7 @@ from runner_adapters.base import (  # noqa: E402
     ProgressReporter,
     extract_json_result,
     find_blocked_keyword,
+    parse_and_validate_result,
     parse_and_validate_step_result,
     validate_result_against_order,
 )
@@ -352,12 +353,20 @@ def _target_worktree() -> Path:
     return Path.cwd()
 
 
-def _git_snapshot(cwd: Path) -> tuple[str, str] | None:
-    """(HEAD sha, working-tree status) for cwd, or None if it can't be
-    determined at all (not a git repo, git missing from PATH, timeout, ...).
-    CP-OP02's retry-safety check (_worktree_changed) treats None as
-    "unknown" and fails closed — an undeterminable working-tree state is
-    treated exactly like a changed one, never like an unchanged one."""
+def _git_snapshot(cwd: Path) -> tuple[str, str, str] | None:
+    """(HEAD sha, working-tree status, worktree list) for cwd, or None if it
+    can't be determined at all (not a git repo, git missing from PATH,
+    timeout, ...). CP-OP02's retry-safety check (_worktree_changed) treats
+    None as "unknown" and fails closed — an undeterminable working-tree state
+    is treated exactly like a changed one, never like an unchanged one.
+
+    R3 (live-test finding B): the executor sometimes creates its OWN git
+    worktree (e.g. under .claude/worktrees/, driven by a global agent rule)
+    and does all its work there. That leaves REPO_ROOT's HEAD+status
+    untouched, so the old two-component snapshot saw "nothing changed" and
+    happily retried — while the real change sat in a worktree the Judge's
+    diff would also miss. Including `git worktree list --porcelain` makes a
+    newly-added worktree count as a change: no auto-retry, human steps in."""
     try:
         head = subprocess.run(
             ["git", "rev-parse", "HEAD"], cwd=cwd, capture_output=True, text=True, timeout=10
@@ -365,24 +374,59 @@ def _git_snapshot(cwd: Path) -> tuple[str, str] | None:
         status = subprocess.run(
             ["git", "status", "--porcelain=v1", "--untracked-files=all"], cwd=cwd, capture_output=True, text=True, timeout=10
         )
-        if head.returncode != 0 or status.returncode != 0:
+        worktrees = subprocess.run(
+            ["git", "worktree", "list", "--porcelain"], cwd=cwd, capture_output=True, text=True, timeout=10
+        )
+        if head.returncode != 0 or status.returncode != 0 or worktrees.returncode != 0:
             return None
-        return head.stdout.strip(), status.stdout
+        return head.stdout.strip(), status.stdout, worktrees.stdout
     except Exception:
         return None
 
 
-def _worktree_changed(before: tuple[str, str] | None, after: tuple[str, str] | None) -> bool:
+def _worktree_changed(before: tuple[str, str, str] | None, after: tuple[str, str, str] | None) -> bool:
     """True if the working tree looks different after an attempt than
     before it started — OR if either snapshot couldn't be taken. A
     technical failure with a changed (or undeterminable) working tree must
     never be auto-retried (CP-OP02): retrying against a repo state the
     failed attempt already modified risks compounding a half-finished
     change instead of cleanly re-trying from the same starting point. Fail
-    closed: "unknown" is treated the same as "changed"."""
+    closed: "unknown" is treated the same as "changed". R3: a snapshot now
+    also carries `git worktree list`, so a NEW worktree the executor created
+    mid-attempt (even one that left REPO_ROOT's HEAD/status untouched) counts
+    as a change here too."""
     if before is None or after is None:
         return True
     return before != after
+
+
+def _load_fresh_result_file(path: Path, attempt_started_at: float, validator) -> dict | None:
+    """R3 (live-test finding A): some executors still write the result JSON
+    into the session folder themselves — the manual prompt-file hint told
+    them to — even when the adapter couldn't pull a result JSON out of stdout
+    (outcome.result is None). Load it here as a fallback so a run that really
+    did finish isn't thrown away as a technical failure and needlessly
+    retried (which burns budget re-doing finished work).
+
+    Trust the file ONLY if it was written DURING this attempt — its mtime
+    must be strictly AFTER attempt_started_at. A result.json left over from
+    an earlier run/attempt (mtime before this attempt started) is ignored,
+    so a stale file can never be mistaken for this attempt's output.
+
+    `validator` is parse_and_validate_result (whole-order) or
+    parse_and_validate_step_result (per-step). Returns the validated dict, or
+    None if the file is absent, stale, unreadable, or fails validation — in
+    which case the caller treats it as "no usable result"."""
+    try:
+        if not path.exists() or path.stat().st_mtime <= attempt_started_at:
+            return None
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    try:
+        return validator(raw, str(path))
+    except ValueError:
+        return None
 
 
 def _finalize_technical_failure(
@@ -550,6 +594,11 @@ def _run_adapter_with_bounded_retry(
 
         progress = make_progress_reporter(args, session_path, run_id)
 
+        # R3: timestamp just before execute() so a result.json the executor
+        # writes DURING this attempt (mtime after here) can be told apart from
+        # a stale leftover (mtime before). See _load_fresh_result_file().
+        attempt_started_at = time.time()
+
         outcome = None
         exec_error: Exception | None = None
         try:
@@ -588,8 +637,42 @@ def _run_adapter_with_bounded_retry(
                 return 0
             return cmd_import_result(args, adapter)
 
-        # Technical failure: either an exception, or execute() returned
-        # without one but produced no usable result at all.
+        # R3 finding A — no result in stdout, but the executor may have written
+        # result.json into the session folder itself (the prompt-file hint
+        # told it to). If a FRESH one is there, treat it exactly like a
+        # stdout result: import it, never retry.
+        if outcome is not None:
+            fresh = _load_fresh_result_file(session_path / "result.json", attempt_started_at, parse_and_validate_result)
+            if fresh is not None:
+                log_line(
+                    session_path,
+                    "Kein Ergebnis-JSON in stdout, aber frische result.json im Session-Ordner gefunden "
+                    "— wird wie ein stdout-Ergebnis importiert (kein Retry).",
+                )
+                if _current_status(args) == "cancelled":
+                    detail = "Work Order wurde cancelled — result.json liegt lokal vor, wird NICHT importiert."
+                    log_line(session_path, detail)
+                    _terminalize_cancelled_run(args, session_path, run_id, detail)
+                    return 0
+                return cmd_import_result(args, adapter)
+
+        # R3 finding A — the executor finished cleanly (exit_code 0) but left
+        # no usable result anywhere (neither stdout nor a fresh result.json).
+        # A retry would only repeat the exact same finished work and burn more
+        # budget, so this is NOT a retryable technical failure: fail now with
+        # a clear "result_missing" reason, human steps in.
+        if outcome is not None and outcome.exit_code == 0:
+            detail = (
+                f"Attempt {attempt}: Runner beendete mit exit_code=0, aber es kam kein verwertbares "
+                "Ergebnis-JSON (weder in stdout noch als frische result.json im Session-Ordner). Der "
+                "Executor war fertig — ein Retry würde nur die bereits erledigte Arbeit wiederholen."
+            )
+            log_line(session_path, detail)
+            _finalize_technical_failure(args, session_path, run_id, "result_missing", detail)
+            return 1
+
+        # Technical failure: either an exception, or execute() returned with a
+        # non-zero exit code but produced no usable result at all.
         after = _git_snapshot(_target_worktree())
         failure_detail = f"Fehler: {exec_error}" if exec_error else f"exit_code={outcome.exit_code if outcome else 'unbekannt'}"
 
@@ -737,6 +820,10 @@ def _run_one_step_with_bounded_retry(
 
         progress = make_progress_reporter(args, session_path, run_id)
 
+        # R3: see the whole-order loop — timestamp before the call so a fresh
+        # per-step result file can be told apart from a stale one.
+        attempt_started_at = time.time()
+
         outcome = None
         exec_error: Exception | None = None
         try:
@@ -776,6 +863,20 @@ def _run_one_step_with_bounded_retry(
                 exec_error = exc
                 log_line(session_path, f"FEHLER: Step-Ergebnis für '{step['title']}' hat ungültige Form: {exc}")
 
+        # R3 finding A (per-step sibling): no result from the adapter, but the
+        # executor may have written a fresh per-step result file itself.
+        if validated is None and outcome is not None:
+            fresh = _load_fresh_result_file(
+                session_path / f"result_step_{step['id']}.json", attempt_started_at, parse_and_validate_step_result,
+            )
+            if fresh is not None:
+                validated = fresh
+                log_line(
+                    session_path,
+                    f"Kein Step-Ergebnis in stdout für '{step['title']}', aber frische "
+                    "result_step-Datei im Session-Ordner gefunden — wird importiert (kein Retry).",
+                )
+
         if validated is not None:
             (session_path / f"result_step_{step['id']}.json").write_text(
                 json.dumps(validated, indent=2, ensure_ascii=False), encoding="utf-8"
@@ -801,8 +902,20 @@ def _run_one_step_with_bounded_retry(
                 )
             return None, validated["steps"][0], spent_so_far
 
-        # Technical failure: an exception, an invalid-shape result, or no
-        # result at all — same three-way branch as
+        # R3 finding A (per-step sibling): clean exit (0) but no usable result
+        # anywhere — not retryable, the step's work is already done. Fail with
+        # "result_missing" instead of burning another attempt.
+        if outcome is not None and outcome.exit_code == 0:
+            detail = (
+                f"Step '{step['title']}' Attempt {attempt}: exit_code=0, aber kein verwertbares "
+                "Ergebnis-JSON (weder in stdout noch als frische result_step-Datei). Kein Retry."
+            )
+            log_line(session_path, detail)
+            _finalize_technical_failure(args, session_path, run_id, "result_missing", detail)
+            return 1, None, spent_so_far
+
+        # Technical failure: an exception, an invalid-shape result, or a
+        # non-zero-exit run with no result — same three-way branch as
         # _run_adapter_with_bounded_retry(), just per-step.
         after = _git_snapshot(_target_worktree())
         failure_detail = f"Fehler: {exec_error}" if exec_error else f"exit_code={outcome.exit_code if outcome else 'unbekannt'}"
@@ -1064,7 +1177,7 @@ def cmd_prompt_file(args: argparse.Namespace, adapter: RunnerAdapter) -> int:
     log_line(session_path, f"Preconditions OK (Adapter: {adapter.info.name}). Status vor Start: {order['status']}")
 
     try:
-        prepared_path = adapter.prepare(order, session_path)
+        prepared_path = adapter.prepare(order, session_path, execute_mode=(args.mode == "execute"))
     except Exception as exc:
         log_line(session_path, f"FEHLER bei adapter.prepare(): {exc}")
         print(f"ERROR: {exc}", file=sys.stderr)
