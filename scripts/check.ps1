@@ -51,6 +51,18 @@ Invoke-Check -Name "scripts: run_work_order_daemon" `
     -FilePath $pythonExe `
     -ArgumentList @("scripts/test_run_work_order_daemon.py")
 
+# R3: the execute-path retry loops (result.json fallback, result_missing,
+# worktree-change detection) and the per-step loop.
+Invoke-Check -Name "scripts: bounded_retry" `
+    -WorkingDirectory $repoRoot `
+    -FilePath $pythonExe `
+    -ArgumentList @("scripts/test_bounded_retry.py")
+
+Invoke-Check -Name "scripts: step_execution" `
+    -WorkingDirectory $repoRoot `
+    -FilePath $pythonExe `
+    -ArgumentList @("scripts/test_step_execution.py")
+
 Invoke-Check -Name "frontend: type-check" `
     -WorkingDirectory $frontendDir `
     -FilePath "npm" `

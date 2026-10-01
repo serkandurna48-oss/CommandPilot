@@ -28,7 +28,7 @@ class OpenClawAdapter(RunnerAdapter):
         command_template=None,  # unknown — not evaluated
     )
 
-    def prepare(self, order: dict, session_path: Path) -> Path:
+    def prepare(self, order: dict, session_path: Path, execute_mode: bool = False) -> Path:
         raise NotImplementedError(
             "openclaw adapter is a named placeholder only — OpenClaw has not been evaluated as a "
             "RunnerAdapter yet. Use --adapter manual_prompt. See docs/runner-adapter-contract.md."

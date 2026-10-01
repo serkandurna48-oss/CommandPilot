@@ -38,7 +38,10 @@ class ManualPromptAdapter(RunnerAdapter):
         consumes_paid_credits=False,
     )
 
-    def prepare(self, order: dict, session_path: Path) -> Path:
+    def prepare(self, order: dict, session_path: Path, execute_mode: bool = False) -> Path:
+        # manual_prompt is inherently the manual copy/paste flow — it never
+        # auto-executes, so it always keeps the manual save/import hint
+        # regardless of execute_mode.
         prompt_text = build_runner_prompt(order)
         prompt_path = session_path / "prompt.md"
         prompt_path.write_text(prompt_text, encoding="utf-8")

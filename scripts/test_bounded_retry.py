@@ -16,8 +16,11 @@ Run:
 from __future__ import annotations
 
 import argparse
+import json
+import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -25,21 +28,54 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import run_work_order as harness  # noqa: E402
-from runner_adapters.base import ExecuteOutcome, ProgressReporter  # noqa: E402
+from runner_adapters.base import (  # noqa: E402
+    ExecuteOutcome,
+    ProgressReporter,
+    build_runner_prompt,
+    build_step_prompt,
+)
+
+
+# A complete, parse_and_validate_result()-valid whole-order result — reused by
+# the R3 "fresh result.json fallback" tests.
+VALID_RESULT = {
+    "workOrderId": "wo-1",
+    "finalStatus": "review_ready",
+    "steps": [{"id": "s1", "status": "completed", "outputSummary": "did it", "blockedReason": None}],
+    "activityLogs": [],
+    "artifacts": [],
+    "reviewPackage": {
+        "summary": "Done.", "filesChanged": [], "testsRun": [], "risks": [],
+        "openQuestions": [], "needsHumanReview": True, "recommendedNextStep": "merge",
+        "verdict": "ready_for_review",
+    },
+}
 
 
 class FakeAdapter:
     """A minimal RunnerAdapter stand-in whose execute() replays a
-    pre-scripted sequence of outcomes/exceptions, one per call."""
+    pre-scripted sequence of outcomes/exceptions, one per call.
 
-    def __init__(self, results: list):
+    writes_result (R3): if set, execute() writes it as result.json into the
+    session folder and bumps its mtime into the future — emulating an executor
+    that saved result.json itself even though the adapter returned no stdout
+    result. The future mtime makes it unambiguously "written during this
+    attempt" for _load_fresh_result_file()'s freshness check."""
+
+    def __init__(self, results: list, writes_result: dict | None = None):
         self.info = argparse.Namespace(name="fake_adapter")
         self._results = list(results)
+        self._writes_result = writes_result
         self.execute_calls: list[float | None] = []
 
     def execute(self, order, session_path, runner_command, max_budget_usd=None, progress=None):
         self.execute_calls.append(max_budget_usd)
         self.progress_seen = progress
+        if self._writes_result is not None:
+            p = Path(session_path) / "result.json"
+            p.write_text(json.dumps(self._writes_result), encoding="utf-8")
+            future = time.time() + 10
+            os.utime(p, (future, future))
         item = self._results.pop(0)
         if isinstance(item, Exception):
             raise item
@@ -100,6 +136,46 @@ class BoundedRetryTests(unittest.TestCase):
         self.assertEqual(len(adapter.execute_calls), 1)
         mock_import.assert_called_once()
         self.assertEqual(rc, 0)
+
+    def test_exit0_fresh_result_json_is_imported_not_retried(self):
+        # R3 finding A / criterion 1: exit_code 0, no stdout result
+        # (outcome.result is None), but the executor wrote a FRESH result.json
+        # into the session folder. The harness must import it and NOT retry.
+        outcome = ExecuteOutcome(exit_code=0, output_log_path=Path("log"), result=None)
+        adapter = FakeAdapter([outcome], writes_result=VALID_RESULT)
+        rc, mock_import = self._run(
+            adapter,
+            call_api_side_effect=lambda *a, **k: {},
+            status_sequence=["running", "running"],  # top-of-loop, then pre-import cancel check
+            git_snapshots=[UNCHANGED],
+        )
+        self.assertEqual(len(adapter.execute_calls), 1)  # no retry
+        mock_import.assert_called_once()
+        self.assertEqual(rc, 0)
+
+    def test_exit0_no_result_anywhere_fails_result_missing_without_retry(self):
+        # R3 finding A / criterion 2: exit_code 0, no stdout result, no fresh
+        # result.json either → failed with reason 'result_missing', no retry.
+        outcome = ExecuteOutcome(exit_code=0, output_log_path=Path("log"), result=None)
+        adapter = FakeAdapter([outcome])  # writes nothing
+        calls = []
+
+        def call_api_side_effect(api_url, token, method, path, payload, dry_run):
+            calls.append((method, path, payload))
+            return {}
+
+        rc, mock_import = self._run(
+            adapter,
+            call_api_side_effect=call_api_side_effect,
+            status_sequence=["running"],
+            git_snapshots=[UNCHANGED],
+        )
+        self.assertEqual(len(adapter.execute_calls), 1)  # NOT retried
+        self.assertEqual(rc, 1)
+        mock_import.assert_not_called()
+        final_patch = [p for (m, path, p) in calls if m == "PATCH" and path == "/api/work-orders/wo-1"][-1]
+        self.assertEqual(final_patch["status"], "failed")
+        self.assertEqual(final_patch["reason"], "result_missing")
 
     def test_a_progress_reporter_is_always_passed_to_execute(self):
         outcome = ExecuteOutcome(exit_code=0, output_log_path=Path("log"), result={"finalStatus": "review_ready"})
@@ -372,6 +448,132 @@ class BoundedRetryTests(unittest.TestCase):
         self.assertEqual(len(adapter.execute_calls), 3)  # all 3 attempts fit well within budget
         self.assertEqual(adapter.execute_calls, [0.30, 0.25, 0.2])
         self.assertEqual(rc, 1)  # still fails after 3 attempts — max attempts reached, not budget
+
+
+class LoadFreshResultFileTests(unittest.TestCase):
+    """R3 finding A / criterion 3: a result.json from before this attempt
+    (stale) must be ignored; only one written during the attempt counts."""
+
+    def test_stale_file_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "result.json"
+            p.write_text(json.dumps(VALID_RESULT), encoding="utf-8")
+            old = time.time() - 1000
+            os.utime(p, (old, old))  # written long before the attempt
+            result = harness._load_fresh_result_file(p, time.time(), harness.parse_and_validate_result)
+            self.assertIsNone(result)
+
+    def test_fresh_file_is_loaded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "result.json"
+            p.write_text(json.dumps(VALID_RESULT), encoding="utf-8")
+            # attempt "started" well in the past → the file counts as fresh
+            result = harness._load_fresh_result_file(p, time.time() - 1000, harness.parse_and_validate_result)
+            self.assertIsNotNone(result)
+            self.assertEqual(result["finalStatus"], "review_ready")
+
+    def test_absent_file_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            result = harness._load_fresh_result_file(
+                Path(tmp) / "nope.json", time.time() - 1000, harness.parse_and_validate_result
+            )
+            self.assertIsNone(result)
+
+    def test_fresh_but_invalid_file_returns_none(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "result.json"
+            p.write_text("{ not valid json", encoding="utf-8")
+            result = harness._load_fresh_result_file(
+                p, time.time() - 1000, harness.parse_and_validate_result
+            )
+            self.assertIsNone(result)
+
+
+class WorktreeChangeDetectionTests(unittest.TestCase):
+    """R3 finding B / criterion 5: a new git worktree created during an
+    attempt must be seen as a change (no auto-retry)."""
+
+    def test_worktree_component_difference_counts_as_changed(self):
+        before = ("sha", "status", "worktree /a\nHEAD abc\n")
+        after = ("sha", "status", "worktree /a\nHEAD abc\n\nworktree /a/.claude/worktrees/x\nHEAD def\n")
+        self.assertTrue(harness._worktree_changed(before, after))
+        self.assertFalse(harness._worktree_changed(before, before))
+
+    def test_git_snapshot_detects_new_worktree_in_real_repo(self):
+        import shutil
+        import subprocess
+
+        if shutil.which("git") is None:
+            self.skipTest("git not available")
+
+        tmp = tempfile.mkdtemp()
+        try:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+
+            def git(*a):
+                return subprocess.run(["git", *a], cwd=repo, capture_output=True, text=True)
+
+            git("init")
+            git("config", "user.email", "t@example.com")
+            git("config", "user.name", "T")
+            (repo / "f.txt").write_text("hi\n", encoding="utf-8")
+            git("add", "-A")
+            git("commit", "-m", "base")
+
+            before = harness._git_snapshot(repo)
+            self.assertIsNotNone(before)
+
+            wt = Path(tmp) / "wt"
+            r = git("worktree", "add", "--detach", str(wt))
+            self.assertEqual(r.returncode, 0, r.stderr)
+
+            after = harness._git_snapshot(repo)
+            self.assertIsNotNone(after)
+            # HEAD and working-tree status are unchanged by `worktree add`;
+            # the ONLY difference is the worktree list — which is exactly what
+            # must now flip _worktree_changed to True.
+            self.assertEqual(before[0], after[0])
+            self.assertEqual(before[1], after[1])
+            self.assertNotEqual(before[2], after[2])
+            self.assertTrue(harness._worktree_changed(before, after))
+
+            git("worktree", "remove", "--force", str(wt))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def _full_order() -> dict:
+    return {
+        "id": "wo-1", "title": "T", "goal": "G", "repo": "commandpilot",
+        "time_limit_minutes": 90, "acceptance_criteria": ["crit"],
+        "approval_scope": {
+            "allowed_actions": [], "requires_approval": [], "blocked_actions": ["x"],
+            "max_runtime_minutes": 90,
+        },
+        "steps": [{"id": "s1", "order_index": 0, "title": "Step 1", "assigned_role": "coder"}],
+    }
+
+
+class PromptModeTests(unittest.TestCase):
+    """R3 finding B / criterion 4: the --mode execute prompt forbids a
+    self-created worktree and drops the manual import hint; prompt-file mode
+    is unchanged."""
+
+    def test_execute_prompt_forbids_worktree_and_drops_import_hint(self):
+        p = build_runner_prompt(_full_order(), execute_mode=True)
+        self.assertIn("KEINEN eigenen Worktree", p)
+        self.assertNotIn("importiere es mit", p)
+
+    def test_prompt_file_mode_unchanged(self):
+        p = build_runner_prompt(_full_order())  # execute_mode defaults to False
+        self.assertIn("importiere es mit", p)
+        self.assertNotIn("KEINEN eigenen Worktree", p)
+
+    def test_step_prompt_forbids_worktree(self):
+        order = _full_order()
+        p = build_step_prompt(order, order["steps"][0], [])
+        self.assertIn("KEINEN eigenen Worktree", p)
 
 
 if __name__ == "__main__":

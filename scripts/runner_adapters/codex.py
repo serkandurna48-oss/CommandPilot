@@ -22,7 +22,8 @@ class CodexAdapter(RunnerAdapter):
         command_template="codex exec --prompt-file {prompt_file}",
     )
 
-    def prepare(self, order: dict, session_path: Path) -> Path:
+    def prepare(self, order: dict, session_path: Path, execute_mode: bool = False) -> Path:
+        # Placeholder adapter (no native execute) — keeps the manual prompt.
         prompt_text = build_runner_prompt(order)
         prompt_path = session_path / "prompt.md"
         prompt_path.write_text(prompt_text, encoding="utf-8")

@@ -313,8 +313,8 @@ class ClaudeCodeAdapter(RunnerAdapter):
         supports_step_execution=True,  # execute_step() — see run_work_order.py --per-step
     )
 
-    def prepare(self, order: dict, session_path: Path) -> Path:
-        prompt_text = build_runner_prompt(order)
+    def prepare(self, order: dict, session_path: Path, execute_mode: bool = False) -> Path:
+        prompt_text = build_runner_prompt(order, execute_mode=execute_mode)
         prompt_path = session_path / "prompt.md"
         prompt_path.write_text(prompt_text, encoding="utf-8")
         (session_path / "result.schema.json").write_text(RESULT_JSON_SCHEMA, encoding="utf-8")

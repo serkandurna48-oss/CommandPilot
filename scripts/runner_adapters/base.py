@@ -184,7 +184,7 @@ def _render_hard_stop_block() -> list[str]:
     return lines
 
 
-def build_runner_prompt(order: dict) -> str:
+def build_runner_prompt(order: dict, execute_mode: bool = False) -> str:
     """Renders a work order (raw snake_case API aggregate) into the
     complete runner prompt text. Adapter-agnostic — every adapter that
     hands text to an LLM-driven runner uses this same builder; what
@@ -195,6 +195,14 @@ def build_runner_prompt(order: dict) -> str:
     frontend/lib/generateRunnerPrompt.ts (line-by-line ported, not
     imported) — see docs/background-dev-team-system-design.md §13 for why
     a cross-language import wasn't practical here. Keep both in sync.
+
+    execute_mode=False (the manual --mode prompt-file flow): the trailing
+    hint tells the human to save result.json and run --mode import-result.
+    execute_mode=True (--mode execute, harness-driven): that manual hint is
+    dropped — the harness captures the result from stdout itself — and the
+    executor is told to work in place (no self-created worktree/branch; see
+    R3 live-test finding B) and to emit only the result JSON as its last
+    output.
     """
     scope = order.get("approval_scope") or {}
     steps = order.get("steps") or []
@@ -298,10 +306,22 @@ def build_runner_prompt(order: dict) -> str:
     recommended = order.get("recommended_next_step") or "nächster sinnvoller Schritt für Serkan"
     lines.append(f'reviewPackage.recommendedNextStep sollte konkret sein, z.B.: "{recommended}"')
     lines.append("")
-    lines.append("## Hinweis: lokale Runner-Session")
-    lines.append(f"Dieser Prompt wurde vom lokalen Runner-Harness (scripts/run_work_order.py) erzeugt und liegt unter tmp/work-order-runs/{order['id']}/prompt.md.")
-    lines.append("Speichere das Ergebnis-JSON dort als result.json und importiere es mit:")
-    lines.append(f"  python scripts/run_work_order.py {order['id']} --mode import-result")
+    if execute_mode:
+        # --mode execute: the harness runs the CLI and captures the result from
+        # stdout itself, so there is no manual save/import step. And (R3 finding
+        # B) the executor must NOT create its own worktree/branch — if it does,
+        # its work lands outside the directory the harness snapshots and the
+        # Judge diffs, so it looks like "nothing changed" and gets retried.
+        lines.append("## Ausführungsmodus (automatisch)")
+        lines.append(
+            "Arbeite direkt im aktuellen Arbeitsverzeichnis. Lege KEINEN eigenen Worktree oder Branch an, "
+            "wechsle keinen Branch. Deine letzte Ausgabe ist ausschließlich das Ergebnis-JSON."
+        )
+    else:
+        lines.append("## Hinweis: lokale Runner-Session")
+        lines.append(f"Dieser Prompt wurde vom lokalen Runner-Harness (scripts/run_work_order.py) erzeugt und liegt unter tmp/work-order-runs/{order['id']}/prompt.md.")
+        lines.append("Speichere das Ergebnis-JSON dort als result.json und importiere es mit:")
+        lines.append(f"  python scripts/run_work_order.py {order['id']} --mode import-result")
 
     return "\n".join(lines)
 
@@ -427,6 +447,15 @@ def build_step_prompt(order: dict, step: dict, prior_steps: list[dict]) -> str:
     lines.append("```json")
     lines.append(STEP_RESULT_JSON_SCHEMA)
     lines.append("```")
+    lines.append("")
+    # build_step_prompt is used ONLY by the per-step --mode execute path, so
+    # the same automatic-execution guidance as build_runner_prompt's
+    # execute_mode branch always applies here (R3 finding B).
+    lines.append("## Ausführungsmodus (automatisch)")
+    lines.append(
+        "Arbeite direkt im aktuellen Arbeitsverzeichnis. Lege KEINEN eigenen Worktree oder Branch an, "
+        "wechsle keinen Branch. Deine letzte Ausgabe ist ausschließlich das Ergebnis-JSON."
+    )
 
     return "\n".join(lines)
 
@@ -824,10 +853,16 @@ class RunnerAdapter(ABC):
         return warnings
 
     @abstractmethod
-    def prepare(self, order: dict, session_path: Path) -> Path:
+    def prepare(self, order: dict, session_path: Path, execute_mode: bool = False) -> Path:
         """Write whatever this adapter needs into session_path (prompt,
         schema, example, ...). Returns the path to the primary artifact
-        (e.g. prompt.md) for the caller to point a human/tool at."""
+        (e.g. prompt.md) for the caller to point a human/tool at.
+
+        execute_mode is True when called on the --mode execute path (the
+        harness will run the CLI and auto-import from stdout), False for the
+        manual --mode prompt-file flow. Adapters that build a runner prompt
+        forward it to build_runner_prompt() so the prompt drops the manual
+        save/import hint and tells the executor to work in place (R3)."""
 
     def execute(
         self,
