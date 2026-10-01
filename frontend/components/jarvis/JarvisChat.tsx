@@ -114,6 +114,11 @@ function SuggestedActionCard({
   const status = decision?.status ?? "idle";
   const busy = status === "confirming" || status === "rejecting";
   const decided = status === "confirmed" || status === "rejected";
+  const criteria = action.acceptance_criteria ?? [];
+  // A proposal with no acceptance criteria cannot become a work order — the
+  // backend's WorkOrderCreate requires ≥1 (R1). Block confirm here with a
+  // visible reason rather than let it 422 on click.
+  const hasCriteria = criteria.length > 0;
 
   return (
     <Card variant="bordered" className="mt-2">
@@ -139,6 +144,22 @@ function SuggestedActionCard({
             ? t("jarvis.suggested_action.requires_approval_yes")
             : t("jarvis.suggested_action.requires_approval_no")}
         </p>
+
+        {hasCriteria && (
+          <div>
+            <p className="text-[10px] uppercase tracking-wide text-[var(--text-tertiary)] mb-0.5">
+              {t("jarvis.suggested_action.acceptance_criteria")}
+            </p>
+            {/* Short, phone-readable list — wraps, never scrolls horizontally. */}
+            <ul className="space-y-0.5 list-disc pl-4">
+              {criteria.map((c, ci) => (
+                <li key={ci} className="text-[11px] text-[var(--text-secondary)] break-words">
+                  {c}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {action.sources.length > 0 && (
           <div>
@@ -172,7 +193,7 @@ function SuggestedActionCard({
         ) : (
           <>
             <div className="flex gap-2 pt-1">
-              <Button size="sm" variant="primary" disabled={busy} loading={status === "confirming"} onClick={onConfirm}>
+              <Button size="sm" variant="primary" disabled={busy || !hasCriteria} loading={status === "confirming"} onClick={onConfirm}>
                 <Check className="h-3.5 w-3.5" />
                 {t("jarvis.suggested_action.confirm")}
               </Button>
@@ -181,6 +202,11 @@ function SuggestedActionCard({
                 {t("jarvis.suggested_action.reject")}
               </Button>
             </div>
+            {!hasCriteria && (
+              <p className="text-[11px] text-status-danger">
+                {t("jarvis.suggested_action.criteria_missing")}
+              </p>
+            )}
             {decision?.error && (
               <p className="text-[11px] text-status-danger">
                 {t("jarvis.suggested_action.error_retry")} {decision.error}
@@ -297,6 +323,10 @@ export function JarvisChat() {
         target_repo_name: action.target_repo_name,
         risk: action.risk,
         requires_approval: action.requires_approval,
+        // Echoed back unchanged — the backend's WorkOrderCreate requires ≥1
+        // criterion (R1); omitting this is what caused "Bestätigen
+        // fehlgeschlagen" (422).
+        acceptance_criteria: action.acceptance_criteria ?? [],
         sources: action.sources,
       },
       request_id: action.requestId,

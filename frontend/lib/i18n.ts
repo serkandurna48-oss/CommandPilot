@@ -235,6 +235,8 @@ const dict: Record<string, Record<Lang, string>> = {
   "jarvis.suggested_action.risk.high":     { en: "high",              de: "hoch" },
   "jarvis.suggested_action.requires_approval_yes": { en: "Needs approval for every step", de: "Jeder Schritt braucht Freigabe" },
   "jarvis.suggested_action.requires_approval_no":  { en: "Standard approval scope", de: "Standard-Freigabe-Rahmen" },
+  "jarvis.suggested_action.acceptance_criteria": { en: "Acceptance criteria", de: "Akzeptanzkriterien" },
+  "jarvis.suggested_action.criteria_missing": { en: "Criteria missing — can't be confirmed", de: "Kriterien fehlen — nicht bestätigbar" },
   "jarvis.suggested_action.confirm":       { en: "Confirm",           de: "Bestätigen" },
   "jarvis.suggested_action.reject":        { en: "Reject",            de: "Ablehnen" },
   "jarvis.suggested_action.deciding":      { en: "Working...",        de: "Wird verarbeitet..." },
