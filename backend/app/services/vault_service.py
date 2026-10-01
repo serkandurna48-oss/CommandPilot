@@ -39,6 +39,10 @@ logger = logging.getLogger(__name__)
 
 _CHARS_PER_TOKEN = 4
 _ENTITY_DIRS = ("Projekte", "Menschen")
+# Entity-note subfolders for the OneDrive source (base-context summary lines).
+# Differs from _ENTITY_DIRS because Menschen/ is deny-listed in OneDrive mode
+# and Entscheidungen/ is allow-listed — see onedrive_vault_service.py.
+_ONEDRIVE_ENTITY_DIRS = ("Projekte", "Entscheidungen")
 _BASE_INDEX_FILE = "00-Index.md"
 _EXCLUDED_FILES = {"CLAUDE.md"}
 _FRONTMATTER_KEYS = ("type", "status", "priority", "updated")
@@ -196,6 +200,154 @@ def _cap_to_budget(matches: list[VaultMatch], token_budget: int) -> list[VaultMa
 _MAX_INDEX_BUDGET_SHARE = 0.5
 
 
+# ── File source seam ─────────────────────────────────────────────────────────
+# The retrieval functions below read files through a backend so the scoring/
+# budget/sources logic stays identical regardless of where files come from.
+# Local = filesystem (unchanged behavior). OneDrive = an in-memory snapshot
+# fetched via Composio (see onedrive_vault_service.py). Each backend exposes
+# the same three views the three public functions need.
+
+class _VaultBackend:
+    def content_files(self) -> list[tuple[str, str]]:
+        """(rel_path, content) for every file eligible for hit-scoring, in
+        canonical order; unreadable files omitted."""
+        raise NotImplementedError
+
+    def base_files(self) -> tuple[str | None, list[tuple[str, str]]]:
+        """(index_content_or_None, [(rel_path, content), ...] entity notes)."""
+        raise NotImplementedError
+
+    def status_counts(self) -> tuple[int, int]:
+        """(notes_found, read_errors) over index + entity notes."""
+        raise NotImplementedError
+
+
+class _LocalVaultBackend(_VaultBackend):
+    """Reads the vault straight off the local filesystem — behavior is a
+    faithful port of the pre-OneDrive code paths, unchanged."""
+
+    def __init__(self, root: Path):
+        self._root = root
+
+    def content_files(self) -> list[tuple[str, str]]:
+        out: list[tuple[str, str]] = []
+        for file_path in _iter_content_files(self._root):
+            try:
+                content = file_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.warning("vault_service: could not read %s | %s", file_path, exc)
+                continue
+            out.append((file_path.relative_to(self._root).as_posix(), content))
+        return out
+
+    def base_files(self) -> tuple[str | None, list[tuple[str, str]]]:
+        index_content: str | None = None
+        index_path = self._root / _BASE_INDEX_FILE
+        if index_path.is_file():
+            try:
+                index_content = index_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.warning("vault_service: could not read %s | %s", index_path, exc)
+
+        entity: list[tuple[str, str]] = []
+        for dirname in _ENTITY_DIRS:
+            dir_path = self._root / dirname
+            if not dir_path.is_dir():
+                continue
+            for file_path in sorted(dir_path.glob("*.md")):
+                try:
+                    content = file_path.read_text(encoding="utf-8")
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.warning("vault_service: could not read %s | %s", file_path, exc)
+                    continue
+                entity.append((f"{dirname}/{file_path.name}", content))
+        return index_content, entity
+
+    def status_counts(self) -> tuple[int, int]:
+        notes_found = 0
+        read_errors = 0
+        index_path = self._root / _BASE_INDEX_FILE
+        if index_path.is_file():
+            try:
+                index_path.read_text(encoding="utf-8")
+                notes_found += 1
+            except (OSError, UnicodeDecodeError) as exc:
+                logger.warning("vault_service: status check could not read %s | %s", index_path, exc)
+                read_errors += 1
+        for dirname in _ENTITY_DIRS:
+            dir_path = self._root / dirname
+            if not dir_path.is_dir():
+                continue
+            for file_path in dir_path.glob("*.md"):
+                try:
+                    file_path.read_text(encoding="utf-8")
+                    notes_found += 1
+                except (OSError, UnicodeDecodeError) as exc:
+                    logger.warning("vault_service: status check could not read %s | %s", file_path, exc)
+                    read_errors += 1
+        return notes_found, read_errors
+
+
+class _OneDriveVaultBackend(_VaultBackend):
+    """Reads from an already-fetched OneDrive snapshot (rel_path -> content).
+    Allow-/deny-list filtering already happened in onedrive_vault_service; the
+    snapshot only ever contains allowed files."""
+
+    def __init__(self, files: dict[str, str]):
+        self._files = files
+
+    def _ordered_rel_paths(self) -> list[str]:
+        # Flat files first, then nested — mirrors the local root-then-subdirs
+        # order so budget drop / score tie-breaking behave the same way.
+        flat = sorted(p for p in self._files if "/" not in p)
+        nested = sorted(p for p in self._files if "/" in p)
+        return flat + nested
+
+    def content_files(self) -> list[tuple[str, str]]:
+        return [(p, self._files[p]) for p in self._ordered_rel_paths()]
+
+    def base_files(self) -> tuple[str | None, list[tuple[str, str]]]:
+        index_content = self._files.get(_BASE_INDEX_FILE)
+        entity = [
+            (p, self._files[p])
+            for p in self._ordered_rel_paths()
+            if "/" in p and p.split("/")[0] in _ONEDRIVE_ENTITY_DIRS
+        ]
+        return index_content, entity
+
+    def status_counts(self) -> tuple[int, int]:
+        notes_found = 1 if _BASE_INDEX_FILE in self._files else 0
+        notes_found += sum(
+            1 for p in self._files if "/" in p and p.split("/")[0] in _ONEDRIVE_ENTITY_DIRS
+        )
+        # A file that failed to download is already omitted from the snapshot;
+        # OneDrive load failures surface as a status reason, not read_errors.
+        return notes_found, 0
+
+
+def _resolve_backend(vault_path: str | None) -> tuple[_VaultBackend | None, str | None]:
+    """Pick the file source. An explicit vault_path (tests) or VAULT_SOURCE
+    other than "onedrive" → local filesystem (unchanged). Otherwise OneDrive.
+    Returns (backend, reason); reason is the get_vault_status reason code when
+    backend is None ("not_configured" | "onedrive_not_connected" |
+    "onedrive_error")."""
+    if vault_path is not None or settings.VAULT_SOURCE != "onedrive":
+        root = _vault_root(vault_path)
+        if root is None:
+            return None, "not_configured"
+        return _LocalVaultBackend(root), None
+
+    # OneDrive source — imported lazily so the local path never pulls in composio.
+    from app.services import onedrive_vault_service
+
+    load = onedrive_vault_service.load_files()
+    if load.status == onedrive_vault_service.STATUS_OK:
+        return _OneDriveVaultBackend(load.files), None
+    if load.status == onedrive_vault_service.STATUS_NOT_CONNECTED:
+        return None, "onedrive_not_connected"
+    return None, "onedrive_error"
+
+
 def get_base_context(token_budget: int, vault_path: str | None = None) -> list[VaultMatch]:
     """
     00-Index.md (truncated to at most half of token_budget — see below),
@@ -215,40 +367,28 @@ def get_base_context(token_budget: int, vault_path: str | None = None) -> list[V
     module docstring) as the index keeps growing. Reserving half the
     budget guarantees room for entity notes regardless of index size.
     """
-    root = _vault_root(vault_path)
-    if root is None:
+    backend, _ = _resolve_backend(vault_path)
+    if backend is None:
         return []
 
     matches: list[VaultMatch] = []
 
-    index_path = root / _BASE_INDEX_FILE
-    if index_path.is_file():
-        try:
-            text = index_path.read_text(encoding="utf-8").strip()
-            if text:
-                max_index_chars = int(max(token_budget, 0) * _CHARS_PER_TOKEN * _MAX_INDEX_BUDGET_SHARE)
-                if len(text) > max_index_chars:
-                    text = text[:max_index_chars] + "…"
-                matches.append(VaultMatch(text, _BASE_INDEX_FILE, "", score=0))
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.warning("vault_service: could not read %s | %s", index_path, exc)
+    index_content, entity_notes = backend.base_files()
+    if index_content is not None:
+        text = index_content.strip()
+        if text:
+            max_index_chars = int(max(token_budget, 0) * _CHARS_PER_TOKEN * _MAX_INDEX_BUDGET_SHARE)
+            if len(text) > max_index_chars:
+                text = text[:max_index_chars] + "…"
+            matches.append(VaultMatch(text, _BASE_INDEX_FILE, "", score=0))
 
-    for dirname in _ENTITY_DIRS:
-        dir_path = root / dirname
-        if not dir_path.is_dir():
-            continue
-        for file_path in sorted(dir_path.glob("*.md")):
-            try:
-                content = file_path.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError) as exc:
-                logger.warning("vault_service: could not read %s | %s", file_path, exc)
-                continue
-            frontmatter, rest = _parse_frontmatter(content)
-            first_line = next((l.strip() for l in rest.splitlines() if l.strip()), "")
-            fm_str = ", ".join(f"{k}: {v}" for k, v in frontmatter.items())
-            summary = first_line + (f" ({fm_str})" if fm_str else "")
-            if summary:
-                matches.append(VaultMatch(summary, f"{dirname}/{file_path.name}", "", score=0))
+    for rel_path, content in entity_notes:
+        frontmatter, rest = _parse_frontmatter(content)
+        first_line = next((l.strip() for l in rest.splitlines() if l.strip()), "")
+        fm_str = ", ".join(f"{k}: {v}" for k, v in frontmatter.items())
+        summary = first_line + (f" ({fm_str})" if fm_str else "")
+        if summary:
+            matches.append(VaultMatch(summary, rel_path, "", score=0))
 
     return _cap_to_budget(matches, token_budget)
 
@@ -267,8 +407,8 @@ def retrieve_context(
     vault or empty query → [].
     Never raises.
     """
-    root = _vault_root(vault_path)
-    if root is None:
+    backend, _ = _resolve_backend(vault_path)
+    if backend is None:
         return []
 
     query_tokens = set(_tokenize(query))
@@ -276,16 +416,13 @@ def retrieve_context(
         return []
 
     scored: list[VaultMatch] = []
-    for file_path in _iter_content_files(root):
-        try:
-            content = file_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.warning("vault_service: could not read %s | %s", file_path, exc)
-            continue
+    for rel_name, content in backend.content_files():
         _, body = _parse_frontmatter(content)
-        rel_name = file_path.relative_to(root).as_posix()
+        stem = rel_name.rsplit("/", 1)[-1]
+        if stem.endswith(".md"):
+            stem = stem[:-3]
         for heading, section_text in _split_sections(body):
-            score = _score_section(query_tokens, heading, file_path.stem, section_text)
+            score = _score_section(query_tokens, heading, stem, section_text)
             if score >= _MIN_HIT_SCORE:
                 scored.append(VaultMatch(section_text, rel_name, heading, score))
 
@@ -382,51 +519,34 @@ def get_vault_status(user_id: str) -> dict:
     status check's note count must be the real count, not "however many
     fit in a budget nobody asked for here").
 
-    This function reads every note directly, counts every real success,
-    and treats even one per-file read failure as ok=False — reason=
+    For the local source this reads every note directly, counts every real
+    success, and treats even one per-file read failure as ok=False — reason=
     "read_error" — while still reporting notes_found as the count that DID
-    read cleanly, so a partial failure is visible as partial, not total.
+    read cleanly, so a partial failure is visible as partial, not total. For
+    the OneDrive source the snapshot is already fetched (allow-listed files
+    only); a failed load surfaces as reason="onedrive_not_connected" /
+    "onedrive_error" rather than "read_error".
 
     Same fail-closed ownership gate as get_context_for_query — a non-owner
     (or an unset VAULT_OWNER_USER_ID) gets reason="not_owner", never a
-    filesystem check, exactly like the real read path would.
+    backend check, exactly like the real read path would.
 
     Returns {ok, reason, notes_found, checked_at} — reason is one of
-    "not_owner" | "not_configured" | "read_error" | None (ok=True has no
-    reason).
+    "not_owner" | "not_configured" | "read_error" | "onedrive_not_connected" |
+    "onedrive_error" | None (ok=True has no reason).
     """
     checked_at = datetime.now(timezone.utc).isoformat()
     owner_id = settings.VAULT_OWNER_USER_ID
     if not owner_id or user_id != owner_id:
         return {"ok": False, "reason": "not_owner", "notes_found": 0, "checked_at": checked_at}
 
-    root = _vault_root(None)
-    if root is None:
-        return {"ok": False, "reason": "not_configured", "notes_found": 0, "checked_at": checked_at}
+    backend, reason = _resolve_backend(None)
+    if backend is None:
+        # reason is "not_configured" (local) or "onedrive_not_connected" /
+        # "onedrive_error" (OneDrive source).
+        return {"ok": False, "reason": reason, "notes_found": 0, "checked_at": checked_at}
 
-    notes_found = 0
-    read_errors = 0
-
-    index_path = root / _BASE_INDEX_FILE
-    if index_path.is_file():
-        try:
-            index_path.read_text(encoding="utf-8")
-            notes_found += 1
-        except (OSError, UnicodeDecodeError) as exc:
-            logger.warning("vault_service: status check could not read %s | %s", index_path, exc)
-            read_errors += 1
-
-    for dirname in _ENTITY_DIRS:
-        dir_path = root / dirname
-        if not dir_path.is_dir():
-            continue
-        for file_path in dir_path.glob("*.md"):
-            try:
-                file_path.read_text(encoding="utf-8")
-                notes_found += 1
-            except (OSError, UnicodeDecodeError) as exc:
-                logger.warning("vault_service: status check could not read %s | %s", file_path, exc)
-                read_errors += 1
+    notes_found, read_errors = backend.status_counts()
 
     if read_errors > 0:
         return {"ok": False, "reason": "read_error", "notes_found": notes_found, "checked_at": checked_at}
