@@ -203,12 +203,14 @@ class Case10ProposalNeverWritesWithoutConfirmation(unittest.TestCase):
                 description="Onboarding-Schritte für den Kunden JK dokumentieren und in CampPilot abbilden.",
                 risk="medium",
                 requires_approval=True,
+                acceptance_criteria=["Die Onboarding-Schritte für JK sind dokumentiert."],
             ),
             SuggestedAction(
                 title="CampPilot Demo-Daten für JK anlegen",
                 description="Beispieldaten für eine JK-Demo in CampPilot vorbereiten.",
                 risk="low",
                 requires_approval=False,
+                acceptance_criteria=["Es gibt JK-Demo-Daten in CampPilot."],
             ),
         ]
 
