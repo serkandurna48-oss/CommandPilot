@@ -14,7 +14,7 @@ import {
   WORK_ORDER_STATUS_COLORS,
 } from "@/lib/operatorStyles";
 import type { WorkOrderDetailBundle } from "@/lib/workOrderMapper";
-import type { WorkOrderStatus } from "@/types";
+import type { Artifact, WorkOrderStatus } from "@/types";
 import { cn } from "@/lib/utils";
 import { Clock, ShieldCheck, ShieldAlert, ShieldX, FolderTree, Info, RotateCcw, XOctagon } from "lucide-react";
 
@@ -64,6 +64,50 @@ interface WorkOrderDetailProps extends WorkOrderDetailBundle {
  * that decision and asked for it to be unified with the rest of the app,
  * same as StepPipeline.tsx/ActivityFeed.tsx/LifecycleControls.tsx.
  */
+// ── Judge verdict (R2) ──────────────────────────────────────────────────────
+// The independent Judge stage (scripts/judge_review.py) stores its verdict as
+// a type="review", title="Judge-Urteil" artifact holding strict JSON. Parsed
+// defensively here — a malformed/foreign artifact just means "no verdict to
+// show", never a render crash.
+type JudgeVerdictValue = "pass" | "fail" | "unclear";
+type JudgeCriterion = { criterion: string; verdict: JudgeVerdictValue; evidence: string };
+type JudgeVerdict = { criteria: JudgeCriterion[]; overall: "pass" | "fail" };
+
+const JUDGE_VERDICT_COLORS: Record<JudgeVerdictValue, string> = {
+  pass: "bg-status-success/15 text-status-success",
+  fail: "bg-status-danger/15 text-status-danger",
+  unclear: "bg-status-warning/15 text-status-warning",
+};
+
+function parseJudgeVerdict(artifacts: Artifact[]): JudgeVerdict | null {
+  const reviews = artifacts.filter((a) => a.type === "review" && a.title === "Judge-Urteil" && a.content);
+  if (reviews.length === 0) return null;
+  const latest = reviews[reviews.length - 1];
+  try {
+    const parsed: unknown = JSON.parse(latest.content as string);
+    if (typeof parsed !== "object" || parsed === null) return null;
+    const rawCriteria = (parsed as { criteria?: unknown }).criteria;
+    if (!Array.isArray(rawCriteria)) return null;
+    const criteria: JudgeCriterion[] = [];
+    for (const item of rawCriteria) {
+      if (typeof item !== "object" || item === null) continue;
+      const rec = item as Record<string, unknown>;
+      if (typeof rec.criterion !== "string") continue;
+      const verdict: JudgeVerdictValue = rec.verdict === "pass" || rec.verdict === "fail" ? rec.verdict : "unclear";
+      criteria.push({
+        criterion: rec.criterion,
+        verdict,
+        evidence: typeof rec.evidence === "string" ? rec.evidence : "",
+      });
+    }
+    if (criteria.length === 0) return null;
+    const overall: "pass" | "fail" = (parsed as { overall?: unknown }).overall === "pass" ? "pass" : "fail";
+    return { criteria, overall };
+  } catch {
+    return null;
+  }
+}
+
 export function WorkOrderDetail({
   order,
   approvalScope: scope,
@@ -78,6 +122,7 @@ export function WorkOrderDetail({
 }: WorkOrderDetailProps) {
   const t = useT();
   const [activeTab, setActiveTab] = useState<TabId>("scope");
+  const judgeVerdict = parseJudgeVerdict(artifacts);
 
   // The most recent transition_work_order() (CP-OP01) audit-log entry that
   // landed the work order on its CURRENT status, if any — used below only
@@ -326,6 +371,46 @@ export function WorkOrderDetail({
                   </div>
                 )}
               </div>
+
+              {judgeVerdict && (
+                <div>
+                  <div className="flex items-center gap-2 mb-2 flex-wrap">
+                    <p className="text-[10px] font-mono uppercase tracking-widest text-[var(--text-tertiary)]">
+                      {t("operator.judge.title")}
+                    </p>
+                    <span
+                      className={cn(
+                        "text-[10px] px-2 py-0.5 rounded font-mono uppercase tracking-wide",
+                        judgeVerdict.overall === "pass"
+                          ? "bg-status-success/15 text-status-success"
+                          : "bg-status-danger/15 text-status-danger"
+                      )}
+                    >
+                      {t(`operator.judge.overall_${judgeVerdict.overall}`)}
+                    </span>
+                  </div>
+                  <ul className="space-y-2">
+                    {judgeVerdict.criteria.map((c, i) => (
+                      <li key={i} className="rounded-lg border border-[var(--border-light)] px-3 py-2">
+                        <div className="flex items-start gap-2">
+                          <span
+                            className={cn(
+                              "text-[10px] px-1.5 py-0.5 rounded font-mono uppercase shrink-0 mt-0.5",
+                              JUDGE_VERDICT_COLORS[c.verdict]
+                            )}
+                          >
+                            {t(`operator.judge.verdict_${c.verdict}`)}
+                          </span>
+                          <span className="text-[var(--text-secondary)] text-sm break-words min-w-0">{c.criterion}</span>
+                        </div>
+                        {c.evidence && (
+                          <p className="text-[var(--text-tertiary)] text-xs mt-1.5 break-words">{c.evidence}</p>
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
 
               {!scope && (
                 <div className="text-xs text-status-warning/90 bg-status-warning/10 border border-status-warning/30 rounded-lg px-3 py-2 flex items-start gap-2">

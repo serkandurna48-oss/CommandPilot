@@ -418,6 +418,35 @@ def run_one(args: argparse.Namespace, session: TokenSession, work_order_id: str)
     return result.returncode
 
 
+def maybe_run_judge(args: argparse.Namespace, session: TokenSession, work_order_id: str) -> None:
+    """After a run finishes and its result is imported, run the independent
+    Judge stage (scripts/judge_review.py) IFF the order is now review_ready.
+    Adapter-independent, read-only, fail-closed — see judge_review's module
+    docstring. Toggleable via JUDGE_ENABLED. Any failure here is swallowed
+    with a warning: the judge can only ever block an acceptance, never the
+    daemon's own progress, and judge_review itself already leaves the work
+    order untouched (review_ready) on any internal problem."""
+    import judge_review  # noqa: E402 — stdlib-only sibling, imported lazily so a judge bug never blocks startup
+
+    if not judge_review.judge_enabled():
+        log("Judge deaktiviert (JUDGE_ENABLED) — überspringe Prüfung.")
+        return
+    try:
+        order = call_api(args.api_url, session, "GET", f"/api/work-orders/{work_order_id}")
+    except DaemonApiError as exc:
+        log(f"WARNUNG: konnte Status für Judge nicht abrufen ({work_order_id}): {exc}")
+        return
+    if order.get("status") != "review_ready":
+        # blocked/failed/cancelled — nothing for the judge to grade.
+        return
+    log(f"Work Order {work_order_id} ist review_ready — starte unabhängige Judge-Prüfung (model={os.environ.get('JUDGE_MODEL', 'opus')}).")
+    try:
+        result = judge_review.run_judge(args.api_url, session.access_token, work_order_id)
+        log(f"Judge-Ergebnis für {work_order_id}: {result.get('status')}")
+    except Exception as exc:
+        log(f"WARNUNG: Judge-Prüfung für {work_order_id} unerwartet abgebrochen: {exc}")
+
+
 def poll_once(args: argparse.Namespace, session: TokenSession) -> None:
     try:
         requested = fetch_requested_work_orders(args.api_url, session)
@@ -434,6 +463,7 @@ def poll_once(args: argparse.Namespace, session: TokenSession) -> None:
         if not claim(args.api_url, session, work_order_id):
             continue
         run_one(args, session, work_order_id)
+        maybe_run_judge(args, session, work_order_id)
 
 
 def main() -> int:
