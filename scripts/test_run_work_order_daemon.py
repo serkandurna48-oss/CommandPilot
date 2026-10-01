@@ -179,6 +179,7 @@ class PollOnceTests(unittest.TestCase):
 
         with patch.object(daemon, "call_api", side_effect=fake_call_api), \
              patch.object(daemon, "maybe_run_judge"), \
+             patch.object(daemon, "get_head_sha", return_value="base-sha"), \
              patch.object(daemon.subprocess, "run", side_effect=fake_subprocess_run):
             daemon.poll_once(_args(), _session())
 
@@ -216,6 +217,7 @@ class PollOnceTests(unittest.TestCase):
 
         with patch.object(daemon, "call_api", side_effect=fake_call_api), \
              patch.object(daemon, "maybe_run_judge"), \
+             patch.object(daemon, "get_head_sha", return_value="base-sha"), \
              patch.object(daemon.subprocess, "run", side_effect=fake_subprocess_run):
             daemon.poll_once(_args(), _session())
 
@@ -232,9 +234,11 @@ class MaybeRunJudgeTests(unittest.TestCase):
         with patch.object(daemon, "call_api", return_value={"id": "wo-1", "status": "review_ready"}), \
              patch("judge_review.run_judge", return_value={"status": "pass"}) as mock_judge, \
              patch("judge_review.judge_enabled", return_value=True):
-            daemon.maybe_run_judge(_args(), _session(), "wo-1")
+            daemon.maybe_run_judge(_args(), _session(), "wo-1", base_sha="abc123")
         mock_judge.assert_called_once()
         self.assertEqual(mock_judge.call_args.args[2], "wo-1")
+        # R2b: the claim-time base SHA is forwarded to the judge.
+        self.assertEqual(mock_judge.call_args.kwargs["base_sha"], "abc123")
 
     def test_skips_judge_when_not_review_ready(self):
         with patch.object(daemon, "call_api", return_value={"id": "wo-1", "status": "blocked"}), \

@@ -16,6 +16,7 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -107,7 +108,7 @@ class ReadOnlyCliArgsTests(unittest.TestCase):
              patch.object(judge_review, "_call_api", fake), \
              patch.object(judge_review, "run_claude_judge",
                           return_value=judge_review._validate_and_normalize(_verdict())) as mock_judge:
-            judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r: "diff")
+            judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r, _s=None: "diff")
         # run_claude_judge(prompt, model, timeout_s, claude_path, cwd=...)
         self.assertEqual(mock_judge.call_args.args[1], "sonnet")
 
@@ -142,7 +143,7 @@ class PassCaseTests(unittest.TestCase):
         with patch.object(judge_review, "_call_api", fake), \
              patch.object(judge_review, "run_claude_judge",
                           return_value=judge_review._validate_and_normalize(_verdict("pass", "pass"))):
-            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r: "diff")
+            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r, _s=None: "diff")
 
         self.assertEqual(result["status"], "pass")
         artifacts = fake.posts_to("/artifacts")
@@ -163,7 +164,7 @@ class FailCaseTests(unittest.TestCase):
         with patch.object(judge_review, "_call_api", fake), \
              patch.object(judge_review, "run_claude_judge",
                           return_value=judge_review._validate_and_normalize(_verdict("pass", "fail"))):
-            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r: "diff")
+            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r, _s=None: "diff")
 
         self.assertEqual(result["status"], "fail")
         self.assertEqual(result["failed_criteria"], ["Kriterium B"])
@@ -194,7 +195,7 @@ class FailClosedTests(unittest.TestCase):
         with patch.object(judge_review, "_call_api", fake), \
              patch.object(judge_review, "run_claude_judge",
                           side_effect=judge_review.JudgeError("Judge-Timeout nach 600s")):
-            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r: "diff")
+            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r, _s=None: "diff")
         self._assert_fail_closed(fake, result)
 
     def test_broken_json_is_fail_closed(self):
@@ -202,7 +203,7 @@ class FailClosedTests(unittest.TestCase):
         with patch.object(judge_review, "_call_api", fake), \
              patch.object(judge_review, "run_claude_judge",
                           side_effect=judge_review.JudgeError("Judge-Ausgabe ist kein gültiges JSON")):
-            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r: "diff")
+            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r, _s=None: "diff")
         self._assert_fail_closed(fake, result)
 
     def test_run_claude_judge_timeout_raises_judge_error(self):
@@ -225,8 +226,87 @@ class FailClosedTests(unittest.TestCase):
         fake = FakeApi(_order(acceptance_criteria=[]))
         with patch.object(judge_review, "_call_api", fake), \
              patch.object(judge_review, "run_claude_judge", return_value=judge_review._validate_and_normalize(_verdict())):
-            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r: "diff")
+            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r, _s=None: "diff")
         self._assert_fail_closed(fake, result)
+
+
+def _git(cwd: str, *args: str):
+    return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
+
+
+class GatherDiffTests(unittest.TestCase):
+    """R2b: gather_diff diffs against base_sha with --ignore-cr-at-eol, so pure
+    CRLF churn is excluded and committed-after-base work is included. Uses a
+    real throwaway git repo (git is already required by the runner)."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.repo = self.tmp.name
+        _git(self.repo, "init")
+        _git(self.repo, "config", "user.email", "t@example.com")
+        _git(self.repo, "config", "user.name", "Test")
+        # Pin line-ending behavior so the test is deterministic regardless of
+        # the machine's global core.autocrlf.
+        _git(self.repo, "config", "core.autocrlf", "false")
+        (Path(self.repo) / "file.txt").write_bytes(b"line1\nline2\nline3\n")
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-m", "base")
+        self.base_sha = _git(self.repo, "rev-parse", "HEAD").stdout.strip()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def test_crlf_only_change_not_in_diff(self):
+        # Criterion 1: same content, only LF -> CRLF. Must produce no diff.
+        (Path(self.repo) / "file.txt").write_bytes(b"line1\r\nline2\r\nline3\r\n")
+        diff = judge_review.gather_diff(self.repo, self.base_sha)
+        self.assertEqual(diff.strip(), "")
+
+    def test_committed_change_after_base_appears(self):
+        # Criterion 2: a real change committed AFTER base_sha must appear.
+        (Path(self.repo) / "file.txt").write_bytes(b"line1\nECHTE_AENDERUNG\nline3\n")
+        _git(self.repo, "add", "-A")
+        _git(self.repo, "commit", "-m", "executor work")
+        diff = judge_review.gather_diff(self.repo, self.base_sha)
+        self.assertIn("ECHTE_AENDERUNG", diff)
+
+    def test_real_change_survives_alongside_crlf_noise(self):
+        # Belt-and-braces: one real content line change PLUS CRLF churn on the
+        # other lines — only the real change may show.
+        (Path(self.repo) / "file.txt").write_bytes(b"line1\r\nECHTE_AENDERUNG\r\nline3\r\n")
+        diff = judge_review.gather_diff(self.repo, self.base_sha)
+        self.assertIn("+ECHTE_AENDERUNG", diff)
+        # line1/line3 only changed by CRLF -> never emitted as +/- change lines
+        # (they may still appear as unchanged context lines prefixed with a space).
+        self.assertNotIn("-line1", diff)
+        self.assertNotIn("+line1", diff)
+        self.assertNotIn("-line3", diff)
+        self.assertNotIn("+line3", diff)
+
+    def test_no_base_sha_returns_empty(self):
+        (Path(self.repo) / "file.txt").write_bytes(b"line1\nWHATEVER\nline3\n")
+        self.assertEqual(judge_review.gather_diff(self.repo, None), "")
+
+
+class DiffArtifactFallbackTests(unittest.TestCase):
+    """Criterion 3: without base_sha, run_judge uses ONLY the executor's diff
+    artifact (gather_diff returns "" with no baseline), never a live diff."""
+
+    def test_without_base_sha_only_diff_artifact_is_used(self):
+        order = _order(artifacts=[{"id": "a1", "type": "diff", "content": "ARTIFACT_DIFF_MARKER"}])
+        fake = FakeApi(order)
+        captured: dict = {}
+
+        def fake_judge(prompt, model, timeout_s, claude_path, cwd=None):
+            captured["prompt"] = prompt
+            return judge_review._validate_and_normalize(_verdict())
+
+        # Note: real gather_diff (default diff_fetcher), base_sha=None -> "".
+        with patch.object(judge_review, "_call_api", fake), \
+             patch.object(judge_review, "run_claude_judge", side_effect=fake_judge):
+            judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", base_sha=None)
+
+        self.assertIn("ARTIFACT_DIFF_MARKER", captured["prompt"])
 
 
 class ToggleTests(unittest.TestCase):

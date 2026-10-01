@@ -105,24 +105,44 @@ def _call_api(api_url: str, token: str, method: str, path: str,
 
 
 # ─── Inputs ───────────────────────────────────────────────────────────────────
-def gather_diff(repo_root: Path | str = REPO_ROOT) -> str:
-    """The real git diff of the executor's work — both the unstaged and
-    staged changes in the control-plane repo. Runs on the HARNESS side
-    (plain subprocess), which is unrelated to the judge model's read-only
-    tool restriction: that restriction is about what the `claude` process may
-    do, not what this orchestration script may gather to feed it."""
-    parts: list[str] = []
-    for cmd in (["git", "diff"], ["git", "diff", "--staged"]):
-        try:
-            result = subprocess.run(
-                cmd, cwd=str(repo_root), capture_output=True, text=True,
-                encoding="utf-8", errors="replace", timeout=60,
-            )
-        except Exception:
-            continue
-        if result.stdout and result.stdout.strip():
-            parts.append(result.stdout)
-    return "\n".join(parts)
+def gather_diff(repo_root: Path | str = REPO_ROOT, base_sha: str | None = None) -> str:
+    """The real git diff of the executor's work: everything that changed in
+    the adapter's working directory SINCE base_sha — committed AND uncommitted
+    — with pure line-ending churn ignored (--ignore-cr-at-eol).
+
+    base_sha is the HEAD the daemon recorded at claim time, BEFORE the
+    executor ran (see run_work_order_daemon.get_head_sha / maybe_run_judge).
+    `git diff <base_sha>` compares the working tree against that commit, so a
+    single invocation captures both commits the executor made and any
+    still-unstaged edits.
+
+    Why --ignore-cr-at-eol is essential (R2b): Serkan's main checkout carries
+    ~156 files of pure CRLF line-ending churn. A plain `git diff` drowns the
+    real executor change in that noise — and once the diff was truncated to a
+    budget, the genuine committed work could fall off the end entirely.
+    Ignoring CR-at-EOL strips the churn so only real content changes remain.
+
+    WITHOUT base_sha we deliberately return "" — there is no stable baseline
+    to diff against (a plain `git diff` would just re-surface the CRLF noise),
+    so the caller (run_judge) falls back to the executor's own diff artifact
+    only, rather than feeding the judge misleading noise. Runs on the HARNESS
+    side (plain subprocess); this is unrelated to the judge model's read-only
+    tool restriction, which governs what the `claude` process may do, not what
+    this orchestration script may gather to feed it.
+    """
+    if not base_sha:
+        return ""
+    try:
+        result = subprocess.run(
+            ["git", "diff", "--ignore-cr-at-eol", base_sha],
+            cwd=str(repo_root), capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=60,
+        )
+    except Exception:
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout or ""
 
 
 def _latest_artifact_content(artifacts: list[dict], artifact_type: str) -> str:
@@ -157,9 +177,22 @@ def build_judge_prompt(goal: str, criteria: list[str], diff_text: str, test_outp
         lines.append(f"{i}. {c}")
     lines.append("")
     lines.append("## git diff des Executor-Laufs")
-    lines.append("```diff")
-    lines.append(_truncate(diff_text, _MAX_DIFF_CHARS) if diff_text.strip() else "(kein Diff — keine Änderungen gefunden)")
-    lines.append("```")
+    if diff_text.strip():
+        lines.append("```diff")
+        lines.append(_truncate(diff_text, _MAX_DIFF_CHARS))
+        lines.append("```")
+    else:
+        # Explicit, not a silent omission (R2b): an empty diff here can mean
+        # "no changes", "only CRLF/whitespace churn that was correctly ignored",
+        # or "no base_sha was recorded" — in every case the judge must look at
+        # the repo itself and must NOT read "no diff" as "passed".
+        lines.append(
+            "HINWEIS: Es konnte kein auswertbarer Diff ermittelt werden — entweder gab es "
+            "keine Änderungen, nur CRLF-/Zeilenende-Rauschen (korrekt herausgefiltert), oder dem "
+            "Judge wurde keine Basis-Commit-SHA übergeben. Das ist KEIN stilles Weglassen: prüfe "
+            "die Kriterien stattdessen direkt am aktuellen Repo-Stand (Read/Grep/Glob). Werte "
+            '"kein Diff" NICHT automatisch als bestanden — im Zweifel "unclear" oder "fail".'
+        )
     lines.append("")
     lines.append("## Test-/Check-Ausgabe (falls vorhanden, nur als Hinweis)")
     lines.append(_truncate(test_output, _MAX_TEST_OUTPUT_CHARS) if test_output.strip() else "(keine Test-Ausgabe hinterlegt)")
@@ -315,10 +348,11 @@ def run_judge(
     work_order_id: str,
     *,
     repo_root: Path | str = REPO_ROOT,
+    base_sha: str | None = None,
     model: str | None = None,
     timeout_s: int | None = None,
     claude_path: str | None = None,
-    diff_fetcher: Callable[[Path | str], str] = gather_diff,
+    diff_fetcher: Callable[[Path | str, str | None], str] = gather_diff,
 ) -> dict:
     """Judge one review_ready work order. Returns a small status dict for the
     caller/logs — all real effects go through the API. Never raises for a
@@ -350,7 +384,7 @@ def run_judge(
     artifacts = order.get("artifacts") or []
     test_output = _latest_artifact_content(artifacts, "test_output")
     diff_from_artifact = _latest_artifact_content(artifacts, "diff")
-    live_diff = diff_fetcher(repo_root)
+    live_diff = diff_fetcher(repo_root, base_sha)
     diff_text = live_diff or diff_from_artifact
     if live_diff and diff_from_artifact and diff_from_artifact not in live_diff:
         diff_text = live_diff + "\n\n# --- zusätzlich: vom Executor gemeldeter Diff-Artefakt ---\n" + diff_from_artifact
