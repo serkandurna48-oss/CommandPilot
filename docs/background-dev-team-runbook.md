@@ -376,10 +376,20 @@ startest du den Daemon EINMAL mit einer festen Konfiguration, danach klickst
 du nur noch "Autonom starten" im Operator-UI pro Work Order.
 
 ```powershell
-python scripts/run_work_order_daemon.py --adapter claude_code --max-budget-usd 0.20 --token $env:COMMANDPILOT_API_TOKEN
+# Einmalig pairen (kein Token kopieren, Freigabe im eingeloggten Web-UI):
+python scripts/run_work_order_daemon.py --pair --api-url https://commandpilot.onrender.com
+
+# Danach normal starten — gepaarter Runner-Token wird automatisch geladen, KEIN --token nötig:
+python scripts/run_work_order_daemon.py --adapter claude_code --max-budget-usd 2.00 --api-url https://commandpilot.onrender.com
 # oder mit Sandbox + Step-für-Step:
-python scripts/run_work_order_daemon.py --adapter claude_code_sandboxed --max-budget-usd 0.50 --per-step --token $env:COMMANDPILOT_API_TOKEN
+python scripts/run_work_order_daemon.py --adapter claude_code_sandboxed --max-budget-usd 2.00 --per-step --api-url https://commandpilot.onrender.com
 ```
+
+**Budget-Hinweis:** `--max-budget-usd 2.00` ist bewusst großzügiger als die
+früheren 0.20 — ein echter Lauf zahlt allein fürs Kontext-Laden (CLAUDE.md,
+Repo-Struktur, Prompt) schon ~0.30 USD, bevor überhaupt Arbeit passiert; ein
+zu knappes Budget bricht sonst mitten im ersten Attempt ab. 2.00 deckt einen
+realistischen mehrstufigen Lauf inkl. Judge-Prüfung ab.
 
 Der Daemon pollt alle 15 Sekunden (`--poll-interval`) `GET /api/work-orders/me`,
 sucht Work Orders mit Status `queued` UND gesetztem
