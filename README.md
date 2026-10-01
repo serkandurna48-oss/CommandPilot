@@ -80,6 +80,39 @@ Set these values in `backend/.env`:
 | `FRONTEND_URL` | Frontend URL, usually `http://localhost:3000` |
 | `OPENAI_MODEL` | AI model, default `gpt-4o` |
 
+Optional — Jarvis external context and second-brain vault (all empty/unset by default, Jarvis then behaves as without them):
+
+| Variable | Description |
+| --- | --- |
+| `COMPOSIO_API_KEY` | Composio API key (Google Calendar / Outlook / Notion / OneDrive) |
+| `COMPOSIO_USER_ID` | Composio user whose external accounts are connected |
+| `NOTION_TASKS_DATABASE_ID` | Notion "My Tasks" database id |
+| `VAULT_OWNER_USER_ID` | Supabase `user_id` allowed to read the vault + external sources (empty = denies everyone) |
+| `VAULT_SOURCE` | `local` (default) or `onedrive` — see "Vault source" below |
+| `VAULT_PATH` | Local source only: absolute path to the Obsidian vault folder |
+| `VAULT_ONEDRIVE_ROOT` | OneDrive source only: vault folder path relative to the drive root (default `/secondbrain`) |
+| `VAULT_ONEDRIVE_CACHE_TTL_SECONDS` | OneDrive source only: in-memory snapshot cache TTL (default `600`) |
+
+#### Vault source: local vs. OneDrive
+
+Jarvis reads the second-brain vault through one of two sources, selected by `VAULT_SOURCE`:
+
+- **`local`** (default): reads Markdown files straight from `VAULT_PATH` on the local filesystem. Unchanged behavior.
+- **`onedrive`**: fetches the vault live from OneDrive via Composio (`one_drive` toolkit: `ONE_DRIVE_LIST_FOLDER_CHILDREN` + `ONE_DRIVE_DOWNLOAD_FILE_BY_PATH`), reusing `COMPOSIO_API_KEY`/`COMPOSIO_USER_ID`. This exists for **Render**, where no local vault folder exists. Only an **allow-list of files** is ever read — `00-Jetzt.md`, `00-Index.md`, `20-Ziele.md`, `30-Projekte.md`, `70-Entscheidungen.md`, `Projekte/*.md`, `Entscheidungen/*.md`. A hard deny-list (always wins, never read, never even listed) covers `40-Gesundheit*`, `50-Menschen*`, `Menschen/`, `Projekte/Privat.md`, `Daily/`, `Inbox/`. The allow-/deny-list lives in code (`backend/app/services/onedrive_vault_service.py`), never read from the cloud. Fail-closed: missing config, a disconnected OneDrive account, or any fetch error → empty context + one log line (never an exception into the chat); `GET /api/integrations/vault-status` then reports reason `onedrive_not_connected` or `onedrive_error`.
+
+**To run the vault from OneDrive on Render**, set these environment variables in the Render dashboard (Backend service → Environment):
+
+| Variable | Value |
+| --- | --- |
+| `VAULT_SOURCE` | `onedrive` |
+| `VAULT_OWNER_USER_ID` | your Supabase `user_id` (the vault owner) |
+| `COMPOSIO_API_KEY` | your Composio API key |
+| `COMPOSIO_USER_ID` | your Composio user id (with a connected OneDrive account) |
+| `VAULT_ONEDRIVE_ROOT` | `/secondbrain` (or your vault's OneDrive path) |
+| `VAULT_ONEDRIVE_CACHE_TTL_SECONDS` | `600` (optional) |
+
+`VAULT_PATH` is ignored when `VAULT_SOURCE=onedrive`. The OneDrive account must be connected once in Composio for `COMPOSIO_USER_ID` (one-time OAuth); until then the vault status reads `onedrive_not_connected`.
+
 Run the backend:
 
 ```bash

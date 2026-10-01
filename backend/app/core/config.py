@@ -23,9 +23,24 @@ class Settings(BaseSettings):
     # Optional: set a secret value to enable the /api/health/ai?ping=true probe.
     # If empty (default), the ping probe is disabled and returns 403.
     DEBUG_HEALTH_TOKEN: str = ""
+    # Where the vault is read from: "local" (default — read VAULT_PATH from the
+    # local filesystem, unchanged behavior) or "onedrive" (fetch allow-listed
+    # files live from OneDrive via Composio, for Render where no local vault
+    # folder exists). Any other value is treated as "local". See
+    # app/services/onedrive_vault_service.py.
+    VAULT_SOURCE: str = "local"
     # Absolute path to the second-brain Obsidian vault (read-only). Empty/unset
-    # or unreadable → vault_service returns empty context, never raises.
+    # or unreadable → vault_service returns empty context, never raises. Only
+    # used when VAULT_SOURCE="local".
     VAULT_PATH: str = ""
+    # OneDrive path of the vault folder, relative to the drive root, used when
+    # VAULT_SOURCE="onedrive" (default "/secondbrain"). Leading/trailing
+    # slashes are normalized.
+    VAULT_ONEDRIVE_ROOT: str = "/secondbrain"
+    # TTL (seconds) of the in-memory OneDrive snapshot cache — a second vault
+    # query within the TTL reuses the cached files instead of re-fetching from
+    # Composio. Default 600 (10 min).
+    VAULT_ONEDRIVE_CACHE_TTL_SECONDS: int = 600
     # Single-tenant ownership gate (JARVIS-A1, Aufgabe 2): if set, the vault
     # is only readable for requests where CurrentUser.id equals this value —
     # a request from any other user_id gets an empty context, not the vault
