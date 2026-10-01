@@ -147,6 +147,10 @@ _ACTION = SuggestedAction(
     description="Onboarding-Schritte dokumentieren und in CampPilot abbilden.",
     risk="medium",
     requires_approval=False,
+    # R1: WorkOrderCreate now mandates ≥1 acceptance criterion, and confirm
+    # builds a WorkOrderCreate from this proposal — so a proposal without
+    # criteria can no longer be confirmed.
+    acceptance_criteria=["Onboarding-Schritte sind in CampPilot dokumentiert"],
 )
 
 

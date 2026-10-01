@@ -294,14 +294,18 @@ export function WorkOrderDetail({
             <div className="space-y-6">
               <div>
                 <p className="text-[10px] font-mono uppercase tracking-widest text-[var(--text-tertiary)] mb-2">{t("operator.section.acceptance_criteria")}</p>
-                <ul className="space-y-1">
-                  {order.acceptanceCriteria.map((c, i) => (
-                    <li key={i} className="text-[var(--text-secondary)] text-sm flex items-start gap-2">
-                      <span className="text-[var(--text-tertiary)] shrink-0 mt-0.5">☐</span>
-                      <span>{c}</span>
-                    </li>
-                  ))}
-                </ul>
+                {order.acceptanceCriteria.length === 0 ? (
+                  <p className="text-status-warning text-sm">{t("operator.criteria_missing")}</p>
+                ) : (
+                  <ul className="space-y-1">
+                    {order.acceptanceCriteria.map((c, i) => (
+                      <li key={i} className="text-[var(--text-secondary)] text-sm flex items-start gap-2">
+                        <span className="text-[var(--text-tertiary)] shrink-0 mt-0.5">☐</span>
+                        <span>{c}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
 
                 {order.missingContext && order.missingContext.length > 0 && (
                   <div className="mt-3 pt-3 border-t border-[var(--border-light)]">

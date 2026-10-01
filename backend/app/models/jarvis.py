@@ -26,6 +26,18 @@ class SourceRef(BaseModel):
 # (JARVIS-C1) — do not add fields here; idempotency/decision-tracking fields
 # (request_id, decision) live on the wrapping request/response models
 # instead, so a proposal itself never carries persistence concerns.
+#
+# R1 exception (acceptance_criteria): added because WorkOrderCreate now
+# MANDATES at least one acceptance criterion (see its validator), and the
+# confirm flow (app/services/suggested_action_service.py) seeds a real work
+# order straight from this proposal — without criteria here that path could
+# no longer create a work order at all. This is proposal *content* the
+# work order needs, not a persistence/idempotency concern, so it belongs on
+# the proposal exactly like title/description/team_type already do. Kept
+# optional (default []) on purpose: the model is instructed to always fill
+# 1–5 (app/prompts/jarvis_chat.py), but a lenient default means a stray
+# empty from the model degrades to a clean "can't confirm" at WorkOrderCreate
+# validation rather than a 500 on the whole chat turn.
 class SuggestedAction(BaseModel):
     title: str = Field(..., min_length=1, max_length=200)
     description: str = Field(..., min_length=1, max_length=2000)
@@ -33,6 +45,9 @@ class SuggestedAction(BaseModel):
     target_repo_name: Optional[str] = Field(None, max_length=200)
     risk: Literal["low", "medium", "high"]
     requires_approval: bool
+    # 1–5 checkable yes/no acceptance criteria the Judge stage can grade the
+    # result against. See the class docstring for why this one field was added.
+    acceptance_criteria: list[str] = Field(default_factory=list, max_length=5)
     sources: list[SourceRef] = []
 
 

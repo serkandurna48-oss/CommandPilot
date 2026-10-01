@@ -229,6 +229,26 @@ class WorkOrderCreate(BaseModel):
     target_repo_name: Optional[str] = Field(None, max_length=200)
     target_repo_path: Optional[str] = Field(None, max_length=500)
 
+    @model_validator(mode="after")
+    def _require_acceptance_criteria(self):
+        # R1: a work order must carry at least one checkable acceptance
+        # criterion — it is what the independent Judge stage (R2,
+        # scripts/judge_review.py) grades the executor's result against,
+        # criterion by criterion. Without criteria there is nothing to
+        # judge, so creation is refused here at the model layer (→ HTTP 422)
+        # for EVERY creation path: the API, the suggested-action/Jarvis
+        # confirm flow (app/services/suggested_action_service.py), any
+        # future importer. Deliberately NOT applied to WorkOrderStepCreate
+        # — per-step acceptance_criteria stay optional (a step is a slice of
+        # the whole, the whole order is what gets judged).
+        cleaned = [c for c in self.acceptance_criteria if isinstance(c, str) and c.strip()]
+        if not cleaned:
+            raise ValueError(
+                "acceptance_criteria: mindestens ein Akzeptanzkriterium ist erforderlich "
+                "(jeder Eintrag muss nach strip() nicht leer sein)"
+            )
+        return self
+
 
 class WorkOrderUpdate(BaseModel):
     status: Optional[WorkOrderStatusLiteral] = None

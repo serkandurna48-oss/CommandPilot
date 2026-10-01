@@ -97,11 +97,18 @@ def _default_approval_scope(requires_approval: bool) -> ApprovalScopeCreate:
 
 
 def _build_work_order_create(action: SuggestedAction) -> WorkOrderCreate:
+    # acceptance_criteria flows straight from the proposal (R1): the Jarvis
+    # prompt is instructed to always fill 1–5 checkable criteria. WorkOrderCreate
+    # now requires at least one non-empty entry, so a proposal that somehow
+    # arrived without them fails here with a clear validation error rather than
+    # creating an unjudgeable work order — the confirm endpoint maps that to a
+    # clean failure instead of silently inventing criteria.
     return WorkOrderCreate(
         title=action.title,
         goal=action.description,
         team_type=action.team_type,
         target_repo_name=action.target_repo_name,
+        acceptance_criteria=action.acceptance_criteria,
         approval_scope=_default_approval_scope(action.requires_approval),
     )
 
