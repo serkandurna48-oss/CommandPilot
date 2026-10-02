@@ -49,13 +49,27 @@ def _session(access_token="fake-token", **overrides):
     return daemon.TokenSession(**base)
 
 
-def _detail(order_id, files_changed=None, artifacts=None, title="Test WO", goal="Mach das Ding"):
+def _detail(order_id, files_changed=None, artifacts=None, title="Test WO", goal="Mach das Ding",
+            allowed_paths=None, activity_log=None, accepted_at=None):
+    # allowed_paths defaults to "allow everything" ("**") — tests that aren't
+    # specifically exercising the K3b path-safety guard shouldn't need to
+    # know about it. accepted_at, if given, is injected as a synthetic
+    # status_transition activity_log entry (the guard's primary timestamp
+    # source) so cutoff tests don't need to fake the whole entry shape.
+    log_entries = list(activity_log) if activity_log is not None else []
+    if accepted_at is not None:
+        log_entries.append({
+            "event_type": "status_transition", "created_at": accepted_at,
+            "metadata": {"to_status": "accepted"},
+        })
     return {
         "id": order_id, "title": title, "goal": goal,
         "acceptance_criteria": ["Es funktioniert."],
         "status": "accepted",
         "review_package": {"files_changed": files_changed if files_changed is not None else []},
         "artifacts": artifacts if artifacts is not None else [],
+        "approval_scope": {"allowed_paths": allowed_paths if allowed_paths is not None else ["**"]},
+        "activity_log": log_entries,
     }
 
 
@@ -197,9 +211,14 @@ class PublishIdempotencyTests(unittest.TestCase):
                 state["published"] = True
             return {}
 
+        def fake_run_git(git_args, repo_root, timeout=30):
+            if git_args[:2] == ["status", "--porcelain"]:
+                return MagicMock(returncode=0, stdout=" M a.txt\n", stderr="")
+            return MagicMock(returncode=0, stdout="", stderr="")
+
         with patch.object(daemon, "call_api", side_effect=fake_call_api), \
              patch.object(daemon, "get_current_branch", return_value="main"), \
-             patch.object(daemon, "_run_git", return_value=MagicMock(returncode=0, stdout="", stderr="")), \
+             patch.object(daemon, "_run_git", side_effect=fake_run_git), \
              patch.object(daemon, "_run_gh", return_value=MagicMock(returncode=0, stdout="https://x/pull/1\n", stderr="")) as mock_gh:
             daemon.publish_work_order(_args(), _session(), "wo-1")  # 1st: publishes
             daemon.publish_work_order(_args(), _session(), "wo-1")  # 2nd: must no-op
@@ -235,6 +254,8 @@ class PublishErrorPathTests(unittest.TestCase):
         def fake_run_git(git_args, repo_root, timeout=30):
             if git_args[0] == "push":
                 return MagicMock(returncode=1, stdout="", stderr="remote rejected")
+            if git_args[:2] == ["status", "--porcelain"]:
+                return MagicMock(returncode=0, stdout=" M a.txt\n", stderr="")
             return MagicMock(returncode=0, stdout="", stderr="")
 
         with patch.object(daemon, "call_api", side_effect=fake_call_api), \
@@ -253,6 +274,8 @@ class PublishErrorPathTests(unittest.TestCase):
         self.assertEqual(log_posts[0]["level"], "error")
         artifact_posts = [p for m, path, p in posted if path.endswith("/artifacts")]
         self.assertTrue(artifact_posts[0]["content"].startswith("fehlgeschlagen:"))
+        # K3b: once a commit already exists locally, the error must say so.
+        self.assertIn("wo/wo-1", artifact_posts[0]["content"])
 
     def test_branch_already_exists_is_handled_without_destructive_recovery(self):
         # Real git: pre-create wo/wo-1 so `git switch -c` genuinely collides.
@@ -265,6 +288,7 @@ class PublishErrorPathTests(unittest.TestCase):
             _run(["git", "add", "."], repo)
             _run(["git", "commit", "-m", "initial"], repo)
             _run(["git", "branch", "wo/wo-1"], repo)
+            (repo / "a.txt").write_text("changed\n", encoding="utf-8")  # must be dirty to pass guard 3
 
             detail = _detail("wo-1", files_changed=["a.txt"])
             posted = []
@@ -286,6 +310,9 @@ class PublishErrorPathTests(unittest.TestCase):
             self.assertEqual(log_posts[0]["level"], "error")
 
     def test_missing_file_in_files_changed_fails_cleanly(self):
+        # K3b guard 3 (path-safety) now catches this before any git
+        # switch/add is attempted: a file git status doesn't show as dirty
+        # (because it was never created/touched) is rejected outright.
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             _run(["git", "init", "-b", "main"], repo)
@@ -309,19 +336,16 @@ class PublishErrorPathTests(unittest.TestCase):
                 daemon.publish_work_order(_args(), _session(), "wo-1", repo_root=repo)
 
             mock_gh.assert_not_called()
+            # No branch was ever created — guard 3 runs before git switch -c.
+            branches = _run(["git", "branch"], repo).stdout
+            self.assertNotIn("wo/wo-1", branches)
             branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
             self.assertEqual(branch, "main")
             log_posts = [p for m, path, p in posted if path.endswith("/activity-log")]
             self.assertEqual(log_posts[0]["level"], "error")
-            # `git switch -c` itself succeeded before `git add` failed, so a
-            # local wo/wo-1 branch pointer may exist — that's harmless as
-            # long as it carries no actual commit beyond main (no data was
-            # ever staged/committed for it).
-            branches = _run(["git", "branch"], repo).stdout
-            if "wo/wo-1" in branches:
-                main_sha = _run(["git", "rev-parse", "main"], repo).stdout.strip()
-                branch_sha = _run(["git", "rev-parse", "wo/wo-1"], repo).stdout.strip()
-                self.assertEqual(branch_sha, main_sha)
+            self.assertIn("nicht tatsächlich geändert", log_posts[0]["message"])
+            artifact_posts = [p for m, path, p in posted if path.endswith("/artifacts")]
+            self.assertTrue(artifact_posts[0]["content"].startswith("fehlgeschlagen:"))
 
 
 class PublishOnAcceptEnvGateTests(unittest.TestCase):
@@ -366,6 +390,290 @@ class FetchAcceptedWorkOrdersTests(unittest.TestCase):
         with patch.object(daemon, "call_api", return_value=orders):
             result = daemon.fetch_accepted_work_orders("http://api", _session())
         self.assertEqual([o["id"] for o in result], ["wo-accepted"])
+
+
+class PublishCutoffGuardTests(unittest.TestCase):
+    """K3b criterion 1: an order accepted before PUBLISH_SINCE is skipped
+    silently — no git/gh call, no artifact."""
+
+    def test_order_accepted_before_default_cutoff_is_skipped_silently(self):
+        detail = _detail("wo-1", files_changed=["a.txt"], accepted_at="2026-09-01T00:00:00+00:00")
+        calls = []
+
+        def fake_call_api(api_url, session, method, path, payload=None):
+            calls.append((method, path))
+            if method == "GET":
+                return detail
+            return {}
+
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+            os.environ.pop("PUBLISH_SINCE", None)
+            with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+                 patch.object(daemon, "_run_git") as mock_git, \
+                 patch.object(daemon, "_run_gh") as mock_gh:
+                daemon.publish_work_order(_args(), _session(), "wo-1")
+
+        mock_git.assert_not_called()
+        mock_gh.assert_not_called()
+        self.assertEqual(calls, [("GET", "/api/work-orders/wo-1")])  # no POST at all
+
+    def test_order_accepted_after_cutoff_is_not_skipped_by_this_guard(self):
+        # Sanity check the inverse: a recent acceptance must NOT be rejected
+        # by the cutoff guard (it may still fail later for unrelated
+        # reasons — here it reaches the "unchanged file" guard instead,
+        # proving the cutoff guard itself let it through).
+        detail = _detail("wo-1", files_changed=["a.txt"], accepted_at="2026-10-02T14:00:00+02:00")
+
+        def fake_call_api(api_url, session, method, path, payload=None):
+            if method == "GET":
+                return detail
+            return {}
+
+        with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+             patch.object(daemon, "get_current_branch", return_value="main"), \
+             patch.object(daemon, "_run_git", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_git, \
+             patch.object(daemon, "_run_gh") as mock_gh:
+            daemon.publish_work_order(_args(), _session(), "wo-1")
+
+        # Reached the git-status check (proves it passed the cutoff guard),
+        # but never created a PR (the file isn't actually dirty per the
+        # empty git-status stub above).
+        mock_git.assert_called()
+        mock_gh.assert_not_called()
+
+    def test_publish_since_env_var_moves_the_cutoff(self):
+        # An order that would pass the default cutoff is skipped once
+        # PUBLISH_SINCE is set to something later than its acceptance time.
+        detail = _detail("wo-1", files_changed=["a.txt"], accepted_at="2026-10-02T14:00:00+02:00")
+
+        def fake_call_api(api_url, session, method, path, payload=None):
+            if method == "GET":
+                return detail
+            return {}
+
+        with patch.dict("os.environ", {"PUBLISH_SINCE": "2026-12-01T00:00:00+00:00"}), \
+             patch.object(daemon, "call_api", side_effect=fake_call_api), \
+             patch.object(daemon, "_run_git") as mock_git, \
+             patch.object(daemon, "_run_gh") as mock_gh:
+            daemon.publish_work_order(_args(), _session(), "wo-1")
+
+        mock_git.assert_not_called()
+        mock_gh.assert_not_called()
+
+    def test_unparseable_timestamp_does_not_block_publishing(self):
+        # Unknown/garbled age must never silently suppress a real order.
+        detail = _detail("wo-1", files_changed=["a.txt"], accepted_at="not-a-date")
+
+        def fake_call_api(api_url, session, method, path, payload=None):
+            if method == "GET":
+                return detail
+            return {}
+
+        with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+             patch.object(daemon, "get_current_branch", return_value="main"), \
+             patch.object(daemon, "_run_git", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_git:
+            daemon.publish_work_order(_args(), _session(), "wo-1")
+
+        mock_git.assert_called()  # proceeded past the cutoff guard
+
+
+class PublishMainOnlyGuardTests(unittest.TestCase):
+    """K3b criterion 2: the daemon only ever publishes from its own 'main'
+    checkout — never from whatever branch happens to be checked out."""
+
+    def test_non_main_checkout_is_skipped_without_an_artifact(self):
+        detail = _detail("wo-1", files_changed=["a.txt"])
+        calls = []
+
+        def fake_call_api(api_url, session, method, path, payload=None):
+            calls.append((method, path))
+            if method == "GET":
+                return detail
+            return {}
+
+        with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+             patch.object(daemon, "get_current_branch", return_value="feature/unrelated-work"), \
+             patch.object(daemon, "_run_git") as mock_git, \
+             patch.object(daemon, "_run_gh") as mock_gh:
+            daemon.publish_work_order(_args(), _session(), "wo-1")
+
+        mock_git.assert_not_called()  # no switch attempted at all
+        mock_gh.assert_not_called()
+        self.assertEqual(calls, [("GET", "/api/work-orders/wo-1")])  # no POST
+
+    def test_main_checkout_is_not_blocked_by_this_guard(self):
+        detail = _detail("wo-1", files_changed=["a.txt"])
+
+        def fake_call_api(api_url, session, method, path, payload=None):
+            if method == "GET":
+                return detail
+            return {}
+
+        with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+             patch.object(daemon, "get_current_branch", return_value="main"), \
+             patch.object(daemon, "_run_git", return_value=MagicMock(returncode=0, stdout="", stderr="")) as mock_git:
+            daemon.publish_work_order(_args(), _session(), "wo-1")
+
+        mock_git.assert_called()  # proceeded past the branch guard
+
+
+class PublishPathSafetyGuardTests(unittest.TestCase):
+    """K3b criterion 3+4: every files_changed entry must match
+    allowed_paths AND actually be dirty — checked with real git, before any
+    branch/stage/commit."""
+
+    def _repo_with_committed_files(self, files: dict[str, str]):
+        tmp = tempfile.TemporaryDirectory()
+        repo = Path(tmp.name)
+        _run(["git", "init", "-b", "main"], repo)
+        _run(["git", "config", "user.email", "t@example.com"], repo)
+        _run(["git", "config", "user.name", "Test"], repo)
+        for name, content in files.items():
+            (repo / name).parent.mkdir(parents=True, exist_ok=True)
+            (repo / name).write_text(content, encoding="utf-8")
+        _run(["git", "add", "."], repo)
+        _run(["git", "commit", "-m", "initial"], repo)
+        return tmp, repo
+
+    def test_file_outside_allowed_paths_fails_before_any_branch_is_created(self):
+        tmp, repo = self._repo_with_committed_files({"frontend/a.txt": "x", "secret.txt": "x"})
+        try:
+            (repo / "secret.txt").write_text("changed\n", encoding="utf-8")  # dirty, but not allowed
+            detail = _detail("wo-1", files_changed=["secret.txt"], allowed_paths=["frontend/**", "backend/**"])
+            posted = []
+
+            def fake_call_api(api_url, session, method, path, payload=None):
+                if method == "GET":
+                    return detail
+                posted.append((method, path, payload))
+                return {}
+
+            with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+                 patch.object(daemon, "_run_gh") as mock_gh:
+                daemon.publish_work_order(_args(), _session(), "wo-1", repo_root=repo)
+
+            mock_gh.assert_not_called()
+            branches = _run(["git", "branch"], repo).stdout
+            self.assertNotIn("wo/wo-1", branches)
+            branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
+            self.assertEqual(branch, "main")
+            log_posts = [p for m, path, p in posted if path.endswith("/activity-log")]
+            self.assertEqual(log_posts[0]["level"], "error")
+            self.assertIn("allowed_paths", log_posts[0]["message"])
+            artifact_posts = [p for m, path, p in posted if path.endswith("/artifacts")]
+            self.assertTrue(artifact_posts[0]["content"].startswith("fehlgeschlagen:"))
+        finally:
+            tmp.cleanup()
+
+    def test_listed_but_unchanged_file_fails_with_reason_and_no_commit(self):
+        tmp, repo = self._repo_with_committed_files({"a.txt": "x"})
+        try:
+            # a.txt is tracked and clean — never modified after the initial
+            # commit, even though the order claims it as a changed file.
+            detail = _detail("wo-1", files_changed=["a.txt"])
+            posted = []
+
+            def fake_call_api(api_url, session, method, path, payload=None):
+                if method == "GET":
+                    return detail
+                posted.append((method, path, payload))
+                return {}
+
+            commits_before = _run(["git", "log", "--oneline"], repo).stdout.strip().splitlines()
+
+            with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+                 patch.object(daemon, "_run_gh") as mock_gh:
+                daemon.publish_work_order(_args(), _session(), "wo-1", repo_root=repo)
+
+            mock_gh.assert_not_called()
+            branches = _run(["git", "branch"], repo).stdout
+            self.assertNotIn("wo/wo-1", branches)
+            branch = _run(["git", "rev-parse", "--abbrev-ref", "HEAD"], repo).stdout.strip()
+            self.assertEqual(branch, "main")
+            # No new commit was ever created.
+            commits_after = _run(["git", "log", "--oneline"], repo).stdout.strip().splitlines()
+            self.assertEqual(commits_before, commits_after)
+            log_posts = [p for m, path, p in posted if path.endswith("/activity-log")]
+            self.assertEqual(log_posts[0]["level"], "error")
+            self.assertIn("nicht tatsächlich geändert", log_posts[0]["message"])
+            artifact_posts = [p for m, path, p in posted if path.endswith("/artifacts")]
+            self.assertTrue(artifact_posts[0]["content"].startswith("fehlgeschlagen:"))
+        finally:
+            tmp.cleanup()
+
+    def test_empty_allowed_paths_fails_every_file(self):
+        tmp, repo = self._repo_with_committed_files({"a.txt": "x"})
+        try:
+            (repo / "a.txt").write_text("changed\n", encoding="utf-8")
+            detail = _detail("wo-1", files_changed=["a.txt"], allowed_paths=[])
+
+            def fake_call_api(api_url, session, method, path, payload=None):
+                return detail if method == "GET" else {}
+
+            with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+                 patch.object(daemon, "_run_gh") as mock_gh:
+                daemon.publish_work_order(_args(), _session(), "wo-1", repo_root=repo)
+
+            mock_gh.assert_not_called()
+            branches = _run(["git", "branch"], repo).stdout
+            self.assertNotIn("wo/wo-1", branches)
+        finally:
+            tmp.cleanup()
+
+
+class PublishPushFailureBranchNameTests(unittest.TestCase):
+    """K3b criterion 5: once a commit exists locally, a push/gh failure must
+    name the branch it's sitting on."""
+
+    def _fake_run_git_committing_ok(self, push_ok=True):
+        def fake_run_git(git_args, repo_root, timeout=30):
+            if git_args[:2] == ["status", "--porcelain"]:
+                return MagicMock(returncode=0, stdout=" M a.txt\n", stderr="")
+            if git_args[0] == "push" and not push_ok:
+                return MagicMock(returncode=1, stdout="", stderr="remote rejected")
+            return MagicMock(returncode=0, stdout="", stderr="")
+        return fake_run_git
+
+    def test_push_failure_message_names_the_branch(self):
+        detail = _detail("wo-12345678", files_changed=["a.txt"])
+        posted = []
+
+        def fake_call_api(api_url, session, method, path, payload=None):
+            if method == "GET":
+                return detail
+            posted.append((method, path, payload))
+            return {}
+
+        with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+             patch.object(daemon, "get_current_branch", return_value="main"), \
+             patch.object(daemon, "_run_git", side_effect=self._fake_run_git_committing_ok(push_ok=False)), \
+             patch.object(daemon, "_run_gh") as mock_gh:
+            daemon.publish_work_order(_args(), _session(), "wo-12345678")
+
+        mock_gh.assert_not_called()
+        artifact_posts = [p for m, path, p in posted if path.endswith("/artifacts")]
+        self.assertIn("wo/wo-12345", artifact_posts[0]["content"])
+        self.assertIn("Änderung liegt auf lokalem Branch", artifact_posts[0]["content"])
+
+    def test_gh_failure_message_also_names_the_branch(self):
+        detail = _detail("wo-12345678", files_changed=["a.txt"])
+        posted = []
+
+        def fake_call_api(api_url, session, method, path, payload=None):
+            if method == "GET":
+                return detail
+            posted.append((method, path, payload))
+            return {}
+
+        with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+             patch.object(daemon, "get_current_branch", return_value="main"), \
+             patch.object(daemon, "_run_git", side_effect=self._fake_run_git_committing_ok(push_ok=True)), \
+             patch.object(daemon, "_run_gh", return_value=MagicMock(returncode=1, stdout="", stderr="gh: not authenticated")):
+            daemon.publish_work_order(_args(), _session(), "wo-12345678")
+
+        artifact_posts = [p for m, path, p in posted if path.endswith("/artifacts")]
+        self.assertIn("wo/wo-12345", artifact_posts[0]["content"])
 
 
 if __name__ == "__main__":

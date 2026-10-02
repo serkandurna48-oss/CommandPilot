@@ -102,7 +102,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 for _stream in (sys.stdout, sys.stderr):
@@ -627,6 +627,111 @@ def _post_activity_log(args: argparse.Namespace, session: TokenSession, order_id
         log(f"WARNUNG: konnte Activity-Log für {order_id} nicht schreiben: {exc}")
 
 
+# ─── K3b: Publish-on-Accept guards ────────────────────────────────────────────
+# Four independent safety nets added after the first live review of K3:
+# a cutoff date (don't republish/backfill historical accepted orders the
+# moment this feature ships), a main-only guard (never run the git dance from
+# whatever branch the daemon's own checkout happens to be on), a path-safety
+# check (never stage a file the order's own approval scope doesn't cover, or
+# one that isn't actually dirty), and a clearer error message once a commit
+# already exists locally.
+_DEFAULT_PUBLISH_SINCE = "2026-10-02T13:00:00+02:00"
+
+
+def _parse_iso(value: str) -> datetime | None:
+    """Accepts both a trailing 'Z' (not handled by datetime.fromisoformat()
+    before Python 3.11, but kept for defensiveness) and a numeric UTC offset.
+    A naive result (no tzinfo at all) is treated as UTC rather than raising
+    later when compared against an aware datetime — PUBLISH_SINCE's own
+    default always carries an explicit offset, but an operator-supplied
+    value might not."""
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _publish_since_cutoff() -> datetime:
+    raw = os.environ.get("PUBLISH_SINCE", _DEFAULT_PUBLISH_SINCE)
+    return _parse_iso(raw) or _parse_iso(_DEFAULT_PUBLISH_SINCE)
+
+
+def _accepted_at(order_detail: dict) -> str | None:
+    """When this order actually became 'accepted'. Primary source: the most
+    recent activity_log entry recording that exact transition
+    (event_type='status_transition', metadata.to_status=='accepted') —
+    written atomically by the transition_work_order() RPC
+    (supabase/migrations/010_transition_work_order_function.sql) for every
+    transition since that migration, so this should be present for any order
+    reachable through the normal UI flow. Falls back to
+    order_detail['updated_at'] per the original spec — NOT currently
+    exposed by WorkOrderResponse/WorkOrderDetailResponse
+    (backend/app/models/work_order.py has no updated_at field on either),
+    so that fallback is a no-op today; kept so it activates automatically if
+    the field is ever added, without touching this function again. Falls
+    back further to 'completed_at' (which IS exposed, and which the same
+    RPC also sets to NOW() on every transition into 'accepted') — the
+    closest signal the current API actually provides."""
+    for entry in reversed(order_detail.get("activity_log") or []):
+        if entry.get("event_type") == "status_transition" and (entry.get("metadata") or {}).get("to_status") == "accepted":
+            return entry.get("created_at")
+    return order_detail.get("updated_at") or order_detail.get("completed_at")
+
+
+def _accepted_before_cutoff(order_detail: dict) -> bool:
+    """False (process normally) whenever the acceptance time can't be
+    determined at all — an unknown age must never silently suppress a
+    genuinely new, publishable order; only a POSITIVELY confirmed old
+    timestamp skips it."""
+    raw = _accepted_at(order_detail)
+    if not raw:
+        return False
+    accepted_at = _parse_iso(raw)
+    if accepted_at is None:
+        return False
+    return accepted_at < _publish_since_cutoff()
+
+
+def _path_allowed(file_path: str, allowed_paths: list[str]) -> bool:
+    """Glob match against the order's own approval_scope.allowed_paths
+    (e.g. 'frontend/**', the same pattern style
+    suggested_action_service.py's _DEFAULT_ALLOWED_PATHS and
+    runner_adapters/base.py's prompt text already use). No existing matcher
+    was found to reuse: base.py/run_work_order.py only ever check whether
+    allowed_paths is EMPTY (check_execute_path_safety()), never match an
+    individual file against it — so this is new, not an extraction.
+    PurePosixPath.full_match() (Python 3.13+) is used rather than hand-rolled
+    fnmatch/regex specifically because it already treats '**' as crossing
+    directory boundaries, matching how these patterns are written
+    everywhere else in this codebase."""
+    posix_path = PurePosixPath(file_path)
+    return any(posix_path.full_match(pattern) for pattern in allowed_paths)
+
+
+def _files_changed_safety_violation(
+    files_changed: list[str], allowed_paths: list[str], repo_root: Path | str,
+) -> str | None:
+    """Returns a human-readable reason if any file in files_changed either
+    (a) doesn't match any allowed_paths pattern, or (b) isn't actually dirty
+    according to `git status --porcelain -- <file>` — i.e. the reviewPackage
+    claims a change that the working copy doesn't back up. Returns None if
+    every file passes both checks. Checked BEFORE `git switch -c` (K3b) —
+    nothing is branched/staged until the full file list is trusted."""
+    if not allowed_paths:
+        return "approval_scope.allowed_paths ist leer — kein Pfad gilt als erlaubt."
+    for f in files_changed:
+        if not _path_allowed(f, allowed_paths):
+            return f"Datei '{f}' passt zu keinem Muster in allowed_paths ({', '.join(allowed_paths)})."
+    for f in files_changed:
+        status_result = _run_git(["status", "--porcelain", "--", f], repo_root)
+        if status_result.returncode != 0 or not status_result.stdout.strip():
+            return f"Datei '{f}' ist laut 'git status --porcelain' nicht tatsächlich geändert."
+    return None
+
+
 def publish_work_order(
     args: argparse.Namespace, session: TokenSession, order_id: str, repo_root: Path | str = REPO_ROOT,
 ) -> None:
@@ -646,6 +751,14 @@ def publish_work_order(
     if _already_published(detail):
         return
 
+    # K3b guard 1: never backfill/republish orders accepted before the
+    # cutoff — silent skip, no artifact, no git call at all (the next poll
+    # re-checks the same order the same way; if PUBLISH_SINCE is later
+    # moved earlier, an old order becomes eligible without any other change).
+    if _accepted_before_cutoff(detail):
+        log(f"Work Order {order_id}: Freigabe liegt vor PUBLISH_SINCE — übersprungen (kein Artefakt).")
+        return
+
     files_changed = list((detail.get("review_package") or {}).get("files_changed") or [])
     title = detail.get("title") or order_id
     id8 = order_id[:8]
@@ -661,6 +774,19 @@ def publish_work_order(
         log(f"WARNUNG: konnte aktuellen Branch nicht ermitteln — Publish-on-Accept für {order_id} übersprungen.")
         return
 
+    # K3b guard 2: the git dance below (switch/add/commit/push) only ever
+    # runs from the daemon's own 'main' checkout — never from whatever
+    # feature branch a human (or this same daemon, mid-publish) might
+    # currently have checked out. No artifact: this isn't a failure of the
+    # work order, just a "not right now" — the next poll cycle tries again
+    # once the checkout is back on main.
+    if original_branch != "main":
+        log(
+            f"WARNUNG: Daemon-Checkout ist nicht auf 'main' (aktuell '{original_branch}') — "
+            f"Publish-on-Accept für Work Order {order_id} übersprungen, nächster Zyklus versucht erneut."
+        )
+        return
+
     branch_name = f"wo/{id8}"
 
     def fail(reason: str) -> None:
@@ -671,6 +797,16 @@ def publish_work_order(
         log(f"WARNUNG: Publish-on-Accept für Work Order {order_id} fehlgeschlagen: {reason}")
         _post_activity_log(args, session, order_id, "error", reason)
         _post_artifact(args, session, order_id, content=f"fehlgeschlagen: {reason}")
+
+    # K3b guard 3: every file reviewPackage.files_changed names must (a) fall
+    # under the order's own approval_scope.allowed_paths and (b) actually be
+    # dirty in the working copy — checked BEFORE any branch/stage/commit, so
+    # a violation never touches git at all beyond the read-only status check.
+    allowed_paths = (detail.get("approval_scope") or {}).get("allowed_paths") or []
+    path_violation = _files_changed_safety_violation(files_changed, allowed_paths, repo_root)
+    if path_violation:
+        fail(path_violation)
+        return
 
     switch_result = _run_git(["switch", "-c", branch_name], repo_root)
     if switch_result.returncode != 0:
@@ -689,9 +825,15 @@ def publish_work_order(
         fail(f"git commit fehlgeschlagen: {commit_result.stderr.strip()[:500]}")
         return
 
+    # K3b guard 4: from here on, a committed change genuinely exists locally
+    # — every failure path below says so explicitly, so a human reading the
+    # error knows the work isn't lost, just not pushed/PR'd yet.
     push_result = _run_git(["push", "-u", "origin", branch_name], repo_root, timeout=60)
     if push_result.returncode != 0:
-        fail(f"git push fehlgeschlagen: {push_result.stderr.strip()[:500]}")
+        fail(
+            f"git push fehlgeschlagen: {push_result.stderr.strip()[:500]} — "
+            f"Änderung liegt auf lokalem Branch {branch_name}."
+        )
         return
 
     frontend_url = getattr(args, "frontend_url", None) or FRONTEND_URL_DEFAULT
@@ -700,7 +842,10 @@ def publish_work_order(
         ["pr", "create", "--base", "main", "--title", title, "--body", body], repo_root, timeout=60,
     )
     if gh_result.returncode != 0:
-        fail(f"gh pr create fehlgeschlagen: {gh_result.stderr.strip()[:500]}")
+        fail(
+            f"gh pr create fehlgeschlagen: {gh_result.stderr.strip()[:500]} — "
+            f"Änderung liegt auf lokalem Branch {branch_name}."
+        )
         return
 
     pr_url = gh_result.stdout.strip()
