@@ -86,6 +86,13 @@ Invoke-Check -Name "scripts: publish_on_accept" `
     -FilePath $pythonExe `
     -ArgumentList @("scripts/test_publish_on_accept.py")
 
+# K4: one git worktree per work order (claim-time creation/reuse, REPO_ROOT
+# untouched, frontend/node_modules junction)
+Invoke-Check -Name "scripts: worktree_per_order" `
+    -WorkingDirectory $repoRoot `
+    -FilePath $pythonExe `
+    -ArgumentList @("scripts/test_worktree_per_order.py")
+
 Invoke-Check -Name "frontend: type-check" `
     -WorkingDirectory $frontendDir `
     -FilePath "npm" `

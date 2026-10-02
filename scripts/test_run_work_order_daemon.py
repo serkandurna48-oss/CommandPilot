@@ -161,6 +161,19 @@ class RunOneTests(unittest.TestCase):
         cmd = mock_run.call_args.args[0]
         self.assertEqual(cmd[cmd.index("--token") + 1], "rotated-token")
 
+    def test_cwd_defaults_to_repo_root(self):
+        with patch.object(daemon.subprocess, "run", return_value=MagicMock(returncode=0)) as mock_run:
+            daemon.run_one(_args(), _session(), "wo-1")
+        self.assertEqual(mock_run.call_args.kwargs["cwd"], daemon.REPO_ROOT)
+
+    def test_cwd_is_passed_through_when_given(self):
+        # K4: the executor subprocess must run with cwd set to the work
+        # order's own worktree, not REPO_ROOT.
+        worktree_path = Path("/fake/worktree/wo-12345678")
+        with patch.object(daemon.subprocess, "run", return_value=MagicMock(returncode=0)) as mock_run:
+            daemon.run_one(_args(), _session(), "wo-1", cwd=worktree_path)
+        self.assertEqual(mock_run.call_args.kwargs["cwd"], worktree_path)
+
 
 class PollOnceTests(unittest.TestCase):
     def test_claims_before_starting_subprocess(self):
@@ -181,6 +194,7 @@ class PollOnceTests(unittest.TestCase):
         with patch.object(daemon, "call_api", side_effect=fake_call_api), \
              patch.object(daemon, "maybe_run_judge"), \
              patch.object(daemon, "get_head_sha", return_value="base-sha"), \
+             patch.object(daemon, "ensure_order_worktree", return_value=Path("/fake/worktree")), \
              patch.object(daemon.subprocess, "run", side_effect=fake_subprocess_run):
             daemon.poll_once(_args(), _session())
 
@@ -219,6 +233,7 @@ class PollOnceTests(unittest.TestCase):
         with patch.object(daemon, "call_api", side_effect=fake_call_api), \
              patch.object(daemon, "maybe_run_judge"), \
              patch.object(daemon, "get_head_sha", return_value="base-sha"), \
+             patch.object(daemon, "ensure_order_worktree", return_value=Path("/fake/worktree")), \
              patch.object(daemon.subprocess, "run", side_effect=fake_subprocess_run):
             daemon.poll_once(_args(), _session())
 
@@ -239,7 +254,8 @@ class PollOncePreconditionSkipListTests(unittest.TestCase):
              patch.object(daemon.subprocess, "run",
                            return_value=MagicMock(returncode=run_work_order.PRECONDITION_UNBLOCKABLE_EXIT_CODE)), \
              patch.object(daemon, "maybe_run_judge") as mock_judge, \
-             patch.object(daemon, "get_head_sha", return_value="base-sha"):
+             patch.object(daemon, "get_head_sha", return_value="base-sha"), \
+             patch.object(daemon, "ensure_order_worktree", return_value=Path("/fake/worktree")):
             skip_ids: set[str] = set()
             daemon.poll_once(_args(), _session(), skip_ids)
 
@@ -270,7 +286,8 @@ class PollOncePreconditionSkipListTests(unittest.TestCase):
              patch.object(daemon.subprocess, "run",
                            return_value=MagicMock(returncode=run_work_order.PRECONDITION_UNBLOCKABLE_EXIT_CODE)), \
              patch.object(daemon, "maybe_run_judge"), \
-             patch.object(daemon, "get_head_sha", return_value="base-sha"):
+             patch.object(daemon, "get_head_sha", return_value="base-sha"), \
+             patch.object(daemon, "ensure_order_worktree", return_value=Path("/fake/worktree")):
             skip_ids: set[str] = set()
             daemon.poll_once(_args(), _session(), skip_ids)  # 1st cycle: fails, gets skip-listed
             daemon.poll_once(_args(), _session(), skip_ids)  # 2nd cycle: must not be claimed/run again
@@ -284,7 +301,8 @@ class PollOncePreconditionSkipListTests(unittest.TestCase):
         with patch.object(daemon, "call_api", return_value=[_order("wo-1")]), \
              patch.object(daemon.subprocess, "run", return_value=MagicMock(returncode=1)), \
              patch.object(daemon, "maybe_run_judge") as mock_judge, \
-             patch.object(daemon, "get_head_sha", return_value="base-sha"):
+             patch.object(daemon, "get_head_sha", return_value="base-sha"), \
+             patch.object(daemon, "ensure_order_worktree", return_value=Path("/fake/worktree")):
             skip_ids: set[str] = set()
             daemon.poll_once(_args(), _session(), skip_ids)
 
