@@ -252,8 +252,10 @@ class PollOncePreconditionSkipListTests(unittest.TestCase):
             daemon.poll_once(_args(), _session(), {"wo-1"})
 
         mock_run.assert_not_called()
-        # Only the initial GET /work-orders/me — no claim PATCH for a skipped id.
-        mock_call.assert_called_once()
+        # No claim PATCH for a skipped id — every call_api invocation (the
+        # queued-fetch and K3's accepted-orders-fetch at the end of
+        # poll_once) is a GET, never a PATCH/claim.
+        self.assertTrue(all(c.args[2] == "GET" for c in mock_call.call_args_list))
 
     def test_skip_list_persists_across_poll_cycles(self):
         call_count = {"n": 0}

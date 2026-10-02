@@ -90,7 +90,20 @@ def _map_allowed_tools(scope: dict) -> list[str]:
     if any("code_edit" in a or "edit" in a or "code" in a for a in allowed):
         tools += ["Edit", "Write"]
     if any("test" in a or "lint" in a or "typecheck" in a for a in allowed):
-        tools += ["Bash(npm run *)", "Bash(npx tsc*)", "Bash(python -m pytest*)", "Bash(python -m py_compile*)"]
+        # K3: a live run found the generic "Bash(npm run *)" wildcard alone
+        # did not keep the executor from being prompted for
+        # `npm run lint`/`npm run type-check` in frontend/ — add explicit
+        # entries for both, bare and cd-prefixed (frontend/'s scripts are
+        # invoked either way depending on the executor's cwd), alongside the
+        # existing wildcard rather than replacing it.
+        tools += [
+            "Bash(npm run *)",
+            "Bash(npm run lint*)",
+            "Bash(npm run type-check*)",
+            "Bash(cd frontend && npm run lint*)",
+            "Bash(cd frontend && npm run type-check*)",
+            "Bash(npx tsc*)", "Bash(python -m pytest*)", "Bash(python -m py_compile*)",
+        ]
     if any("local_artifact" in a for a in allowed):
         tools += ["Write"]
     return sorted(set(tools))

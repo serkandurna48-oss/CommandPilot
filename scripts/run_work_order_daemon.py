@@ -515,6 +515,217 @@ def poll_once(args: argparse.Namespace, session: TokenSession, skip_ids: set[str
             continue
         maybe_run_judge(args, session, work_order_id, base_sha)
 
+    publish_accepted_work_orders(args, session)
+
+
+# ─── K3: Publish-on-Accept ────────────────────────────────────────────────────
+# When a human accepts a work order's result (status "accepted", set via the
+# existing PATCH /{id} transition — same as any other status change, no new
+# trigger field like daemon_run_requested_at), this daemon turns its
+# reviewPackage.files_changed into a real branch + PR, entirely local-git +
+# `gh` — no new backend endpoint, no new migration. Merge always stays a
+# human decision; this never pushes to main, never force-pushes, never
+# resets, never merges.
+PUBLISH_ARTIFACT_TYPE = "summary"
+PUBLISH_ARTIFACT_TITLE = "Pull Request"
+
+
+def publish_on_accept_enabled() -> bool:
+    """Same toggle idiom as judge_review.judge_enabled() (JUDGE_ENABLED) —
+    PUBLISH_ON_ACCEPT, default ON (opt-out, not opt-in)."""
+    return os.environ.get("PUBLISH_ON_ACCEPT", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def fetch_accepted_work_orders(api_url: str, session: TokenSession) -> list[dict]:
+    """GET /api/work-orders/me (same endpoint fetch_requested_work_orders()
+    already uses) filtered client-side to status == 'accepted'. The list
+    response (WorkOrderResponse) has no artifacts/review_package — callers
+    need a per-order GET /{id} (WorkOrderDetailResponse) for those."""
+    orders = call_api(api_url, session, "GET", "/api/work-orders/me")
+    return [o for o in orders if o.get("status") == "accepted"]
+
+
+def _already_published(order_detail: dict) -> bool:
+    return any(
+        a.get("type") == PUBLISH_ARTIFACT_TYPE and a.get("title") == PUBLISH_ARTIFACT_TITLE
+        for a in order_detail.get("artifacts") or []
+    )
+
+
+def get_current_branch(repo_root: Path | str = REPO_ROOT) -> str | None:
+    """Mirrors get_head_sha()'s shape exactly — the branch this daemon's own
+    working copy is currently on, so publish_work_order() can always switch
+    back to it, success or failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(repo_root),
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    return branch or None
+
+
+def _run_git(git_args: list[str], repo_root: Path | str, timeout: float = 30) -> subprocess.CompletedProcess:
+    """Real `git` invocation — kept as its own function (rather than inlined
+    subprocess.run calls) specifically so tests can run this for real against
+    a throwaway temp repo while still mocking out _run_gh() alone (no `gh`
+    installed/authenticated in CI, and a real PR must never be created by a
+    test)."""
+    return subprocess.run(["git", *git_args], cwd=str(repo_root), capture_output=True, text=True, timeout=timeout)
+
+
+def _run_gh(gh_args: list[str], repo_root: Path | str, timeout: float = 60) -> subprocess.CompletedProcess:
+    return subprocess.run(["gh", *gh_args], cwd=str(repo_root), capture_output=True, text=True, timeout=timeout)
+
+
+def _judge_verdict_summary(order_detail: dict) -> str | None:
+    """The Judge stage (scripts/judge_review.py, run_judge()) persists its
+    verdict as a type='review', title='Judge-Urteil' artifact whose content
+    is the verdict JSON ({'overall': 'pass'|'fail'|'needs_human', ...}) —
+    reused here verbatim rather than re-deriving a verdict. Picks the most
+    recent one if several exist (a work order can be re-judged)."""
+    for a in reversed(order_detail.get("artifacts") or []):
+        if a.get("type") == "review" and a.get("title") == "Judge-Urteil":
+            try:
+                return json.loads(a.get("content") or "{}").get("overall")
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def _build_pr_body(order_detail: dict, order_id: str, frontend_url: str) -> str:
+    lines = [f"**Ziel:** {order_detail.get('goal', '')}", ""]
+    criteria = order_detail.get("acceptance_criteria") or []
+    if criteria:
+        lines.append("**Akzeptanzkriterien:**")
+        lines.extend(f"- {c}" for c in criteria)
+        lines.append("")
+    verdict = _judge_verdict_summary(order_detail)
+    lines.append(f"**Judge-Urteil:** {verdict or 'kein Judge-Urteil vorhanden'}")
+    lines.append("")
+    lines.append(f"**Work Order:** {frontend_url.rstrip('/')}/operator/{order_id}")
+    return "\n".join(lines)
+
+
+def _post_artifact(args: argparse.Namespace, session: TokenSession, order_id: str, content: str) -> None:
+    try:
+        call_api(args.api_url, session, "POST", f"/api/work-orders/{order_id}/artifacts",
+                  {"type": PUBLISH_ARTIFACT_TYPE, "title": PUBLISH_ARTIFACT_TITLE, "content": content})
+    except DaemonApiError as exc:
+        log(f"WARNUNG: konnte Pull-Request-Artefakt für {order_id} nicht schreiben: {exc}")
+
+
+def _post_activity_log(args: argparse.Namespace, session: TokenSession, order_id: str, level: str, message: str) -> None:
+    try:
+        call_api(args.api_url, session, "POST", f"/api/work-orders/{order_id}/activity-log",
+                  {"level": level, "event_type": "publish_on_accept", "message": message[:2000]})
+    except DaemonApiError as exc:
+        log(f"WARNUNG: konnte Activity-Log für {order_id} nicht schreiben: {exc}")
+
+
+def publish_work_order(
+    args: argparse.Namespace, session: TokenSession, order_id: str, repo_root: Path | str = REPO_ROOT,
+) -> None:
+    """Idempotent: a second call for an already-published order is a no-op
+    (detected via the type='summary'/title='Pull Request' artifact). Never
+    leaves the daemon's working copy on anything but the branch it started
+    on — every code path below that leaves the newly created branch switches
+    back, success or failure. Never force-pushes, never resets, never
+    touches main directly, never merges — 'gh pr create' only ever opens a
+    PR for a human to merge."""
+    try:
+        detail = call_api(args.api_url, session, "GET", f"/api/work-orders/{order_id}")
+    except DaemonApiError as exc:
+        log(f"WARNUNG: konnte Work Order {order_id} für Publish-on-Accept nicht laden: {exc}")
+        return
+
+    if _already_published(detail):
+        return
+
+    files_changed = list((detail.get("review_package") or {}).get("files_changed") or [])
+    title = detail.get("title") or order_id
+    id8 = order_id[:8]
+
+    if not files_changed:
+        _post_artifact(args, session, order_id, content="keine Änderungen")
+        _post_activity_log(args, session, order_id, "info", "nichts zu veröffentlichen — reviewPackage.filesChanged ist leer.")
+        log(f"Work Order {order_id}: nichts zu veröffentlichen (keine geänderten Dateien).")
+        return
+
+    original_branch = get_current_branch(repo_root)
+    if not original_branch:
+        log(f"WARNUNG: konnte aktuellen Branch nicht ermitteln — Publish-on-Accept für {order_id} übersprungen.")
+        return
+
+    branch_name = f"wo/{id8}"
+
+    def fail(reason: str) -> None:
+        # Best-effort return to the original branch regardless of how far the
+        # sequence below got — never leaves the daemon's checkout parked on
+        # a half-finished wo/<id8> branch.
+        _run_git(["switch", original_branch], repo_root)
+        log(f"WARNUNG: Publish-on-Accept für Work Order {order_id} fehlgeschlagen: {reason}")
+        _post_activity_log(args, session, order_id, "error", reason)
+        _post_artifact(args, session, order_id, content=f"fehlgeschlagen: {reason}")
+
+    switch_result = _run_git(["switch", "-c", branch_name], repo_root)
+    if switch_result.returncode != 0:
+        fail(f"git switch -c {branch_name} fehlgeschlagen: {switch_result.stderr.strip()[:500]}")
+        return
+
+    add_result = _run_git(["add", "--", *files_changed], repo_root)
+    if add_result.returncode != 0:
+        fail(f"git add fehlgeschlagen: {add_result.stderr.strip()[:500]}")
+        return
+
+    commit_result = _run_git(
+        ["commit", "-m", f"wo({id8}): {title}\n\nWork-Order: {order_id}"], repo_root,
+    )
+    if commit_result.returncode != 0:
+        fail(f"git commit fehlgeschlagen: {commit_result.stderr.strip()[:500]}")
+        return
+
+    push_result = _run_git(["push", "-u", "origin", branch_name], repo_root, timeout=60)
+    if push_result.returncode != 0:
+        fail(f"git push fehlgeschlagen: {push_result.stderr.strip()[:500]}")
+        return
+
+    frontend_url = getattr(args, "frontend_url", None) or FRONTEND_URL_DEFAULT
+    body = _build_pr_body(detail, order_id, frontend_url)
+    gh_result = _run_gh(
+        ["pr", "create", "--base", "main", "--title", title, "--body", body], repo_root, timeout=60,
+    )
+    if gh_result.returncode != 0:
+        fail(f"gh pr create fehlgeschlagen: {gh_result.stderr.strip()[:500]}")
+        return
+
+    pr_url = gh_result.stdout.strip()
+    back_result = _run_git(["switch", original_branch], repo_root)
+    if back_result.returncode != 0:
+        log(f"WARNUNG: konnte nach Veröffentlichung nicht zu '{original_branch}' zurückwechseln: {back_result.stderr.strip()[:500]}")
+
+    _post_artifact(args, session, order_id, content=pr_url)
+    _post_activity_log(args, session, order_id, "info", f"Pull Request veröffentlicht: {pr_url}")
+    log(f"Work Order {order_id} veröffentlicht: {pr_url}")
+
+
+def publish_accepted_work_orders(
+    args: argparse.Namespace, session: TokenSession, repo_root: Path | str = REPO_ROOT,
+) -> None:
+    if not publish_on_accept_enabled():
+        return
+    try:
+        accepted = fetch_accepted_work_orders(args.api_url, session)
+    except DaemonApiError as exc:
+        log(f"WARNUNG: konnte akzeptierte Work Orders nicht abrufen, versuche es im nächsten Zyklus erneut: {exc}")
+        return
+    for order in accepted:
+        publish_work_order(args, session, order["id"], repo_root=repo_root)
+
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
