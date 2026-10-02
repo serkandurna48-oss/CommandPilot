@@ -211,10 +211,16 @@ def build_judge_prompt(goal: str, criteria: list[str], diff_text: str, test_outp
   "overall": "pass | fail"
 }""")
     lines.append("")
-    lines.append('Regeln: "pass" nur, wenn das Kriterium nachweisbar erfüllt ist. "fail", wenn nachweisbar nicht erfüllt. '
-                 '"unclear", wenn du es aus dem Material nicht sicher entscheiden kannst (zähle NICHT als bestanden). '
-                 '"overall" ist "pass" nur, wenn JEDES Kriterium "pass" ist, sonst "fail". '
-                 "Für jedes Kriterium von oben genau ein Eintrag.")
+    lines.append(
+        'Regeln: "pass" nur wenn das Kriterium nachweisbar erfüllt ist. '
+        '"fail" wenn es nachweisbar NICHT erfüllt ist. '
+        '"unclear" NUR für Kriterien, die sich am Code/Diff prinzipiell nicht prüfen lassen '
+        '(z. B. Browser-Verhalten, Laufzeit-Crashs, visuelle Darstellung) — NICHT als Ausweg '
+        'bei unklarem Diff oder mangelnder Sorgfalt. "unclear" ist kein bestandenes Kriterium. '
+        '"overall" ist "pass" nur wenn JEDES Kriterium "pass" ist; enthält der Lauf mindestens '
+        'ein "fail" ist overall "fail"; enthält er nur "unclear" (kein "fail") ist overall '
+        '"needs_human". Für jedes Kriterium von oben genau ein Eintrag.'
+    )
     return "\n".join(lines)
 
 
@@ -305,7 +311,14 @@ def _validate_and_normalize(verdict: dict) -> dict:
             "verdict": v,
             "evidence": c.get("evidence") or "",
         })
-    overall = "pass" if all(c["verdict"] == "pass" for c in normalized) else "fail"
+    if all(c["verdict"] == "pass" for c in normalized):
+        overall = "pass"
+    elif any(c["verdict"] == "fail" for c in normalized):
+        overall = "fail"
+    else:
+        # at least one "unclear", but no "fail" — needs manual check,
+        # not a definitive rejection
+        overall = "needs_human"
     return {"criteria": normalized, "overall": overall}
 
 
@@ -418,6 +431,15 @@ def run_judge(
         _append_log(api_url, token, work_order_id, "info", "judge_passed",
                     "Judge: alle Akzeptanzkriterien bestanden. Bleibt review_ready für die menschliche Abnahme.")
         return {"status": "pass", "verdict": verdict}
+
+    if verdict["overall"] == "needs_human":
+        unclear = [c["criterion"] for c in verdict["criteria"] if c["verdict"] == "unclear"]
+        message = _truncate(
+            "Judge: Kriterien " + "; ".join(unclear) + " nur manuell prüfbar – bitte vor Freigabe selbst testen.",
+            _MAX_REASON_CHARS,
+        )
+        _append_log(api_url, token, work_order_id, "warning", "judge_needs_human", message)
+        return {"status": "needs_human", "verdict": verdict, "unclear_criteria": unclear}
 
     failed = [c["criterion"] for c in verdict["criteria"] if c["verdict"] != "pass"]
     reason = _truncate("Judge: nicht abgenommen. Nicht erfüllte Kriterien: " + "; ".join(failed), _MAX_REASON_CHARS)

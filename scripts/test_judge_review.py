@@ -55,18 +55,19 @@ def _order(**overrides) -> dict:
         "id": "wo-1",
         "status": "review_ready",
         "goal": "Baue Feature X",
-        "acceptance_criteria": ["Kriterium A", "Kriterium B"],
+        "acceptance_criteria": ["Kriterium A", "Kriterium B", "Kriterium C"],
         "artifacts": [],
     }
     base.update(overrides)
     return base
 
 
-def _verdict(a="pass", b="pass") -> dict:
+def _verdict(a="pass", b="pass", c="pass") -> dict:
     return {
         "criteria": [
             {"criterion": "Kriterium A", "verdict": a, "evidence": "Beleg A"},
             {"criterion": "Kriterium B", "verdict": b, "evidence": "Beleg B"},
+            {"criterion": "Kriterium C", "verdict": c, "evidence": "Beleg C"},
         ],
         "overall": "pass",  # intentionally wrong sometimes — run_judge recomputes
     }
@@ -115,14 +116,22 @@ class ReadOnlyCliArgsTests(unittest.TestCase):
 
 class NormalizeTests(unittest.TestCase):
     def test_overall_recomputed_pass_only_if_all_pass(self):
-        self.assertEqual(judge_review._validate_and_normalize(_verdict("pass", "pass"))["overall"], "pass")
+        self.assertEqual(judge_review._validate_and_normalize(_verdict("pass", "pass", "pass"))["overall"], "pass")
 
-    def test_unclear_counts_as_not_pass(self):
-        # Model even claims overall=pass, but an unclear must drag it to fail.
-        self.assertEqual(judge_review._validate_and_normalize(_verdict("pass", "unclear"))["overall"], "fail")
+    def test_unclear_only_gives_needs_human(self):
+        # pass + unclear but NO fail → needs_human (not fail).
+        self.assertEqual(judge_review._validate_and_normalize(_verdict("pass", "pass", "unclear"))["overall"], "needs_human")
+
+    def test_fail_overrides_unclear_to_fail(self):
+        # When there is at least one "fail", overall must be "fail" even if
+        # there are also "unclear" criteria.
+        self.assertEqual(judge_review._validate_and_normalize(_verdict("pass", "fail", "unclear"))["overall"], "fail")
 
     def test_fail_makes_overall_fail(self):
-        self.assertEqual(judge_review._validate_and_normalize(_verdict("fail", "pass"))["overall"], "fail")
+        self.assertEqual(judge_review._validate_and_normalize(_verdict("fail", "pass", "pass"))["overall"], "fail")
+
+    def test_all_unclear_gives_needs_human(self):
+        self.assertEqual(judge_review._validate_and_normalize(_verdict("unclear", "unclear", "unclear"))["overall"], "needs_human")
 
     def test_empty_criteria_rejected(self):
         with self.assertRaises(judge_review.JudgeError):
@@ -136,13 +145,13 @@ class NormalizeTests(unittest.TestCase):
 
 
 class PassCaseTests(unittest.TestCase):
-    """Criterion 3: pass → review artifact written, order stays review_ready."""
+    """Criterion 3: all pass → review artifact written, order stays review_ready."""
 
     def test_pass_writes_artifact_and_does_not_transition(self):
         fake = FakeApi(_order())
         with patch.object(judge_review, "_call_api", fake), \
              patch.object(judge_review, "run_claude_judge",
-                          return_value=judge_review._validate_and_normalize(_verdict("pass", "pass"))):
+                          return_value=judge_review._validate_and_normalize(_verdict("pass", "pass", "pass"))):
             result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r, _s=None: "diff")
 
         self.assertEqual(result["status"], "pass")
@@ -156,6 +165,72 @@ class PassCaseTests(unittest.TestCase):
         self.assertEqual(fake.patches(), [])
 
 
+class NeedsHumanCaseTests(unittest.TestCase):
+    """K2 criterion 1: pass/pass/unclear → needs_human.
+    Order stays review_ready, no transition, warning log names the unclear criteria."""
+
+    def test_pass_pass_unclear_no_transition_warning_log(self):
+        fake = FakeApi(_order())
+        with patch.object(judge_review, "_call_api", fake), \
+             patch.object(judge_review, "run_claude_judge",
+                          return_value=judge_review._validate_and_normalize(_verdict("pass", "pass", "unclear"))):
+            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r, _s=None: "diff")
+
+        # status is needs_human, unclear_criteria lists the problematic one
+        self.assertEqual(result["status"], "needs_human")
+        self.assertIn("Kriterium C", result["unclear_criteria"])
+        self.assertNotIn("Kriterium A", result["unclear_criteria"])
+        self.assertNotIn("Kriterium B", result["unclear_criteria"])
+
+        # Verdict artifact is still written (same as pass/fail)
+        artifacts = fake.posts_to("/artifacts")
+        self.assertEqual(len(artifacts), 1)
+        stored = json.loads(artifacts[0]["content"])
+        self.assertEqual(stored["overall"], "needs_human")
+
+        # NO status transition — order stays review_ready
+        self.assertEqual(fake.patches(), [])
+
+        # A warning log entry names the unclear criterion
+        warnings = [log for log in fake.activity_logs() if log.get("level") == "warning"]
+        self.assertTrue(warnings, "expected a warning activity-log line")
+        self.assertIn("Kriterium C", warnings[-1]["message"])
+        self.assertIn("manuell", warnings[-1]["message"])
+
+    def test_needs_human_verdict_stored_in_artifact(self):
+        fake = FakeApi(_order())
+        with patch.object(judge_review, "_call_api", fake), \
+             patch.object(judge_review, "run_claude_judge",
+                          return_value=judge_review._validate_and_normalize(_verdict("unclear", "unclear", "unclear"))):
+            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r, _s=None: "diff")
+
+        self.assertEqual(result["status"], "needs_human")
+        self.assertEqual(len(result["unclear_criteria"]), 3)
+        stored = json.loads(fake.posts_to("/artifacts")[0]["content"])
+        self.assertEqual(stored["overall"], "needs_human")
+
+
+class FailWithUnclearTests(unittest.TestCase):
+    """K2 criterion 2: pass/fail/unclear → fail (rework_requested), same as before."""
+
+    def test_pass_fail_unclear_transitions_to_rework_requested(self):
+        fake = FakeApi(_order())
+        with patch.object(judge_review, "_call_api", fake), \
+             patch.object(judge_review, "run_claude_judge",
+                          return_value=judge_review._validate_and_normalize(_verdict("pass", "fail", "unclear"))):
+            result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r, _s=None: "diff")
+
+        self.assertEqual(result["status"], "fail")
+        # Kriterium B (fail) and Kriterium C (unclear) both count as "not pass"
+        self.assertIn("Kriterium B", result["failed_criteria"])
+        self.assertIn("Kriterium C", result["failed_criteria"])
+
+        patches = fake.patches()
+        self.assertEqual(len(patches), 1)
+        self.assertEqual(patches[0]["status"], "rework_requested")
+        self.assertIn("Kriterium B", patches[0]["reason"])
+
+
 class FailCaseTests(unittest.TestCase):
     """Criterion 4: fail → rework_requested with the failed criteria as reason."""
 
@@ -163,7 +238,7 @@ class FailCaseTests(unittest.TestCase):
         fake = FakeApi(_order())
         with patch.object(judge_review, "_call_api", fake), \
              patch.object(judge_review, "run_claude_judge",
-                          return_value=judge_review._validate_and_normalize(_verdict("pass", "fail"))):
+                          return_value=judge_review._validate_and_normalize(_verdict("pass", "fail", "pass"))):
             result = judge_review.run_judge("http://x", "tok", "wo-1", claude_path="claude", diff_fetcher=lambda _r, _s=None: "diff")
 
         self.assertEqual(result["status"], "fail")
