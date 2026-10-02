@@ -366,6 +366,13 @@ export interface JarvisSuggestedAction {
   target_repo_name?: string | null;
   risk: "low" | "medium" | "high";
   requires_approval: boolean;
+  // 1–5 checkable yes/no acceptance criteria. The backend's WorkOrderCreate
+  // mandates at least one (R1), so this must be echoed back unchanged on
+  // confirm — without it the confirm request 422s. Shown on the card so the
+  // user sees what they're confirming. Optional/[] only to stay resilient if
+  // an older proposal arrives without it (then confirm is disabled, see
+  // JarvisChat.tsx's SuggestedActionCard).
+  acceptance_criteria?: string[];
   sources: JarvisSourceRef[];
 }
 
