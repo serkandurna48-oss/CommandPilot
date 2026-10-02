@@ -290,5 +290,82 @@ class RemoveOrderWorktreeTests(_AdminRepoTestCase):
         self.assertTrue(worktree.exists())  # left behind, not force-deleted
 
 
+class RemoveOrderWorktreeJunctionCleanupTests(_AdminRepoTestCase):
+    """K4b: without unlinking the frontend/node_modules junction first,
+    `git worktree remove` refuses outright — it treats everything behind
+    the junction as untracked content OF the worktree (live-verified: same
+    'contains modified or untracked files' error as any other leftover
+    file, even though nothing was ever actually touched there). Fixed by
+    unlinking just the reparse point (os.rmdir on a junction — never
+    recurses into/deletes the target) before calling `git worktree
+    remove`."""
+
+    def _add_source_node_modules(self):
+        node_modules = self.admin_repo / "frontend" / "node_modules"
+        node_modules.mkdir(parents=True)
+        (node_modules / "marker.txt").write_text("real installed package data\n", encoding="utf-8")
+        return node_modules
+
+    def test_worktree_removed_and_source_node_modules_survives_unchanged(self):
+        # Criterion 1.
+        source = self._add_source_node_modules()
+        worktree = self._make_worktree("wo-1")  # also creates the junction
+        self.assertTrue((worktree / "frontend" / "node_modules").is_junction())
+
+        ok = daemon._remove_order_worktree(worktree, repo_root=self.admin_repo)
+
+        self.assertTrue(ok)
+        self.assertFalse(worktree.exists())
+        self.assertTrue(source.exists())
+        self.assertEqual((source / "marker.txt").read_text(encoding="utf-8"), "real installed package data\n")
+
+    def test_real_directory_node_modules_is_left_alone_remove_behaves_as_before(self):
+        # Criterion 2: a REAL directory (not a junction) at that path must
+        # never be touched by the new unlink step — git worktree remove
+        # alone decides its fate, exactly like any other untracked content
+        # (see RemoveOrderWorktreeTests.test_dirty_worktree_is_left_behind_not_force_removed).
+        worktree = self._make_worktree("wo-1")  # no source node_modules -> no junction created
+        real_nm = worktree / "frontend" / "node_modules"
+        real_nm.mkdir(parents=True)
+        (real_nm / "untracked.txt").write_text("not a junction\n", encoding="utf-8")
+        self.assertFalse(real_nm.is_junction())
+
+        ok = daemon._remove_order_worktree(worktree, repo_root=self.admin_repo)
+
+        self.assertFalse(ok)  # git refuses, same as any other untracked content
+        self.assertTrue(worktree.exists())
+        self.assertTrue(real_nm.exists())
+        self.assertEqual((real_nm / "untracked.txt").read_text(encoding="utf-8"), "not a junction\n")
+
+    def test_no_rmtree_or_recursive_delete_is_ever_used(self):
+        # Criterion 3.
+        self._add_source_node_modules()
+        worktree = self._make_worktree("wo-1")
+        junction = worktree / "frontend" / "node_modules"
+
+        with patch("shutil.rmtree") as mock_rmtree, \
+             patch.object(os, "rmdir", wraps=os.rmdir) as mock_rmdir:
+            daemon._remove_order_worktree(worktree, repo_root=self.admin_repo)
+
+        mock_rmtree.assert_not_called()
+        mock_rmdir.assert_called_once()
+        # The single os.rmdir call targeted exactly the junction — nothing
+        # inside the real source, nothing else in the worktree.
+        called_path = Path(mock_rmdir.call_args.args[0])
+        self.assertEqual(called_path, junction)
+
+    def test_unlink_helper_no_ops_when_target_is_not_a_junction(self):
+        worktree = self._make_worktree("wo-1")
+        real_nm = worktree / "frontend" / "node_modules"
+        real_nm.mkdir(parents=True)
+        (real_nm / "x.txt").write_text("x\n", encoding="utf-8")
+
+        with patch("os.rmdir") as mock_rmdir:
+            daemon._unlink_frontend_node_modules_junction(worktree)
+
+        mock_rmdir.assert_not_called()
+        self.assertTrue(real_nm.exists())
+
+
 if __name__ == "__main__":
     unittest.main()

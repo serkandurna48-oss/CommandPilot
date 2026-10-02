@@ -524,6 +524,31 @@ def ensure_order_worktree(
     return worktree_path
 
 
+def _unlink_frontend_node_modules_junction(worktree_path: Path) -> None:
+    """K4b: _remove_order_worktree() calls `git worktree remove` right
+    after this — but with _link_frontend_node_modules()'s junction still in
+    place, git treats everything behind it as untracked content OF the
+    worktree and refuses removal outright (verified live: 'contains
+    modified or untracked files, use --force to delete it' — happens even
+    when nothing else in the worktree is dirty, since the junction's whole
+    target looks like worktree content to git). Unlinking just the reparse
+    point first fixes that without ever needing --force: `os.rmdir()` on a
+    junction removes only the link, never recurses into or deletes the
+    target (verified live: the main checkout's real node_modules survives
+    completely untouched, byte-for-byte). Only ever acts on an actual
+    junction (Path.is_junction()) — a real directory at this path (e.g. a
+    future change in link strategy) is left completely alone, and
+    `git worktree remove` decides what happens to it exactly as before.
+    Never shutil.rmtree, never a recursive delete, never --force."""
+    node_modules = worktree_path / "frontend" / "node_modules"
+    if not node_modules.is_junction():
+        return
+    try:
+        os.rmdir(node_modules)
+    except OSError as exc:
+        log(f"WARNUNG: konnte node_modules-Junction {node_modules} nicht entfernen: {exc}")
+
+
 def _remove_order_worktree(worktree_path: Path | str, repo_root: Path | str = REPO_ROOT) -> bool:
     """Best-effort, called only after a successful publish (K4 step 5) —
     run from repo_root, never from inside the worktree being removed (a
@@ -533,6 +558,8 @@ def _remove_order_worktree(worktree_path: Path | str, repo_root: Path | str = RE
     anything. Never deletes the local 'wo/<id8>' branch (not part of `git
     worktree remove`'s default behavior) — it keeps existing in repo_root
     after this, exactly as the spec requires ('lokaler Branch bleibt')."""
+    worktree_path = Path(worktree_path)
+    _unlink_frontend_node_modules_junction(worktree_path)
     result = _run_git(["worktree", "remove", str(worktree_path)], repo_root, timeout=30)
     if result.returncode != 0:
         log(f"WARNUNG: konnte Worktree {worktree_path} nicht entfernen (bleibt bestehen): {result.stderr.strip()[:500]}")
