@@ -113,6 +113,26 @@ class JarvisChatAI(BaseModel):
     suggested_actions: list[SuggestedAction] = []
 
     @model_validator(mode="after")
+    def _drop_suggestions_without_criteria(self):
+        # Server-side guard beside the prompt's "always fill 1–5 criteria" rule
+        # and the JSON schema's minItems:1 on acceptance_criteria (both in
+        # app/prompts/jarvis_chat.py). A suggested action with no acceptance
+        # criteria cannot become a work order anyway — WorkOrderCreate mandates
+        # at least one (see app/models/work_order.py and
+        # app/services/suggested_action_service.py's confirm path). Rather than
+        # let such a proposal reach the UI only to fail at confirm time, drop it
+        # here and log a warning, so the UI only ever shows confirmable cards.
+        # Runs before _cap_at_two so the ≤2 cap applies to what survives.
+        kept = [a for a in self.suggested_actions if a.acceptance_criteria]
+        dropped = len(self.suggested_actions) - len(kept)
+        if dropped:
+            logger.warning(
+                "Dropping %d Jarvis suggested_action(s) without acceptance_criteria", dropped
+            )
+            self.suggested_actions = kept
+        return self
+
+    @model_validator(mode="after")
     def _cap_at_two(self):
         # The system prompt asks for one or two suggestions, never more.
         # Previously a lone suggestion was dropped to enforce a strict

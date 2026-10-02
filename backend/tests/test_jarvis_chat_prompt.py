@@ -34,6 +34,35 @@ def test_build_system_prompt_defaults_to_german():
     assert build_system_prompt() == SYSTEM_PROMPT
 
 
+def test_system_prompt_has_action_request_rule_for_empty_context():
+    # J1 (01.10.2026): an explicit action request ("leg an"/"erstelle"/…) must
+    # always yield suggested_actions, even when the vault/context is empty — the
+    # proposal is built from the user's message, not the context. Live bug: on
+    # Render (no vault) Jarvis answered "Dazu finde ich in deinem Second Brain
+    # nichts." and returned zero suggested_actions for "Leg eine Workorder an".
+    prompt = build_system_prompt()
+    assert "HANDLUNGSAUFTRAG" in prompt
+    # The trigger verbs the rule keys off must be named so the model recognises them.
+    for verb in ("leg an", "erstelle", "mach", "baue", "fixe", "ergänze"):
+        assert verb in prompt
+    # The rule must explicitly say an empty context does not block a proposal.
+    assert "SECOND-BRAIN-KONTEXT leer" in prompt
+    assert "niemals leer" in prompt or "niemals leer" in prompt.lower()
+
+
+def test_system_prompt_scopes_fact_rule_away_from_suggestions():
+    # The fact-only-from-context rule must be scoped to knowledge statements and
+    # must NOT apply to proposing work orders — otherwise an empty context
+    # suppresses suggested_actions (the J1 live bug above).
+    prompt = build_system_prompt()
+    assert "FAKTEN-REGEL" in prompt
+    assert "nur für Wissensaussagen" in prompt
+    # It must state the fact rule does not govern suggested_actions.
+    assert "gilt ausdrücklich NICHT für das Vorschlagen von Work Orders" in prompt
+    # And the honest-"I don't know" rule must say it doesn't empty suggestions.
+    assert "kein Grund, suggested_actions leer zu lassen" in prompt
+
+
 def test_build_system_prompt_english_instructs_english_reply():
     prompt = build_system_prompt("en")
     assert "Antworte ausschließlich auf Englisch" in prompt
