@@ -15,6 +15,7 @@ every adapter must implement, and what an adapter must never do.
 from __future__ import annotations
 
 import json
+import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
@@ -673,37 +674,47 @@ def validate_result_against_order(
 
 
 def extract_json_result(text: str) -> dict | None:
-    """Best-effort: scan backward for the last balanced top-level {...}
-    block whose parsed content looks like a result JSON. Deliberately
-    conservative — a missed detection just falls back to "save it
-    yourself" (always safe); a wrong auto-import would not be. Shared by
-    run_work_order.py's generic `--runner-command` path and any adapter
-    whose runtime returns the result JSON embedded in a larger text blob
-    (e.g. claude_code's `--output-format json` wrapper's `result` field)."""
-    search_end = len(text)
-    while True:
-        end = text.rfind("}", 0, search_end)
-        if end == -1:
-            return None
-        depth = 0
-        start = None
-        for i in range(end, -1, -1):
-            if text[i] == "}":
-                depth += 1
-            elif text[i] == "{":
-                depth -= 1
-                if depth == 0:
-                    start = i
-                    break
-        if start is not None:
-            candidate = text[start:end + 1]
-            try:
-                parsed = json.loads(candidate)
-                if isinstance(parsed, dict) and "workOrderId" in parsed and "finalStatus" in parsed:
-                    return parsed
-            except json.JSONDecodeError:
-                pass
-        search_end = end
+    """Best-effort: extract the last result JSON from `text`.
+
+    Strategy 1 — last ```json … ``` code block: handles the common case
+    where the executor wraps the JSON in a markdown fence inside prose
+    (e.g. "Here is the final result JSON:\\n\\n```json\\n{...}\\n```").
+
+    Strategy 2 — backward raw_decode scan: for every '{' in the text
+    (rightmost first), try json.JSONDecoder().raw_decode(). This correctly
+    handles '{' and '}' inside JSON string values — unlike the old
+    brace-counting approach, which broke when a diff artifact contained
+    something like "{ children }: { children: React.ReactNode }".
+
+    Acceptance: dict with 'workOrderId' and 'finalStatus'.
+    Deliberately conservative — a missed detection just falls back to
+    "save it yourself" (always safe); a wrong auto-import would not be.
+    Shared by run_work_order.py's generic --runner-command path and any
+    adapter whose runtime returns the result JSON embedded in a larger
+    text blob (e.g. claude_code's --output-format json wrapper's result
+    field)."""
+    # Strategy 1: last ```json ... ``` block
+    for m in reversed(list(re.finditer(r"```json\s*([\s\S]*?)```", text))):
+        candidate = m.group(1).strip()
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict) and "workOrderId" in parsed and "finalStatus" in parsed:
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    # Strategy 2: backward raw_decode (properly handles { } inside strings)
+    decoder = json.JSONDecoder()
+    positions = [i for i, c in enumerate(text) if c == "{"]
+    for pos in reversed(positions):
+        try:
+            parsed, _ = decoder.raw_decode(text, pos)
+            if isinstance(parsed, dict) and "workOrderId" in parsed and "finalStatus" in parsed:
+                return parsed
+        except json.JSONDecodeError:
+            pass
+
+    return None
 
 
 @dataclass
