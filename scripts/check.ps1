@@ -74,6 +74,18 @@ Invoke-Check -Name "scripts: extract_json_result" `
     -FilePath $pythonExe `
     -ArgumentList @("scripts/test_extract_json_result.py")
 
+# K3: claude_code adapter's --allowedTools mapping (npm run lint/type-check)
+Invoke-Check -Name "scripts: claude_code_adapter" `
+    -WorkingDirectory $repoRoot `
+    -FilePath $pythonExe `
+    -ArgumentList @("scripts/test_claude_code_adapter.py")
+
+# K3: daemon's Publish-on-Accept flow (accepted order -> branch + PR, gh mocked)
+Invoke-Check -Name "scripts: publish_on_accept" `
+    -WorkingDirectory $repoRoot `
+    -FilePath $pythonExe `
+    -ArgumentList @("scripts/test_publish_on_accept.py")
+
 Invoke-Check -Name "frontend: type-check" `
     -WorkingDirectory $frontendDir `
     -FilePath "npm" `

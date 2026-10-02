@@ -102,7 +102,7 @@ import time
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 for _stream in (sys.stdout, sys.stderr):
@@ -514,6 +514,362 @@ def poll_once(args: argparse.Namespace, session: TokenSession, skip_ids: set[str
             )
             continue
         maybe_run_judge(args, session, work_order_id, base_sha)
+
+    publish_accepted_work_orders(args, session)
+
+
+# ─── K3: Publish-on-Accept ────────────────────────────────────────────────────
+# When a human accepts a work order's result (status "accepted", set via the
+# existing PATCH /{id} transition — same as any other status change, no new
+# trigger field like daemon_run_requested_at), this daemon turns its
+# reviewPackage.files_changed into a real branch + PR, entirely local-git +
+# `gh` — no new backend endpoint, no new migration. Merge always stays a
+# human decision; this never pushes to main, never force-pushes, never
+# resets, never merges.
+PUBLISH_ARTIFACT_TYPE = "summary"
+PUBLISH_ARTIFACT_TITLE = "Pull Request"
+
+
+def publish_on_accept_enabled() -> bool:
+    """Same toggle idiom as judge_review.judge_enabled() (JUDGE_ENABLED) —
+    PUBLISH_ON_ACCEPT, default ON (opt-out, not opt-in)."""
+    return os.environ.get("PUBLISH_ON_ACCEPT", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+def fetch_accepted_work_orders(api_url: str, session: TokenSession) -> list[dict]:
+    """GET /api/work-orders/me (same endpoint fetch_requested_work_orders()
+    already uses) filtered client-side to status == 'accepted'. The list
+    response (WorkOrderResponse) has no artifacts/review_package — callers
+    need a per-order GET /{id} (WorkOrderDetailResponse) for those."""
+    orders = call_api(api_url, session, "GET", "/api/work-orders/me")
+    return [o for o in orders if o.get("status") == "accepted"]
+
+
+def _already_published(order_detail: dict) -> bool:
+    return any(
+        a.get("type") == PUBLISH_ARTIFACT_TYPE and a.get("title") == PUBLISH_ARTIFACT_TITLE
+        for a in order_detail.get("artifacts") or []
+    )
+
+
+def get_current_branch(repo_root: Path | str = REPO_ROOT) -> str | None:
+    """Mirrors get_head_sha()'s shape exactly — the branch this daemon's own
+    working copy is currently on, so publish_work_order() can always switch
+    back to it, success or failure."""
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(repo_root),
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return None
+    if result.returncode != 0:
+        return None
+    branch = result.stdout.strip()
+    return branch or None
+
+
+def _run_git(git_args: list[str], repo_root: Path | str, timeout: float = 30) -> subprocess.CompletedProcess:
+    """Real `git` invocation — kept as its own function (rather than inlined
+    subprocess.run calls) specifically so tests can run this for real against
+    a throwaway temp repo while still mocking out _run_gh() alone (no `gh`
+    installed/authenticated in CI, and a real PR must never be created by a
+    test)."""
+    return subprocess.run(["git", *git_args], cwd=str(repo_root), capture_output=True, text=True, timeout=timeout)
+
+
+def _run_gh(gh_args: list[str], repo_root: Path | str, timeout: float = 60) -> subprocess.CompletedProcess:
+    return subprocess.run(["gh", *gh_args], cwd=str(repo_root), capture_output=True, text=True, timeout=timeout)
+
+
+def _judge_verdict_summary(order_detail: dict) -> str | None:
+    """The Judge stage (scripts/judge_review.py, run_judge()) persists its
+    verdict as a type='review', title='Judge-Urteil' artifact whose content
+    is the verdict JSON ({'overall': 'pass'|'fail'|'needs_human', ...}) —
+    reused here verbatim rather than re-deriving a verdict. Picks the most
+    recent one if several exist (a work order can be re-judged)."""
+    for a in reversed(order_detail.get("artifacts") or []):
+        if a.get("type") == "review" and a.get("title") == "Judge-Urteil":
+            try:
+                return json.loads(a.get("content") or "{}").get("overall")
+            except json.JSONDecodeError:
+                return None
+    return None
+
+
+def _build_pr_body(order_detail: dict, order_id: str, frontend_url: str) -> str:
+    lines = [f"**Ziel:** {order_detail.get('goal', '')}", ""]
+    criteria = order_detail.get("acceptance_criteria") or []
+    if criteria:
+        lines.append("**Akzeptanzkriterien:**")
+        lines.extend(f"- {c}" for c in criteria)
+        lines.append("")
+    verdict = _judge_verdict_summary(order_detail)
+    lines.append(f"**Judge-Urteil:** {verdict or 'kein Judge-Urteil vorhanden'}")
+    lines.append("")
+    lines.append(f"**Work Order:** {frontend_url.rstrip('/')}/operator/{order_id}")
+    return "\n".join(lines)
+
+
+def _post_artifact(args: argparse.Namespace, session: TokenSession, order_id: str, content: str) -> None:
+    try:
+        call_api(args.api_url, session, "POST", f"/api/work-orders/{order_id}/artifacts",
+                  {"type": PUBLISH_ARTIFACT_TYPE, "title": PUBLISH_ARTIFACT_TITLE, "content": content})
+    except DaemonApiError as exc:
+        log(f"WARNUNG: konnte Pull-Request-Artefakt für {order_id} nicht schreiben: {exc}")
+
+
+def _post_activity_log(args: argparse.Namespace, session: TokenSession, order_id: str, level: str, message: str) -> None:
+    try:
+        call_api(args.api_url, session, "POST", f"/api/work-orders/{order_id}/activity-log",
+                  {"level": level, "event_type": "publish_on_accept", "message": message[:2000]})
+    except DaemonApiError as exc:
+        log(f"WARNUNG: konnte Activity-Log für {order_id} nicht schreiben: {exc}")
+
+
+# ─── K3b: Publish-on-Accept guards ────────────────────────────────────────────
+# Four independent safety nets added after the first live review of K3:
+# a cutoff date (don't republish/backfill historical accepted orders the
+# moment this feature ships), a main-only guard (never run the git dance from
+# whatever branch the daemon's own checkout happens to be on), a path-safety
+# check (never stage a file the order's own approval scope doesn't cover, or
+# one that isn't actually dirty), and a clearer error message once a commit
+# already exists locally.
+_DEFAULT_PUBLISH_SINCE = "2026-10-02T13:00:00+02:00"
+
+
+def _parse_iso(value: str) -> datetime | None:
+    """Accepts both a trailing 'Z' (not handled by datetime.fromisoformat()
+    before Python 3.11, but kept for defensiveness) and a numeric UTC offset.
+    A naive result (no tzinfo at all) is treated as UTC rather than raising
+    later when compared against an aware datetime — PUBLISH_SINCE's own
+    default always carries an explicit offset, but an operator-supplied
+    value might not."""
+    try:
+        dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (ValueError, TypeError, AttributeError):
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt
+
+
+def _publish_since_cutoff() -> datetime:
+    raw = os.environ.get("PUBLISH_SINCE", _DEFAULT_PUBLISH_SINCE)
+    return _parse_iso(raw) or _parse_iso(_DEFAULT_PUBLISH_SINCE)
+
+
+def _accepted_at(order_detail: dict) -> str | None:
+    """When this order actually became 'accepted'. Primary source: the most
+    recent activity_log entry recording that exact transition
+    (event_type='status_transition', metadata.to_status=='accepted') —
+    written atomically by the transition_work_order() RPC
+    (supabase/migrations/010_transition_work_order_function.sql) for every
+    transition since that migration, so this should be present for any order
+    reachable through the normal UI flow. Falls back to
+    order_detail['updated_at'] per the original spec — NOT currently
+    exposed by WorkOrderResponse/WorkOrderDetailResponse
+    (backend/app/models/work_order.py has no updated_at field on either),
+    so that fallback is a no-op today; kept so it activates automatically if
+    the field is ever added, without touching this function again. Falls
+    back further to 'completed_at' (which IS exposed, and which the same
+    RPC also sets to NOW() on every transition into 'accepted') — the
+    closest signal the current API actually provides."""
+    for entry in reversed(order_detail.get("activity_log") or []):
+        if entry.get("event_type") == "status_transition" and (entry.get("metadata") or {}).get("to_status") == "accepted":
+            return entry.get("created_at")
+    return order_detail.get("updated_at") or order_detail.get("completed_at")
+
+
+def _accepted_before_cutoff(order_detail: dict) -> bool:
+    """False (process normally) whenever the acceptance time can't be
+    determined at all — an unknown age must never silently suppress a
+    genuinely new, publishable order; only a POSITIVELY confirmed old
+    timestamp skips it."""
+    raw = _accepted_at(order_detail)
+    if not raw:
+        return False
+    accepted_at = _parse_iso(raw)
+    if accepted_at is None:
+        return False
+    return accepted_at < _publish_since_cutoff()
+
+
+def _path_allowed(file_path: str, allowed_paths: list[str]) -> bool:
+    """Glob match against the order's own approval_scope.allowed_paths
+    (e.g. 'frontend/**', the same pattern style
+    suggested_action_service.py's _DEFAULT_ALLOWED_PATHS and
+    runner_adapters/base.py's prompt text already use). No existing matcher
+    was found to reuse: base.py/run_work_order.py only ever check whether
+    allowed_paths is EMPTY (check_execute_path_safety()), never match an
+    individual file against it — so this is new, not an extraction.
+    PurePosixPath.full_match() (Python 3.13+) is used rather than hand-rolled
+    fnmatch/regex specifically because it already treats '**' as crossing
+    directory boundaries, matching how these patterns are written
+    everywhere else in this codebase."""
+    posix_path = PurePosixPath(file_path)
+    return any(posix_path.full_match(pattern) for pattern in allowed_paths)
+
+
+def _files_changed_safety_violation(
+    files_changed: list[str], allowed_paths: list[str], repo_root: Path | str,
+) -> str | None:
+    """Returns a human-readable reason if any file in files_changed either
+    (a) doesn't match any allowed_paths pattern, or (b) isn't actually dirty
+    according to `git status --porcelain -- <file>` — i.e. the reviewPackage
+    claims a change that the working copy doesn't back up. Returns None if
+    every file passes both checks. Checked BEFORE `git switch -c` (K3b) —
+    nothing is branched/staged until the full file list is trusted."""
+    if not allowed_paths:
+        return "approval_scope.allowed_paths ist leer — kein Pfad gilt als erlaubt."
+    for f in files_changed:
+        if not _path_allowed(f, allowed_paths):
+            return f"Datei '{f}' passt zu keinem Muster in allowed_paths ({', '.join(allowed_paths)})."
+    for f in files_changed:
+        status_result = _run_git(["status", "--porcelain", "--", f], repo_root)
+        if status_result.returncode != 0 or not status_result.stdout.strip():
+            return f"Datei '{f}' ist laut 'git status --porcelain' nicht tatsächlich geändert."
+    return None
+
+
+def publish_work_order(
+    args: argparse.Namespace, session: TokenSession, order_id: str, repo_root: Path | str = REPO_ROOT,
+) -> None:
+    """Idempotent: a second call for an already-published order is a no-op
+    (detected via the type='summary'/title='Pull Request' artifact). Never
+    leaves the daemon's working copy on anything but the branch it started
+    on — every code path below that leaves the newly created branch switches
+    back, success or failure. Never force-pushes, never resets, never
+    touches main directly, never merges — 'gh pr create' only ever opens a
+    PR for a human to merge."""
+    try:
+        detail = call_api(args.api_url, session, "GET", f"/api/work-orders/{order_id}")
+    except DaemonApiError as exc:
+        log(f"WARNUNG: konnte Work Order {order_id} für Publish-on-Accept nicht laden: {exc}")
+        return
+
+    if _already_published(detail):
+        return
+
+    # K3b guard 1: never backfill/republish orders accepted before the
+    # cutoff — silent skip, no artifact, no git call at all (the next poll
+    # re-checks the same order the same way; if PUBLISH_SINCE is later
+    # moved earlier, an old order becomes eligible without any other change).
+    if _accepted_before_cutoff(detail):
+        log(f"Work Order {order_id}: Freigabe liegt vor PUBLISH_SINCE — übersprungen (kein Artefakt).")
+        return
+
+    files_changed = list((detail.get("review_package") or {}).get("files_changed") or [])
+    title = detail.get("title") or order_id
+    id8 = order_id[:8]
+
+    if not files_changed:
+        _post_artifact(args, session, order_id, content="keine Änderungen")
+        _post_activity_log(args, session, order_id, "info", "nichts zu veröffentlichen — reviewPackage.filesChanged ist leer.")
+        log(f"Work Order {order_id}: nichts zu veröffentlichen (keine geänderten Dateien).")
+        return
+
+    original_branch = get_current_branch(repo_root)
+    if not original_branch:
+        log(f"WARNUNG: konnte aktuellen Branch nicht ermitteln — Publish-on-Accept für {order_id} übersprungen.")
+        return
+
+    # K3b guard 2: the git dance below (switch/add/commit/push) only ever
+    # runs from the daemon's own 'main' checkout — never from whatever
+    # feature branch a human (or this same daemon, mid-publish) might
+    # currently have checked out. No artifact: this isn't a failure of the
+    # work order, just a "not right now" — the next poll cycle tries again
+    # once the checkout is back on main.
+    if original_branch != "main":
+        log(
+            f"WARNUNG: Daemon-Checkout ist nicht auf 'main' (aktuell '{original_branch}') — "
+            f"Publish-on-Accept für Work Order {order_id} übersprungen, nächster Zyklus versucht erneut."
+        )
+        return
+
+    branch_name = f"wo/{id8}"
+
+    def fail(reason: str) -> None:
+        # Best-effort return to the original branch regardless of how far the
+        # sequence below got — never leaves the daemon's checkout parked on
+        # a half-finished wo/<id8> branch.
+        _run_git(["switch", original_branch], repo_root)
+        log(f"WARNUNG: Publish-on-Accept für Work Order {order_id} fehlgeschlagen: {reason}")
+        _post_activity_log(args, session, order_id, "error", reason)
+        _post_artifact(args, session, order_id, content=f"fehlgeschlagen: {reason}")
+
+    # K3b guard 3: every file reviewPackage.files_changed names must (a) fall
+    # under the order's own approval_scope.allowed_paths and (b) actually be
+    # dirty in the working copy — checked BEFORE any branch/stage/commit, so
+    # a violation never touches git at all beyond the read-only status check.
+    allowed_paths = (detail.get("approval_scope") or {}).get("allowed_paths") or []
+    path_violation = _files_changed_safety_violation(files_changed, allowed_paths, repo_root)
+    if path_violation:
+        fail(path_violation)
+        return
+
+    switch_result = _run_git(["switch", "-c", branch_name], repo_root)
+    if switch_result.returncode != 0:
+        fail(f"git switch -c {branch_name} fehlgeschlagen: {switch_result.stderr.strip()[:500]}")
+        return
+
+    add_result = _run_git(["add", "--", *files_changed], repo_root)
+    if add_result.returncode != 0:
+        fail(f"git add fehlgeschlagen: {add_result.stderr.strip()[:500]}")
+        return
+
+    commit_result = _run_git(
+        ["commit", "-m", f"wo({id8}): {title}\n\nWork-Order: {order_id}"], repo_root,
+    )
+    if commit_result.returncode != 0:
+        fail(f"git commit fehlgeschlagen: {commit_result.stderr.strip()[:500]}")
+        return
+
+    # K3b guard 4: from here on, a committed change genuinely exists locally
+    # — every failure path below says so explicitly, so a human reading the
+    # error knows the work isn't lost, just not pushed/PR'd yet.
+    push_result = _run_git(["push", "-u", "origin", branch_name], repo_root, timeout=60)
+    if push_result.returncode != 0:
+        fail(
+            f"git push fehlgeschlagen: {push_result.stderr.strip()[:500]} — "
+            f"Änderung liegt auf lokalem Branch {branch_name}."
+        )
+        return
+
+    frontend_url = getattr(args, "frontend_url", None) or FRONTEND_URL_DEFAULT
+    body = _build_pr_body(detail, order_id, frontend_url)
+    gh_result = _run_gh(
+        ["pr", "create", "--base", "main", "--title", title, "--body", body], repo_root, timeout=60,
+    )
+    if gh_result.returncode != 0:
+        fail(
+            f"gh pr create fehlgeschlagen: {gh_result.stderr.strip()[:500]} — "
+            f"Änderung liegt auf lokalem Branch {branch_name}."
+        )
+        return
+
+    pr_url = gh_result.stdout.strip()
+    back_result = _run_git(["switch", original_branch], repo_root)
+    if back_result.returncode != 0:
+        log(f"WARNUNG: konnte nach Veröffentlichung nicht zu '{original_branch}' zurückwechseln: {back_result.stderr.strip()[:500]}")
+
+    _post_artifact(args, session, order_id, content=pr_url)
+    _post_activity_log(args, session, order_id, "info", f"Pull Request veröffentlicht: {pr_url}")
+    log(f"Work Order {order_id} veröffentlicht: {pr_url}")
+
+
+def publish_accepted_work_orders(
+    args: argparse.Namespace, session: TokenSession, repo_root: Path | str = REPO_ROOT,
+) -> None:
+    if not publish_on_accept_enabled():
+        return
+    try:
+        accepted = fetch_accepted_work_orders(args.api_url, session)
+    except DaemonApiError as exc:
+        log(f"WARNUNG: konnte akzeptierte Work Orders nicht abrufen, versuche es im nächsten Zyklus erneut: {exc}")
+        return
+    for order in accepted:
+        publish_work_order(args, session, order["id"], repo_root=repo_root)
 
 
 def main() -> int:
