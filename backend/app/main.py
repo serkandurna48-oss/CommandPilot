@@ -1,5 +1,8 @@
-from fastapi import FastAPI
+import re
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
 
 from app.routers import auth, health, checkins, integrations, jarvis, plans, projects, reviews, rules, runner_pairing, work_orders
@@ -32,6 +35,31 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+_CORS_ALLOWED_ORIGINS = [settings.FRONTEND_URL, "http://localhost:3000", "http://localhost:3001"]
+_CORS_ORIGIN_REGEX = r"^https://command-pilot-[a-z0-9-]+-serkans-projects-a49183cd\.vercel\.app$"
+
+
+async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Catch-all for exceptions that escape all route handlers.
+
+    Without this, FastAPI returns a plain-text 500 without CORS headers —
+    the browser sees a CORS error instead of the real 500, masking the
+    actual failure in network devtools (found live 02.10.2026).
+    Mirrors the same origin list as CORSMiddleware above."""
+    origin = request.headers.get("origin", "")
+    headers: dict[str, str] = {}
+    if origin in _CORS_ALLOWED_ORIGINS or re.match(_CORS_ORIGIN_REGEX, origin):
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+    return JSONResponse(
+        status_code=500,
+        content={"detail": str(exc)},
+        headers=headers,
+    )
+
+
+app.add_exception_handler(Exception, _unhandled_exception_handler)
 
 app.include_router(health.router, prefix="/api", tags=["health"])
 app.include_router(auth.router, prefix="/api/auth", tags=["auth"])
