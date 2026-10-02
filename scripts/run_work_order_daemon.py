@@ -471,7 +471,8 @@ def maybe_run_judge(args: argparse.Namespace, session: TokenSession, work_order_
         log(f"WARNUNG: Judge-Prüfung für {work_order_id} unerwartet abgebrochen: {exc}")
 
 
-def poll_once(args: argparse.Namespace, session: TokenSession, skip_ids: set[str] | None = None) -> None:
+def poll_once(args: argparse.Namespace, session: TokenSession, skip_ids: set[str] | None = None,
+              _done_ids: set[str] | None = None) -> None:
     """skip_ids (J3): work order IDs that already failed with
     run_work_order.PRECONDITION_UNBLOCKABLE_EXIT_CODE earlier in this same
     daemon process's lifetime — i.e. the subprocess couldn't even move them
@@ -515,7 +516,7 @@ def poll_once(args: argparse.Namespace, session: TokenSession, skip_ids: set[str
             continue
         maybe_run_judge(args, session, work_order_id, base_sha)
 
-    publish_accepted_work_orders(args, session)
+    publish_accepted_work_orders(args, session, _done_ids=_done_ids)
 
 
 # ─── K3: Publish-on-Accept ────────────────────────────────────────────────────
@@ -734,7 +735,11 @@ def _files_changed_safety_violation(
 
 def publish_work_order(
     args: argparse.Namespace, session: TokenSession, order_id: str, repo_root: Path | str = REPO_ROOT,
-) -> None:
+) -> bool:
+    """Returns True when the order is permanently resolved (published, skipped due
+    to cutoff, or error-artifact posted), so callers can skip it in future cycles.
+    Returns False for temporary skips (branch guard, detail-fetch error) that
+    should be retried next cycle."""
     """Idempotent: a second call for an already-published order is a no-op
     (detected via the type='summary'/title='Pull Request' artifact). Never
     leaves the daemon's working copy on anything but the branch it started
@@ -746,10 +751,10 @@ def publish_work_order(
         detail = call_api(args.api_url, session, "GET", f"/api/work-orders/{order_id}")
     except DaemonApiError as exc:
         log(f"WARNUNG: konnte Work Order {order_id} für Publish-on-Accept nicht laden: {exc}")
-        return
+        return False
 
     if _already_published(detail):
-        return
+        return True
 
     # K3b guard 1: never backfill/republish orders accepted before the
     # cutoff — silent skip, no artifact, no git call at all (the next poll
@@ -757,7 +762,7 @@ def publish_work_order(
     # moved earlier, an old order becomes eligible without any other change).
     if _accepted_before_cutoff(detail):
         log(f"Work Order {order_id}: Freigabe liegt vor PUBLISH_SINCE — übersprungen (kein Artefakt).")
-        return
+        return True
 
     files_changed = list((detail.get("review_package") or {}).get("files_changed") or [])
     title = detail.get("title") or order_id
@@ -767,12 +772,12 @@ def publish_work_order(
         _post_artifact(args, session, order_id, content="keine Änderungen")
         _post_activity_log(args, session, order_id, "info", "nichts zu veröffentlichen — reviewPackage.filesChanged ist leer.")
         log(f"Work Order {order_id}: nichts zu veröffentlichen (keine geänderten Dateien).")
-        return
+        return True
 
     original_branch = get_current_branch(repo_root)
     if not original_branch:
         log(f"WARNUNG: konnte aktuellen Branch nicht ermitteln — Publish-on-Accept für {order_id} übersprungen.")
-        return
+        return False
 
     # K3b guard 2: the git dance below (switch/add/commit/push) only ever
     # runs from the daemon's own 'main' checkout — never from whatever
@@ -785,7 +790,7 @@ def publish_work_order(
             f"WARNUNG: Daemon-Checkout ist nicht auf 'main' (aktuell '{original_branch}') — "
             f"Publish-on-Accept für Work Order {order_id} übersprungen, nächster Zyklus versucht erneut."
         )
-        return
+        return False
 
     branch_name = f"wo/{id8}"
 
@@ -806,24 +811,24 @@ def publish_work_order(
     path_violation = _files_changed_safety_violation(files_changed, allowed_paths, repo_root)
     if path_violation:
         fail(path_violation)
-        return
+        return True  # error artifact posted → _already_published catches next cycle
 
     switch_result = _run_git(["switch", "-c", branch_name], repo_root)
     if switch_result.returncode != 0:
         fail(f"git switch -c {branch_name} fehlgeschlagen: {switch_result.stderr.strip()[:500]}")
-        return
+        return True
 
     add_result = _run_git(["add", "--", *files_changed], repo_root)
     if add_result.returncode != 0:
         fail(f"git add fehlgeschlagen: {add_result.stderr.strip()[:500]}")
-        return
+        return True
 
     commit_result = _run_git(
         ["commit", "-m", f"wo({id8}): {title}\n\nWork-Order: {order_id}"], repo_root,
     )
     if commit_result.returncode != 0:
         fail(f"git commit fehlgeschlagen: {commit_result.stderr.strip()[:500]}")
-        return
+        return True
 
     # K3b guard 4: from here on, a committed change genuinely exists locally
     # — every failure path below says so explicitly, so a human reading the
@@ -834,7 +839,7 @@ def publish_work_order(
             f"git push fehlgeschlagen: {push_result.stderr.strip()[:500]} — "
             f"Änderung liegt auf lokalem Branch {branch_name}."
         )
-        return
+        return True
 
     frontend_url = getattr(args, "frontend_url", None) or FRONTEND_URL_DEFAULT
     body = _build_pr_body(detail, order_id, frontend_url)
@@ -846,7 +851,7 @@ def publish_work_order(
             f"gh pr create fehlgeschlagen: {gh_result.stderr.strip()[:500]} — "
             f"Änderung liegt auf lokalem Branch {branch_name}."
         )
-        return
+        return True
 
     pr_url = gh_result.stdout.strip()
     back_result = _run_git(["switch", original_branch], repo_root)
@@ -856,20 +861,33 @@ def publish_work_order(
     _post_artifact(args, session, order_id, content=pr_url)
     _post_activity_log(args, session, order_id, "info", f"Pull Request veröffentlicht: {pr_url}")
     log(f"Work Order {order_id} veröffentlicht: {pr_url}")
+    return True
 
 
 def publish_accepted_work_orders(
     args: argparse.Namespace, session: TokenSession, repo_root: Path | str = REPO_ROOT,
+    _done_ids: set[str] | None = None,
 ) -> None:
+    """_done_ids: caller-owned set of order IDs permanently resolved in this
+    process (published, cutoff, or error-artifact posted). Orders in the set
+    are skipped without a detail GET — avoids re-fetching cutoff/done orders
+    every poll cycle. Mutated in place when publish_work_order returns True."""
     if not publish_on_accept_enabled():
         return
+    if _done_ids is None:
+        _done_ids = set()
     try:
         accepted = fetch_accepted_work_orders(args.api_url, session)
     except DaemonApiError as exc:
         log(f"WARNUNG: konnte akzeptierte Work Orders nicht abrufen, versuche es im nächsten Zyklus erneut: {exc}")
         return
     for order in accepted:
-        publish_work_order(args, session, order["id"], repo_root=repo_root)
+        order_id = order["id"]
+        if order_id in _done_ids:
+            continue
+        done = publish_work_order(args, session, order_id, repo_root=repo_root)
+        if done:
+            _done_ids.add(order_id)
 
 
 def main() -> int:
@@ -1011,9 +1029,10 @@ def main() -> int:
         f"Strg+C zum Beenden."
     )
     skip_ids: set[str] = set()
+    done_ids: set[str] = set()
     try:
         while True:
-            poll_once(args, session, skip_ids)
+            poll_once(args, session, skip_ids, _done_ids=done_ids)
             time.sleep(args.poll_interval)
     except KeyboardInterrupt:
         log("Beende (Strg+C) — laufende Work Orders werden nicht abgebrochen, nur keine neuen mehr gestartet.")

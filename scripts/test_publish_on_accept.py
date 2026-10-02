@@ -676,5 +676,63 @@ class PublishPushFailureBranchNameTests(unittest.TestCase):
         self.assertIn("wo/wo-12345", artifact_posts[0]["content"])
 
 
+class DoneIdsSkipTests(unittest.TestCase):
+    """L1 criterion 5: publish_accepted_work_orders tracks permanently resolved
+    order IDs in _done_ids and skips them (no GET /api/work-orders/{id}) in
+    subsequent cycles, avoiding pointless re-fetches for cutoff/done orders."""
+
+    def test_done_order_not_passed_to_publish_work_order_second_cycle(self):
+        """publish_work_order returns True (permanently done) → order added to
+        _done_ids → second call skips publish_work_order entirely."""
+        done_ids: set[str] = set()
+        order_id = "wo-done-skip"
+
+        with patch.object(daemon, "fetch_accepted_work_orders",
+                          return_value=[{"id": order_id}]), \
+             patch.dict("os.environ", {"PUBLISH_ON_ACCEPT": "1"}), \
+             patch.object(daemon, "publish_work_order", return_value=True) as mock_pw:
+
+            daemon.publish_accepted_work_orders(_args(), _session(), _done_ids=done_ids)
+            self.assertEqual(mock_pw.call_count, 1)
+            self.assertIn(order_id, done_ids)
+
+            daemon.publish_accepted_work_orders(_args(), _session(), _done_ids=done_ids)
+            # Must not be called again — order is in done_ids
+            self.assertEqual(mock_pw.call_count, 1)
+
+    def test_temp_skip_not_added_to_done_ids(self):
+        """publish_work_order returns False (branch guard, detail error) →
+        order NOT added to _done_ids → retried next cycle."""
+        done_ids: set[str] = set()
+        order_id = "wo-retry"
+
+        with patch.object(daemon, "fetch_accepted_work_orders",
+                          return_value=[{"id": order_id}]), \
+             patch.dict("os.environ", {"PUBLISH_ON_ACCEPT": "1"}), \
+             patch.object(daemon, "publish_work_order", return_value=False) as mock_pw:
+
+            daemon.publish_accepted_work_orders(_args(), _session(), _done_ids=done_ids)
+            self.assertEqual(mock_pw.call_count, 1)
+            self.assertNotIn(order_id, done_ids)
+
+            daemon.publish_accepted_work_orders(_args(), _session(), _done_ids=done_ids)
+            # Must be retried (called again)
+            self.assertEqual(mock_pw.call_count, 2)
+
+    def test_done_ids_none_creates_local_set(self):
+        """Passing _done_ids=None creates a local set — no cross-call persistence,
+        but the function doesn't crash and processes the order."""
+        with patch.object(daemon, "fetch_accepted_work_orders",
+                          return_value=[{"id": "wo-1"}]), \
+             patch.dict("os.environ", {"PUBLISH_ON_ACCEPT": "1"}), \
+             patch.object(daemon, "publish_work_order", return_value=True) as mock_pw:
+
+            daemon.publish_accepted_work_orders(_args(), _session(), _done_ids=None)
+            daemon.publish_accepted_work_orders(_args(), _session(), _done_ids=None)
+
+        # Without a shared set, order is processed twice (no persistence)
+        self.assertEqual(mock_pw.call_count, 2)
+
+
 if __name__ == "__main__":
     unittest.main()
