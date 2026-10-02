@@ -29,6 +29,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import run_work_order_daemon as daemon  # noqa: E402
+import run_work_order  # noqa: E402
 
 # Found 23.09.2026, the hard way: a main()-invoking test that forgets to pass
 # --session-file falls back to DEFAULT_SESSION_FILE — the real repo-root
@@ -224,6 +225,69 @@ class PollOnceTests(unittest.TestCase):
         # Oldest first, and both processed sequentially within one poll cycle.
         self.assertEqual(claimed, ["wo-oldest", "wo-newer"])
         self.assertEqual(started, ["wo-oldest", "wo-newer"])
+
+
+class PollOncePreconditionSkipListTests(unittest.TestCase):
+    """J3: a subprocess exiting with PRECONDITION_UNBLOCKABLE_EXIT_CODE means
+    run_work_order.py hit a precondition failure it could not even move off
+    'queued' (no legal status transition) — the daemon must not re-offer
+    that same work order again this run, or it silently fails on every poll
+    cycle forever."""
+
+    def test_unblockable_precondition_failure_is_added_to_skip_list(self):
+        with patch.object(daemon, "call_api", return_value=[_order("wo-1")]), \
+             patch.object(daemon.subprocess, "run",
+                           return_value=MagicMock(returncode=run_work_order.PRECONDITION_UNBLOCKABLE_EXIT_CODE)), \
+             patch.object(daemon, "maybe_run_judge") as mock_judge, \
+             patch.object(daemon, "get_head_sha", return_value="base-sha"):
+            skip_ids: set[str] = set()
+            daemon.poll_once(_args(), _session(), skip_ids)
+
+        self.assertEqual(skip_ids, {"wo-1"})
+        mock_judge.assert_not_called()  # a precondition failure never produces a review_ready order
+
+    def test_skip_listed_work_order_is_never_claimed_or_started_again(self):
+        with patch.object(daemon, "call_api", return_value=[_order("wo-1")]) as mock_call, \
+             patch.object(daemon.subprocess, "run") as mock_run:
+            daemon.poll_once(_args(), _session(), {"wo-1"})
+
+        mock_run.assert_not_called()
+        # Only the initial GET /work-orders/me — no claim PATCH for a skipped id.
+        mock_call.assert_called_once()
+
+    def test_skip_list_persists_across_poll_cycles(self):
+        call_count = {"n": 0}
+
+        def fake_call_api(api_url, session, method, path, payload=None):
+            if method == "GET":
+                return [_order("wo-1")]
+            call_count["n"] += 1
+            return {}
+
+        with patch.object(daemon, "call_api", side_effect=fake_call_api), \
+             patch.object(daemon.subprocess, "run",
+                           return_value=MagicMock(returncode=run_work_order.PRECONDITION_UNBLOCKABLE_EXIT_CODE)), \
+             patch.object(daemon, "maybe_run_judge"), \
+             patch.object(daemon, "get_head_sha", return_value="base-sha"):
+            skip_ids: set[str] = set()
+            daemon.poll_once(_args(), _session(), skip_ids)  # 1st cycle: fails, gets skip-listed
+            daemon.poll_once(_args(), _session(), skip_ids)  # 2nd cycle: must not be claimed/run again
+
+        # Only one claim PATCH total, from the first cycle.
+        self.assertEqual(call_count["n"], 1)
+
+    def test_normal_failure_exit_code_does_not_get_skip_listed(self):
+        # A plain run failure (exit code 1 — e.g. the adapter itself failed)
+        # is NOT the "couldn't block" signal and must not poison future polls.
+        with patch.object(daemon, "call_api", return_value=[_order("wo-1")]), \
+             patch.object(daemon.subprocess, "run", return_value=MagicMock(returncode=1)), \
+             patch.object(daemon, "maybe_run_judge") as mock_judge, \
+             patch.object(daemon, "get_head_sha", return_value="base-sha"):
+            skip_ids: set[str] = set()
+            daemon.poll_once(_args(), _session(), skip_ids)
+
+        self.assertEqual(skip_ids, set())
+        mock_judge.assert_called_once()
 
 
 class MaybeRunJudgeTests(unittest.TestCase):

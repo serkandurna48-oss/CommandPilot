@@ -128,6 +128,105 @@ class CmdPromptFileAgentRunTests(unittest.TestCase):
             self.assertIn("WARNUNG: konnte AgentRun nicht anlegen", log_text)
 
 
+class CmdPromptFilePreconditionBlockingTests(unittest.TestCase):
+    """J3: a precondition failure (e.g. zero steps in the ticket plan) used
+    to just print to stderr and leave the work order sitting in 'queued'
+    forever — invisible in the UI and silently re-triable by a daemon.
+    Covers cmd_prompt_file()'s handling of validate_preconditions() errors:
+    the work order must end up 'blocked' (visible, terminal-for-now) when a
+    legal transition exists, or signal PRECONDITION_UNBLOCKABLE_EXIT_CODE
+    when it doesn't — see scripts/test_run_work_order_daemon.py::
+    PollOncePreconditionSkipListTests for the daemon-side half of this."""
+
+    def _order(self, status="queued"):
+        return {
+            "id": "wo-1", "title": "Test WO", "status": status, "time_limit_minutes": 90,
+            "steps": [],  # triggers "Keine Steps im Ticketplan vorhanden"
+            "approval_scope": {"blocked_actions": ["deploy"], "allowed_actions": [], "requires_approval": []},
+        }
+
+    def _args(self, **overrides):
+        import argparse
+        base = dict(
+            work_order_id="wo-1", mode="prompt-file", adapter="manual_prompt",
+            api_url="http://localhost:8000", token="fake", force=False,
+            result_file=None, runner_command=None, max_budget_usd=None, dry_run=False,
+        )
+        base.update(overrides)
+        return argparse.Namespace(**base)
+
+    def _run(self, session_path, order, call_api_side_effect):
+        adapter = harness.get_adapter("manual_prompt")
+        with patch.object(harness, "session_dir", return_value=session_path), \
+             patch.object(harness, "fetch_work_order", return_value=order), \
+             patch.object(harness, "call_api", side_effect=call_api_side_effect):
+            return harness.cmd_prompt_file(self._args(), adapter)
+
+    def test_queued_order_is_hopped_through_running_to_blocked(self):
+        calls = []
+
+        def side_effect(api_url, token, method, path, payload, dry_run):
+            calls.append((method, path, payload))
+            return {}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session_path = Path(tmp)
+            rc = self._run(session_path, self._order(status="queued"), side_effect)
+
+            self.assertEqual(rc, 1)
+            patches = [c for c in calls if c[0] == "PATCH" and c[1] == "/api/work-orders/wo-1"]
+            self.assertEqual([c[2].get("status") for c in patches], ["running", "blocked"])
+            self.assertEqual(patches[-1][2]["reason"], "precondition_check_failed")
+            log_text = (session_path / "run.log").read_text(encoding="utf-8")
+            self.assertIn("Work Order -> blocked", log_text)
+
+    def test_activity_log_written_with_precondition_detail(self):
+        calls = []
+
+        def side_effect(api_url, token, method, path, payload, dry_run):
+            calls.append((method, path, payload))
+            return {}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session_path = Path(tmp)
+            self._run(session_path, self._order(status="queued"), side_effect)
+
+        log_calls = [c[2] for c in calls if c[0] == "POST" and c[1] == "/api/work-orders/wo-1/activity-log"]
+        self.assertEqual(len(log_calls), 1)
+        self.assertIn("Keine Steps im Ticketplan vorhanden", log_calls[0]["message"])
+
+    def test_status_without_a_legal_path_to_blocked_is_left_untouched_and_signals_unblockable(self):
+        calls = []
+
+        def side_effect(api_url, token, method, path, payload, dry_run):
+            calls.append((method, path, payload))
+            return {}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session_path = Path(tmp)
+            rc = self._run(session_path, self._order(status="approved"), side_effect)
+
+            self.assertEqual(rc, harness.PRECONDITION_UNBLOCKABLE_EXIT_CODE)
+            self.assertEqual(calls, [])  # no PATCH/POST attempted for a status with no safe transition
+            log_text = (session_path / "run.log").read_text(encoding="utf-8")
+            self.assertIn("Kein sicherer Übergang nach 'blocked'", log_text)
+
+    def test_already_running_order_goes_straight_to_blocked_no_intermediate_hop(self):
+        calls = []
+
+        def side_effect(api_url, token, method, path, payload, dry_run):
+            calls.append((method, path, payload))
+            return {}
+
+        with tempfile.TemporaryDirectory() as tmp:
+            session_path = Path(tmp)
+            rc = self._run(session_path, self._order(status="running"), side_effect)
+
+        self.assertEqual(rc, 1)
+        patches = [c for c in calls if c[0] == "PATCH" and c[1] == "/api/work-orders/wo-1"]
+        self.assertEqual([c[2].get("status") for c in patches], ["blocked"])
+
+
 class AgentRunStateFileTests(unittest.TestCase):
     def test_round_trip(self):
         with tempfile.TemporaryDirectory() as tmp:

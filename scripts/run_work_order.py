@@ -181,6 +181,18 @@ _STATUS_BLOCK_REASONS = {
 }
 
 
+# J3: exit code signalling that validate_preconditions()/check_scope_errors()
+# denied the start AND the work order could not be moved off 'queued' either
+# (no legal transition for its current status — see
+# _mark_blocked_on_precondition_failure()). run_work_order_daemon.py checks
+# for exactly this value to add the work order to its in-process skip-list,
+# so it stops re-offering a work order that would otherwise keep failing the
+# same precondition check every poll cycle. Must stay in sync with the same
+# constant in run_work_order_daemon.py (subprocess exit codes are the only
+# channel between the two processes).
+PRECONDITION_UNBLOCKABLE_EXIT_CODE = 3
+
+
 def validate_preconditions(order: dict, force: bool) -> list[str]:
     """Harness-level, adapter-agnostic hard checks on the work order itself
     (its approval scope, ticket plan, status) — run regardless of which
@@ -216,6 +228,67 @@ def validate_preconditions(order: dict, force: bool) -> list[str]:
         errors.append(f"Status ist '{status}' — {reason}")
 
     return errors
+
+
+def _mark_blocked_on_precondition_failure(
+    args: argparse.Namespace, session_path: Path, order: dict, errors: list[str]
+) -> bool:
+    """J3: validate_preconditions()/check_scope_errors() failing used to just
+    print to stderr and leave the work order sitting in 'queued' with zero
+    server-side trace — a daemon run (scripts/run_work_order_daemon.py) hit
+    this silently, and a human re-clicking 'Autonom starten' afterwards (the
+    only feedback they had) re-armed daemon_run_requested_at and triggered
+    the exact same failure again. Moves the order to 'blocked' instead, via
+    the same transition_work_order()-backed PATCH every other status change
+    in this file uses (CP-OP01) — once status != 'queued', the daemon's own
+    `status == "queued"` fetch filter naturally stops offering this order
+    again, no daemon-side change needed for the success path.
+
+    supabase/migrations/010_transition_work_order_function.sql only allows
+    'running' -> 'blocked' directly; a 'queued' order (the status the daemon
+    always sees, since fetch_requested_work_orders() already filters on it)
+    is hopped through 'running' first, mirroring the queued -> running PATCH
+    the normal successful-start path below already performs. Any other
+    starting status (e.g. 'approved', reachable only via manual CLI use, not
+    the daemon) has no two-hop path to 'blocked' without a new migration
+    edge, which is out of scope here — returns False so the caller can
+    signal (via PRECONDITION_UNBLOCKABLE_EXIT_CODE) that the work order is
+    still stuck in a non-terminal state and must not be silently retried.
+    """
+    status = order.get("status")
+    if status not in ("queued", "running"):
+        log_line(
+            session_path,
+            f"Kein sicherer Übergang nach 'blocked' von Status '{status}' — Work Order bleibt unverändert.",
+        )
+        return False
+
+    if status == "queued":
+        try:
+            call_api(args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}",
+                      {"status": "running", "source": "harness"}, dry_run=args.dry_run)
+            log_line(session_path, "Work Order Status -> running (Zwischenschritt für blocked)")
+        except ImportError_ as exc:
+            log_line(session_path, f"WARNUNG: konnte Work Order nicht auf 'running' setzen (Zwischenschritt für blocked): {exc}")
+            return False
+
+    detail = "Sicherheits-Preconditions nicht erfüllt: " + "; ".join(errors)
+    try:
+        call_api(args.api_url, args.token, "POST", f"/api/work-orders/{args.work_order_id}/activity-log",
+                  {"level": "error", "event_type": "precondition_check_failed", "message": detail[:2000]},
+                  dry_run=args.dry_run)
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte Activity-Log nicht schreiben: {exc}")
+
+    try:
+        call_api(args.api_url, args.token, "PATCH", f"/api/work-orders/{args.work_order_id}",
+                  {"status": "blocked", "source": "harness", "reason": "precondition_check_failed"},
+                  dry_run=args.dry_run)
+        log_line(session_path, f"Work Order -> blocked (Grund: {detail[:300]})")
+        return True
+    except ImportError_ as exc:
+        log_line(session_path, f"WARNUNG: konnte Work Order nicht auf 'blocked' setzen: {exc}")
+        return False
 
 
 _CODE_CHANGE_KEYWORDS = ("ändern", "aendern", "change", "edit", "code", "implement")
@@ -1162,18 +1235,30 @@ def _run_step_by_step(
 
 def cmd_prompt_file(args: argparse.Namespace, adapter: RunnerAdapter) -> int:
     order = fetch_work_order(args.api_url, args.token, args.work_order_id)
+    session_path = session_dir(args.work_order_id)
 
     errors = validate_preconditions(order, args.force) + adapter.check_scope_errors(order)
     if errors:
         print("Sicherheits-Preconditions nicht erfüllt — Start abgebrochen:", file=sys.stderr)
         for e in errors:
             print(f"  - {e}", file=sys.stderr)
-        return 1
+        if _mark_blocked_on_precondition_failure(args, session_path, order, errors):
+            print(
+                "Work Order wurde auf Status 'blocked' gesetzt, damit sie nicht automatisch erneut gestartet wird.",
+                file=sys.stderr,
+            )
+            return 1
+        print(
+            "WARNUNG: Work Order konnte nicht auf 'blocked' gesetzt werden (kein erlaubter Statusübergang von "
+            f"'{order.get('status')}') — bleibt unverändert. Ein Daemon sollte diese Work Order für den Rest "
+            "seiner Laufzeit überspringen.",
+            file=sys.stderr,
+        )
+        return PRECONDITION_UNBLOCKABLE_EXIT_CODE
 
     for w in check_warnings(order) + adapter.check_scope_warnings(order):
         print(f"WARNUNG: {w}")
 
-    session_path = session_dir(args.work_order_id)
     log_line(session_path, f"Preconditions OK (Adapter: {adapter.info.name}). Status vor Start: {order['status']}")
 
     try:

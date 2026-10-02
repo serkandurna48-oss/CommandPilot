@@ -123,6 +123,11 @@ FRONTEND_URL_DEFAULT = "http://localhost:3001"
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from runner_adapters import ADAPTERS, get_adapter  # noqa: E402 — needs sys.path set first
+# J3: imported only for its PRECONDITION_UNBLOCKABLE_EXIT_CODE constant — the
+# only channel between this process and the run_work_order.py subprocess it
+# launches is that subprocess's exit code, so the two must agree on what it
+# means. No execution logic is reused from here (see module docstring).
+import run_work_order  # noqa: E402 — needs sys.path set first
 
 _MAX_ATTEMPTS = 3
 _RETRY_DELAY_S = 1.0
@@ -466,7 +471,19 @@ def maybe_run_judge(args: argparse.Namespace, session: TokenSession, work_order_
         log(f"WARNUNG: Judge-Prüfung für {work_order_id} unerwartet abgebrochen: {exc}")
 
 
-def poll_once(args: argparse.Namespace, session: TokenSession) -> None:
+def poll_once(args: argparse.Namespace, session: TokenSession, skip_ids: set[str] | None = None) -> None:
+    """skip_ids (J3): work order IDs that already failed with
+    run_work_order.PRECONDITION_UNBLOCKABLE_EXIT_CODE earlier in this same
+    daemon process's lifetime — i.e. the subprocess couldn't even move them
+    off 'queued', so they'd otherwise keep being re-offered by
+    fetch_requested_work_orders() every cycle (e.g. if something external
+    keeps re-arming daemon_run_requested_at on a work order stuck in a
+    status validate_preconditions() rejects). Mutated in place so the caller
+    (main()'s loop) can share one set across calls; defaults to a fresh,
+    empty set when called standalone (e.g. from tests)."""
+    if skip_ids is None:
+        skip_ids = set()
+
     try:
         requested = fetch_requested_work_orders(args.api_url, session)
     except DaemonApiError as exc:
@@ -479,13 +496,23 @@ def poll_once(args: argparse.Namespace, session: TokenSession) -> None:
     log(f"{len(requested)} Work Order(s) angefragt — verarbeite älteste zuerst, sequentiell.")
     for order in requested:
         work_order_id = order["id"]
+        if work_order_id in skip_ids:
+            log(f"Work Order {work_order_id} übersprungen (bereits in dieser Laufzeit an einem Precondition-Fehler gescheitert, der nicht blockierbar war).")
+            continue
         if not claim(args.api_url, session, work_order_id):
             continue
         # Record HEAD of the adapter's working dir (REPO_ROOT — run_one passes
         # cwd=REPO_ROOT) right after claiming, BEFORE the executor runs, so the
         # judge can diff everything this run changes since this point (R2b).
         base_sha = get_head_sha(REPO_ROOT)
-        run_one(args, session, work_order_id)
+        returncode = run_one(args, session, work_order_id)
+        if returncode == run_work_order.PRECONDITION_UNBLOCKABLE_EXIT_CODE:
+            skip_ids.add(work_order_id)
+            log(
+                f"WARNUNG: Work Order {work_order_id} konnte nach einem Precondition-Fehler nicht auf 'blocked' "
+                "gesetzt werden — wird für den Rest dieser Daemon-Laufzeit übersprungen."
+            )
+            continue
         maybe_run_judge(args, session, work_order_id, base_sha)
 
 
@@ -627,9 +654,10 @@ def main() -> int:
         f"session={'selbst-erneuernd' if session.can_refresh else 'statisch (läuft ohne Refresh Token ab)'}. "
         f"Strg+C zum Beenden."
     )
+    skip_ids: set[str] = set()
     try:
         while True:
-            poll_once(args, session)
+            poll_once(args, session, skip_ids)
             time.sleep(args.poll_interval)
     except KeyboardInterrupt:
         log("Beende (Strg+C) — laufende Work Orders werden nicht abgebrochen, nur keine neuen mehr gestartet.")
