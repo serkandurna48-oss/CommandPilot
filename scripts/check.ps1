@@ -63,6 +63,17 @@ Invoke-Check -Name "scripts: step_execution" `
     -FilePath $pythonExe `
     -ArgumentList @("scripts/test_step_execution.py")
 
+Invoke-Check -Name "scripts: agent_run_session" `
+    -WorkingDirectory $repoRoot `
+    -FilePath $pythonExe `
+    -ArgumentList @("scripts/test_agent_run_session.py")
+
+# K1: extract_json_result — robust result JSON detection (code-block + raw_decode)
+Invoke-Check -Name "scripts: extract_json_result" `
+    -WorkingDirectory $repoRoot `
+    -FilePath $pythonExe `
+    -ArgumentList @("scripts/test_extract_json_result.py")
+
 Invoke-Check -Name "frontend: type-check" `
     -WorkingDirectory $frontendDir `
     -FilePath "npm" `
