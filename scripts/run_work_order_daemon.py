@@ -34,6 +34,14 @@ way still stops hard at needs_approval/blocked, still ends at review_ready
 claude_code_sandboxed — still only ever produces a diff artifact to review,
 never applies it automatically.
 
+One git worktree per order (K4): the executor, Judge, and Publish-on-Accept
+never run against REPO_ROOT (this daemon's own checkout) — each work order
+gets its own linked `git worktree` under WORKTREE_ROOT (env var, default
+REPO_ROOT/../commandpilot-orders), checked out on its own 'wo/<id8>' branch
+from origin/main at claim time. REPO_ROOT stays exactly as you left it —
+whatever branch, whatever uncommitted edits — the whole time. See
+ensure_order_worktree()/publish_work_order() below.
+
 Zero third-party dependencies on purpose (stdlib `urllib` only), matching
 scripts/run_work_order.py and scripts/import_work_order_result.py.
 
@@ -394,7 +402,174 @@ def claim(api_url: str, session: TokenSession, work_order_id: str) -> bool:
         return False
 
 
-def run_one(args: argparse.Namespace, session: TokenSession, work_order_id: str) -> int:
+# ─── K4: one git worktree per work order ──────────────────────────────────────
+# The executor, Judge, and Publish-on-Accept all used to run against REPO_ROOT
+# — the daemon's own checkout, which might be whatever branch Serkan is
+# working on, with his own uncommitted edits, plus ~156 files of CRLF churn
+# (see judge_review.gather_diff()'s --ignore-cr-at-eol comment). That mixed
+# agent changes with human changes, limited Publish-on-Accept to only ever
+# running from 'main' (K3b guard 2), and meant two orders running back to back
+# could stomp on each other's uncommitted state. Each order now gets its own
+# linked `git worktree` (shares REPO_ROOT's object store/refs — cheap, not a
+# clone) under WORKTREE_ROOT, checked out on its own 'wo/<id8>' branch from
+# origin/main. REPO_ROOT itself is only ever used for the two "admin"
+# operations that must run from the main checkout (fetch + worktree
+# add/remove) — never for anything that would change ITS OWN branch, HEAD, or
+# working tree.
+WORKTREE_ROOT_DEFAULT = REPO_ROOT.parent / "commandpilot-orders"
+
+
+def _worktree_root() -> Path:
+    raw = os.environ.get("WORKTREE_ROOT")
+    return Path(raw) if raw else WORKTREE_ROOT_DEFAULT
+
+
+def _order_branch_name(work_order_id: str) -> str:
+    return f"wo/{work_order_id[:8]}"
+
+
+def _order_worktree_path(work_order_id: str, worktree_root: Path | str | None = None) -> Path:
+    root = Path(worktree_root) if worktree_root is not None else _worktree_root()
+    return root / f"wo-{work_order_id[:8]}"
+
+
+def _link_frontend_node_modules(worktree_path: Path, repo_root: Path | str = REPO_ROOT) -> None:
+    """K4 point 6: frontend/node_modules is .gitignore'd, so a freshly
+    created worktree never has it — an executor running `npm run lint`/
+    `npm run type-check` there would fail immediately on a missing
+    dependency tree. Rather than `npm ci`-ing a fresh copy per order (slow,
+    and pointless for the common order that never touches package.json at
+    all — see docs/K4 report for the full tradeoff against the "npm ci only
+    if frontend/** changed" alternative), this links the worktree's
+    frontend/node_modules to the main checkout's already-installed one via
+    an NTFS directory junction (`mklink /J`) — no copy of a large folder,
+    and unlike a symlink, a junction needs no elevated Windows privileges.
+    Best-effort/non-fatal: if repo_root has no frontend/node_modules yet,
+    or something already exists at the target path (e.g. a previous call's
+    own junction), this silently does nothing — a missing link just means
+    frontend checks fail loudly inside the worktree, never silently wrong.
+    Never touches .env/.env.local — those are deliberately not linked or
+    copied either (see K4 report: npm run lint/type-check don't need them;
+    only npm run build's prerendering does, and build was never part of
+    the approved check set, see scripts/check.ps1)."""
+    source = Path(repo_root) / "frontend" / "node_modules"
+    target = worktree_path / "frontend" / "node_modules"
+    if not source.exists() or target.exists():
+        return
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        result = subprocess.run(
+            ["cmd", "/c", "mklink", "/J", str(target), str(source)],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            log(f"WARNUNG: konnte frontend/node_modules-Junction für {worktree_path} nicht anlegen: {result.stderr.strip()[:300]}")
+    except Exception as exc:
+        log(f"WARNUNG: konnte frontend/node_modules-Junction für {worktree_path} nicht anlegen: {exc}")
+
+
+def ensure_order_worktree(
+    work_order_id: str, repo_root: Path | str = REPO_ROOT, worktree_root: Path | str | None = None,
+) -> Path | None:
+    """Claim-time setup (K4): `git fetch origin main` then `git worktree add
+    <WORKTREE_ROOT>/wo-<id8> -b wo/<id8> origin/main`, both run from
+    repo_root (REPO_ROOT, the main checkout — the only worktree that can
+    register a new linked worktree; a worktree can't create siblings of
+    itself). If the target directory already exists (rework after
+    rework_requested/failed — the work order was claimed before, got this
+    far, and is being retried), it's reused as-is rather than recreated —
+    per spec, no reset/clean of whatever the previous attempt left there.
+    Returns None (logs a warning, never raises) on any failure — claim()
+    already succeeded by the time this runs, so a worktree failure here just
+    means this poll cycle's run_one() is skipped; the next cycle tries
+    again from scratch (fetch/worktree add only run again because the
+    directory still won't exist)."""
+    worktree_path = _order_worktree_path(work_order_id, worktree_root)
+    branch_name = _order_branch_name(work_order_id)
+
+    if worktree_path.exists():
+        current_branch = get_current_branch(worktree_path)
+        if current_branch != branch_name:
+            log(
+                f"WARNUNG: Worktree {worktree_path} existiert bereits, steht aber auf '{current_branch}' "
+                f"statt '{branch_name}' — Work Order {work_order_id} übersprungen."
+            )
+            return None
+        log(f"Worktree für Work Order {work_order_id} wiederverwendet: {worktree_path} (Nacharbeit).")
+        _link_frontend_node_modules(worktree_path, repo_root)
+        return worktree_path
+
+    worktree_path.parent.mkdir(parents=True, exist_ok=True)
+
+    fetch_result = _run_git(["fetch", "origin", "main"], repo_root, timeout=60)
+    if fetch_result.returncode != 0:
+        log(
+            f"WARNUNG: 'git fetch origin main' fehlgeschlagen — Worktree für {work_order_id} nicht angelegt: "
+            f"{fetch_result.stderr.strip()[:500]}"
+        )
+        return None
+
+    add_result = _run_git(
+        ["worktree", "add", str(worktree_path), "-b", branch_name, "origin/main"], repo_root, timeout=60,
+    )
+    if add_result.returncode != 0:
+        log(
+            f"WARNUNG: 'git worktree add' fehlgeschlagen für Work Order {work_order_id}: "
+            f"{add_result.stderr.strip()[:500]}"
+        )
+        return None
+
+    log(f"Worktree für Work Order {work_order_id} angelegt: {worktree_path} (Branch {branch_name}, von origin/main).")
+    _link_frontend_node_modules(worktree_path, repo_root)
+    return worktree_path
+
+
+def _unlink_frontend_node_modules_junction(worktree_path: Path) -> None:
+    """K4b: _remove_order_worktree() calls `git worktree remove` right
+    after this — but with _link_frontend_node_modules()'s junction still in
+    place, git treats everything behind it as untracked content OF the
+    worktree and refuses removal outright (verified live: 'contains
+    modified or untracked files, use --force to delete it' — happens even
+    when nothing else in the worktree is dirty, since the junction's whole
+    target looks like worktree content to git). Unlinking just the reparse
+    point first fixes that without ever needing --force: `os.rmdir()` on a
+    junction removes only the link, never recurses into or deletes the
+    target (verified live: the main checkout's real node_modules survives
+    completely untouched, byte-for-byte). Only ever acts on an actual
+    junction (Path.is_junction()) — a real directory at this path (e.g. a
+    future change in link strategy) is left completely alone, and
+    `git worktree remove` decides what happens to it exactly as before.
+    Never shutil.rmtree, never a recursive delete, never --force."""
+    node_modules = worktree_path / "frontend" / "node_modules"
+    if not node_modules.is_junction():
+        return
+    try:
+        os.rmdir(node_modules)
+    except OSError as exc:
+        log(f"WARNUNG: konnte node_modules-Junction {node_modules} nicht entfernen: {exc}")
+
+
+def _remove_order_worktree(worktree_path: Path | str, repo_root: Path | str = REPO_ROOT) -> bool:
+    """Best-effort, called only after a successful publish (K4 step 5) —
+    run from repo_root, never from inside the worktree being removed (a
+    linked worktree can't remove itself). No --force: if git refuses
+    (e.g. untracked files it considers unsafe to discard), the worktree is
+    left behind and a warning is logged rather than silently discarding
+    anything. Never deletes the local 'wo/<id8>' branch (not part of `git
+    worktree remove`'s default behavior) — it keeps existing in repo_root
+    after this, exactly as the spec requires ('lokaler Branch bleibt')."""
+    worktree_path = Path(worktree_path)
+    _unlink_frontend_node_modules_junction(worktree_path)
+    result = _run_git(["worktree", "remove", str(worktree_path)], repo_root, timeout=30)
+    if result.returncode != 0:
+        log(f"WARNUNG: konnte Worktree {worktree_path} nicht entfernen (bleibt bestehen): {result.stderr.strip()[:500]}")
+        return False
+    return True
+
+
+def run_one(
+    args: argparse.Namespace, session: TokenSession, work_order_id: str, cwd: Path | str = REPO_ROOT,
+) -> int:
     """Invokes run_work_order.py --mode execute exactly as a human would
     type it — this subprocess.run() call, and nothing else in this file,
     is where the actual work happens. Blocking: the daemon does not poll
@@ -405,7 +580,16 @@ def run_one(args: argparse.Namespace, session: TokenSession, work_order_id: str)
     order starts, not whatever was current at daemon startup (matters once
     the daemon has been running long enough to have refreshed at least
     once). See the module docstring's "Known limitation" for what this
-    does NOT cover (a single execution outliving one token's lifetime)."""
+    does NOT cover (a single execution outliving one token's lifetime).
+
+    cwd (K4): the work order's own git worktree, not REPO_ROOT — neither
+    run_work_order.py nor the claude_code adapter's subprocess take an
+    explicit "which directory" argument; both resolve it from the ambient
+    process cwd (run_work_order.py's own _target_worktree() == Path.cwd(),
+    and claude_code.py's Popen() has no cwd= of its own, so it inherits
+    run_work_order.py's). Pinning this subprocess's cwd to the worktree is
+    therefore the ONLY change needed to make the whole chain operate there
+    instead of REPO_ROOT — no changes to run_work_order.py/claude_code.py."""
     cmd = [
         sys.executable, str(RUN_WORK_ORDER_SCRIPT), work_order_id,
         "--mode", "execute",
@@ -417,8 +601,8 @@ def run_one(args: argparse.Namespace, session: TokenSession, work_order_id: str)
     if args.per_step:
         cmd.append("--per-step")
 
-    log(f"Starte Work Order {work_order_id}: {' '.join(cmd[:2])} ... --adapter {args.adapter} --max-budget-usd {args.max_budget_usd}{' --per-step' if args.per_step else ''}")
-    result = subprocess.run(cmd, cwd=REPO_ROOT)
+    log(f"Starte Work Order {work_order_id}: {' '.join(cmd[:2])} ... --adapter {args.adapter} --max-budget-usd {args.max_budget_usd}{' --per-step' if args.per_step else ''} (cwd={cwd})")
+    result = subprocess.run(cmd, cwd=cwd)
     log(f"Work Order {work_order_id} beendet (exit_code={result.returncode})")
     return result.returncode
 
@@ -442,14 +626,20 @@ def get_head_sha(repo_root: Path | str = REPO_ROOT) -> str | None:
 
 
 def maybe_run_judge(args: argparse.Namespace, session: TokenSession, work_order_id: str,
-                    base_sha: str | None = None) -> None:
+                    base_sha: str | None = None, repo_root: Path | str = REPO_ROOT) -> None:
     """After a run finishes and its result is imported, run the independent
     Judge stage (scripts/judge_review.py) IFF the order is now review_ready.
     Adapter-independent, read-only, fail-closed — see judge_review's module
     docstring. Toggleable via JUDGE_ENABLED. Any failure here is swallowed
     with a warning: the judge can only ever block an acceptance, never the
     daemon's own progress, and judge_review itself already leaves the work
-    order untouched (review_ready) on any internal problem."""
+    order untouched (review_ready) on any internal problem.
+
+    repo_root (K4): the work order's own worktree — judge_review.run_judge()
+    already accepted a repo_root= keyword before this change (it threads it
+    into gather_diff()/run_claude_judge(cwd=...)); this call just needed to
+    start passing it instead of silently falling back to judge_review's own
+    REPO_ROOT (the daemon's checkout)."""
     import judge_review  # noqa: E402 — stdlib-only sibling, imported lazily so a judge bug never blocks startup
 
     if not judge_review.judge_enabled():
@@ -463,15 +653,20 @@ def maybe_run_judge(args: argparse.Namespace, session: TokenSession, work_order_
     if order.get("status") != "review_ready":
         # blocked/failed/cancelled — nothing for the judge to grade.
         return
-    log(f"Work Order {work_order_id} ist review_ready — starte unabhängige Judge-Prüfung (model={os.environ.get('JUDGE_MODEL', 'opus')}, base_sha={base_sha or 'kein'}).")
+    log(f"Work Order {work_order_id} ist review_ready — starte unabhängige Judge-Prüfung (model={os.environ.get('JUDGE_MODEL', 'opus')}, base_sha={base_sha or 'kein'}, repo_root={repo_root}).")
     try:
-        result = judge_review.run_judge(args.api_url, session.access_token, work_order_id, base_sha=base_sha)
+        result = judge_review.run_judge(
+            args.api_url, session.access_token, work_order_id, repo_root=repo_root, base_sha=base_sha,
+        )
         log(f"Judge-Ergebnis für {work_order_id}: {result.get('status')}")
     except Exception as exc:
         log(f"WARNUNG: Judge-Prüfung für {work_order_id} unerwartet abgebrochen: {exc}")
 
 
-def poll_once(args: argparse.Namespace, session: TokenSession, skip_ids: set[str] | None = None) -> None:
+def poll_once(
+    args: argparse.Namespace, session: TokenSession, skip_ids: set[str] | None = None,
+    repo_root: Path | str = REPO_ROOT, worktree_root: Path | str | None = None,
+) -> None:
     """skip_ids (J3): work order IDs that already failed with
     run_work_order.PRECONDITION_UNBLOCKABLE_EXIT_CODE earlier in this same
     daemon process's lifetime — i.e. the subprocess couldn't even move them
@@ -480,7 +675,14 @@ def poll_once(args: argparse.Namespace, session: TokenSession, skip_ids: set[str
     keeps re-arming daemon_run_requested_at on a work order stuck in a
     status validate_preconditions() rejects). Mutated in place so the caller
     (main()'s loop) can share one set across calls; defaults to a fresh,
-    empty set when called standalone (e.g. from tests)."""
+    empty set when called standalone (e.g. from tests).
+
+    repo_root/worktree_root (K4): repo_root is REPO_ROOT, the daemon's own
+    checkout — used only for the "admin" git worktree operations (fetch,
+    worktree add/remove), never mutated itself. worktree_root is where each
+    order's own worktree lives (WORKTREE_ROOT, see ensure_order_worktree()).
+    Both default to the real values; tests override them to point at a
+    throwaway repo/temp dir instead."""
     if skip_ids is None:
         skip_ids = set()
 
@@ -501,11 +703,15 @@ def poll_once(args: argparse.Namespace, session: TokenSession, skip_ids: set[str
             continue
         if not claim(args.api_url, session, work_order_id):
             continue
-        # Record HEAD of the adapter's working dir (REPO_ROOT — run_one passes
-        # cwd=REPO_ROOT) right after claiming, BEFORE the executor runs, so the
-        # judge can diff everything this run changes since this point (R2b).
-        base_sha = get_head_sha(REPO_ROOT)
-        returncode = run_one(args, session, work_order_id)
+        worktree_path = ensure_order_worktree(work_order_id, repo_root=repo_root, worktree_root=worktree_root)
+        if worktree_path is None:
+            log(f"WARNUNG: kein nutzbarer Worktree für Work Order {work_order_id} — dieser Zyklus übersprungen.")
+            continue
+        # Record HEAD of the order's OWN worktree (K4 — not REPO_ROOT) right
+        # after claiming, BEFORE the executor runs, so the judge can diff
+        # everything this run changes since this point (R2b).
+        base_sha = get_head_sha(worktree_path)
+        returncode = run_one(args, session, work_order_id, cwd=worktree_path)
         if returncode == run_work_order.PRECONDITION_UNBLOCKABLE_EXIT_CODE:
             skip_ids.add(work_order_id)
             log(
@@ -513,9 +719,9 @@ def poll_once(args: argparse.Namespace, session: TokenSession, skip_ids: set[str
                 "gesetzt werden — wird für den Rest dieser Daemon-Laufzeit übersprungen."
             )
             continue
-        maybe_run_judge(args, session, work_order_id, base_sha)
+        maybe_run_judge(args, session, work_order_id, base_sha, repo_root=worktree_path)
 
-    publish_accepted_work_orders(args, session)
+    publish_accepted_work_orders(args, session, repo_root=repo_root, worktree_root=worktree_root)
 
 
 # ─── K3: Publish-on-Accept ────────────────────────────────────────────────────
@@ -553,9 +759,11 @@ def _already_published(order_detail: dict) -> bool:
 
 
 def get_current_branch(repo_root: Path | str = REPO_ROOT) -> str | None:
-    """Mirrors get_head_sha()'s shape exactly — the branch this daemon's own
-    working copy is currently on, so publish_work_order() can always switch
-    back to it, success or failure."""
+    """Mirrors get_head_sha()'s shape exactly — the branch checked out at
+    the given path. Used both by ensure_order_worktree() (to verify a
+    reused worktree is still on its own 'wo/<id8>' branch) and by
+    publish_work_order() (K4: the worktree-exists-and-on-its-own-branch
+    guard that replaced K3b's "must be on main" check)."""
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=str(repo_root),
@@ -733,15 +941,21 @@ def _files_changed_safety_violation(
 
 
 def publish_work_order(
-    args: argparse.Namespace, session: TokenSession, order_id: str, repo_root: Path | str = REPO_ROOT,
+    args: argparse.Namespace, session: TokenSession, order_id: str,
+    repo_root: Path | str = REPO_ROOT, worktree_root: Path | str | None = None,
 ) -> None:
     """Idempotent: a second call for an already-published order is a no-op
     (detected via the type='summary'/title='Pull Request' artifact). Never
-    leaves the daemon's working copy on anything but the branch it started
-    on — every code path below that leaves the newly created branch switches
-    back, success or failure. Never force-pushes, never resets, never
-    touches main directly, never merges — 'gh pr create' only ever opens a
-    PR for a human to merge."""
+    force-pushes, never resets, never touches main directly, never merges —
+    'gh pr create' only ever opens a PR for a human to merge.
+
+    K4: operates entirely inside the order's own worktree (already checked
+    out on 'wo/<id8>' since claim time, see ensure_order_worktree()) — no
+    more 'git switch -c'/'switch back to original branch' dance, because
+    there's no shared checkout to switch away from and back to anymore.
+    repo_root (REPO_ROOT, the daemon's main checkout) is used only for the
+    final 'git worktree remove' on success — never for anything that
+    changes repo_root's own branch/HEAD/working tree."""
     try:
         detail = call_api(args.api_url, session, "GET", f"/api/work-orders/{order_id}")
     except DaemonApiError as exc:
@@ -751,10 +965,11 @@ def publish_work_order(
     if _already_published(detail):
         return
 
-    # K3b guard 1: never backfill/republish orders accepted before the
-    # cutoff — silent skip, no artifact, no git call at all (the next poll
-    # re-checks the same order the same way; if PUBLISH_SINCE is later
-    # moved earlier, an old order becomes eligible without any other change).
+    # K3b guard 1 (unchanged by K4): never backfill/republish orders
+    # accepted before the cutoff — silent skip, no artifact, no git call at
+    # all (the next poll re-checks the same order the same way; if
+    # PUBLISH_SINCE is later moved earlier, an old order becomes eligible
+    # without any other change).
     if _accepted_before_cutoff(detail):
         log(f"Work Order {order_id}: Freigabe liegt vor PUBLISH_SINCE — übersprungen (kein Artefakt).")
         return
@@ -769,66 +984,65 @@ def publish_work_order(
         log(f"Work Order {order_id}: nichts zu veröffentlichen (keine geänderten Dateien).")
         return
 
-    original_branch = get_current_branch(repo_root)
-    if not original_branch:
-        log(f"WARNUNG: konnte aktuellen Branch nicht ermitteln — Publish-on-Accept für {order_id} übersprungen.")
-        return
+    branch_name = _order_branch_name(order_id)
+    worktree_path = _order_worktree_path(order_id, worktree_root)
 
-    # K3b guard 2: the git dance below (switch/add/commit/push) only ever
-    # runs from the daemon's own 'main' checkout — never from whatever
-    # feature branch a human (or this same daemon, mid-publish) might
-    # currently have checked out. No artifact: this isn't a failure of the
-    # work order, just a "not right now" — the next poll cycle tries again
-    # once the checkout is back on main.
-    if original_branch != "main":
+    # K4 guard (replaces K3b guard 2's "must be on main"): the worktree
+    # this order's executor/judge ran in must still exist and still be on
+    # its own 'wo/<id8>' branch — never a shared checkout, so there's
+    # nothing to "wait for a human to switch back" the way K3b's main-only
+    # guard had to. No artifact: not a failure of the work order itself,
+    # just "not ready this cycle" — the next poll tries again.
+    if not Path(worktree_path).exists():
         log(
-            f"WARNUNG: Daemon-Checkout ist nicht auf 'main' (aktuell '{original_branch}') — "
-            f"Publish-on-Accept für Work Order {order_id} übersprungen, nächster Zyklus versucht erneut."
+            f"WARNUNG: Worktree für Work Order {order_id} existiert nicht ({worktree_path}) — "
+            "Publish-on-Accept übersprungen, nächster Zyklus versucht erneut."
+        )
+        return
+    current_branch = get_current_branch(worktree_path)
+    if current_branch != branch_name:
+        log(
+            f"WARNUNG: Worktree für Work Order {order_id} steht nicht auf '{branch_name}' "
+            f"(aktuell '{current_branch}') — Publish-on-Accept übersprungen, nächster Zyklus versucht erneut."
         )
         return
 
-    branch_name = f"wo/{id8}"
-
     def fail(reason: str) -> None:
-        # Best-effort return to the original branch regardless of how far the
-        # sequence below got — never leaves the daemon's checkout parked on
-        # a half-finished wo/<id8> branch.
-        _run_git(["switch", original_branch], repo_root)
+        # No "switch back" needed — the worktree stays on wo/<id8> either
+        # way, success or failure; that's where it's supposed to live.
         log(f"WARNUNG: Publish-on-Accept für Work Order {order_id} fehlgeschlagen: {reason}")
         _post_activity_log(args, session, order_id, "error", reason)
         _post_artifact(args, session, order_id, content=f"fehlgeschlagen: {reason}")
 
-    # K3b guard 3: every file reviewPackage.files_changed names must (a) fall
-    # under the order's own approval_scope.allowed_paths and (b) actually be
-    # dirty in the working copy — checked BEFORE any branch/stage/commit, so
-    # a violation never touches git at all beyond the read-only status check.
+    # K3b guard 3 (unchanged by K4, just now checked against the worktree
+    # instead of REPO_ROOT): every file reviewPackage.files_changed names
+    # must (a) fall under the order's own approval_scope.allowed_paths and
+    # (b) actually be dirty in the working copy — checked BEFORE any
+    # stage/commit, so a violation never touches git beyond a read-only
+    # status check.
     allowed_paths = (detail.get("approval_scope") or {}).get("allowed_paths") or []
-    path_violation = _files_changed_safety_violation(files_changed, allowed_paths, repo_root)
+    path_violation = _files_changed_safety_violation(files_changed, allowed_paths, worktree_path)
     if path_violation:
         fail(path_violation)
         return
 
-    switch_result = _run_git(["switch", "-c", branch_name], repo_root)
-    if switch_result.returncode != 0:
-        fail(f"git switch -c {branch_name} fehlgeschlagen: {switch_result.stderr.strip()[:500]}")
-        return
-
-    add_result = _run_git(["add", "--", *files_changed], repo_root)
+    add_result = _run_git(["add", "--", *files_changed], worktree_path)
     if add_result.returncode != 0:
         fail(f"git add fehlgeschlagen: {add_result.stderr.strip()[:500]}")
         return
 
     commit_result = _run_git(
-        ["commit", "-m", f"wo({id8}): {title}\n\nWork-Order: {order_id}"], repo_root,
+        ["commit", "-m", f"wo({id8}): {title}\n\nWork-Order: {order_id}"], worktree_path,
     )
     if commit_result.returncode != 0:
         fail(f"git commit fehlgeschlagen: {commit_result.stderr.strip()[:500]}")
         return
 
-    # K3b guard 4: from here on, a committed change genuinely exists locally
-    # — every failure path below says so explicitly, so a human reading the
-    # error knows the work isn't lost, just not pushed/PR'd yet.
-    push_result = _run_git(["push", "-u", "origin", branch_name], repo_root, timeout=60)
+    # K3b guard 4 (unchanged by K4): from here on, a committed change
+    # genuinely exists locally — every failure path below says so
+    # explicitly, so a human reading the error knows the work isn't lost,
+    # just not pushed/PR'd yet.
+    push_result = _run_git(["push", "-u", "origin", branch_name], worktree_path, timeout=60)
     if push_result.returncode != 0:
         fail(
             f"git push fehlgeschlagen: {push_result.stderr.strip()[:500]} — "
@@ -839,7 +1053,7 @@ def publish_work_order(
     frontend_url = getattr(args, "frontend_url", None) or FRONTEND_URL_DEFAULT
     body = _build_pr_body(detail, order_id, frontend_url)
     gh_result = _run_gh(
-        ["pr", "create", "--base", "main", "--title", title, "--body", body], repo_root, timeout=60,
+        ["pr", "create", "--base", "main", "--title", title, "--body", body], worktree_path, timeout=60,
     )
     if gh_result.returncode != 0:
         fail(
@@ -849,9 +1063,13 @@ def publish_work_order(
         return
 
     pr_url = gh_result.stdout.strip()
-    back_result = _run_git(["switch", original_branch], repo_root)
-    if back_result.returncode != 0:
-        log(f"WARNUNG: konnte nach Veröffentlichung nicht zu '{original_branch}' zurückwechseln: {back_result.stderr.strip()[:500]}")
+
+    # K4 step 5: successful publish — the worktree has done its job, clean
+    # it up (best-effort; a removal failure doesn't undo the PR, which
+    # already exists). Never attempted on any failure path above (see
+    # fail() — rework/failed/blocked orders keep their worktree for reuse,
+    # per spec).
+    _remove_order_worktree(worktree_path, repo_root)
 
     _post_artifact(args, session, order_id, content=pr_url)
     _post_activity_log(args, session, order_id, "info", f"Pull Request veröffentlicht: {pr_url}")
@@ -859,7 +1077,8 @@ def publish_work_order(
 
 
 def publish_accepted_work_orders(
-    args: argparse.Namespace, session: TokenSession, repo_root: Path | str = REPO_ROOT,
+    args: argparse.Namespace, session: TokenSession,
+    repo_root: Path | str = REPO_ROOT, worktree_root: Path | str | None = None,
 ) -> None:
     if not publish_on_accept_enabled():
         return
@@ -869,7 +1088,7 @@ def publish_accepted_work_orders(
         log(f"WARNUNG: konnte akzeptierte Work Orders nicht abrufen, versuche es im nächsten Zyklus erneut: {exc}")
         return
     for order in accepted:
-        publish_work_order(args, session, order["id"], repo_root=repo_root)
+        publish_work_order(args, session, order["id"], repo_root=repo_root, worktree_root=worktree_root)
 
 
 def main() -> int:
