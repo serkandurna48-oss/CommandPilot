@@ -588,6 +588,7 @@ const dict: Record<string, Record<Lang, string>> = {
   "operator.judge.title":                 { en: "Judge verdict",            de: "Judge-Urteil" },
   "operator.judge.overall_pass":          { en: "Overall: pass",            de: "Gesamt: bestanden" },
   "operator.judge.overall_fail":          { en: "Overall: fail",            de: "Gesamt: nicht bestanden" },
+  "operator.judge.overall_needs_human":   { en: "Check manually",           de: "Manuell prüfen" },
   "operator.judge.verdict_pass":          { en: "pass",                     de: "bestanden" },
   "operator.judge.verdict_fail":          { en: "fail",                     de: "fehlgeschlagen" },
   "operator.judge.verdict_unclear":       { en: "unclear",                  de: "unklar" },

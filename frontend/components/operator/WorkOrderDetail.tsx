@@ -71,7 +71,7 @@ interface WorkOrderDetailProps extends WorkOrderDetailBundle {
 // show", never a render crash.
 type JudgeVerdictValue = "pass" | "fail" | "unclear";
 type JudgeCriterion = { criterion: string; verdict: JudgeVerdictValue; evidence: string };
-type JudgeVerdict = { criteria: JudgeCriterion[]; overall: "pass" | "fail" };
+type JudgeVerdict = { criteria: JudgeCriterion[]; overall: "pass" | "fail" | "needs_human" };
 
 const JUDGE_VERDICT_COLORS: Record<JudgeVerdictValue, string> = {
   pass: "bg-status-success/15 text-status-success",
@@ -101,7 +101,9 @@ function parseJudgeVerdict(artifacts: Artifact[]): JudgeVerdict | null {
       });
     }
     if (criteria.length === 0) return null;
-    const overall: "pass" | "fail" = (parsed as { overall?: unknown }).overall === "pass" ? "pass" : "fail";
+    const rawOverall = (parsed as { overall?: unknown }).overall;
+    const overall: "pass" | "fail" | "needs_human" =
+      rawOverall === "pass" ? "pass" : rawOverall === "needs_human" ? "needs_human" : "fail";
     return { criteria, overall };
   } catch {
     return null;
@@ -383,6 +385,8 @@ export function WorkOrderDetail({
                         "text-[10px] px-2 py-0.5 rounded font-mono uppercase tracking-wide",
                         judgeVerdict.overall === "pass"
                           ? "bg-status-success/15 text-status-success"
+                          : judgeVerdict.overall === "needs_human"
+                          ? "bg-status-warning/15 text-status-warning"
                           : "bg-status-danger/15 text-status-danger"
                       )}
                     >
