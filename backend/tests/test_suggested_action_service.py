@@ -183,6 +183,15 @@ class SuggestedActionServiceTests(unittest.TestCase):
         work_order_create = call_args[3]
         self.assertEqual(work_order_create.title, _ACTION.title)
         self.assertEqual(work_order_create.goal, _ACTION.description)
+        # J3: a work order created from a Jarvis confirmation must have at
+        # least one step, or the daemon refuses to start it ("Keine Steps im
+        # Ticketplan vorhanden").
+        self.assertEqual(len(work_order_create.steps), 1)
+        step = work_order_create.steps[0]
+        self.assertEqual(step.title, "Umsetzung")
+        self.assertEqual(step.assigned_role, "coder")
+        self.assertEqual(step.description, _ACTION.description)
+        self.assertEqual(step.acceptance_criteria, _ACTION.acceptance_criteria)
         mock_log.assert_called_once()
         self.assertEqual(mock_log.call_args.args[0], "wo-1")
 

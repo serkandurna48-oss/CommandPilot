@@ -28,7 +28,12 @@ import logging
 
 from app.db.client import get_db
 from app.models.jarvis import SuggestedAction
-from app.models.work_order import ActivityLogCreate, ApprovalScopeCreate, WorkOrderCreate
+from app.models.work_order import (
+    ActivityLogCreate,
+    ApprovalScopeCreate,
+    WorkOrderCreate,
+    WorkOrderStepCreate,
+)
 from app.services import work_order_service
 
 logger = logging.getLogger(__name__)
@@ -103,6 +108,12 @@ def _build_work_order_create(action: SuggestedAction) -> WorkOrderCreate:
     # arrived without them fails here with a clear validation error rather than
     # creating an unjudgeable work order — the confirm endpoint maps that to a
     # clean failure instead of silently inventing criteria.
+    #
+    # J3: a SuggestedAction carries no per-step breakdown (unlike the manual
+    # CreateWorkOrderForm's 6-role DEFAULT_STEPS), so this path produced
+    # work orders with zero steps — the daemon then refused to start them
+    # ("Keine Steps im Ticketplan vorhanden"). One "Umsetzung" step is the
+    # minimum a runner can actually execute against.
     return WorkOrderCreate(
         title=action.title,
         goal=action.description,
@@ -110,6 +121,15 @@ def _build_work_order_create(action: SuggestedAction) -> WorkOrderCreate:
         target_repo_name=action.target_repo_name,
         acceptance_criteria=action.acceptance_criteria,
         approval_scope=_default_approval_scope(action.requires_approval),
+        steps=[
+            WorkOrderStepCreate(
+                title="Umsetzung",
+                description=action.description,
+                assigned_role="coder",
+                order_index=0,
+                acceptance_criteria=action.acceptance_criteria,
+            )
+        ],
     )
 
 
