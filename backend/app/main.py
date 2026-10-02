@@ -1,9 +1,12 @@
+import logging
 import re
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
+
+logger = logging.getLogger(__name__)
 
 from app.routers import auth, health, checkins, integrations, jarvis, plans, projects, reviews, rules, runner_pairing, work_orders
 from app.core.config import settings
@@ -47,6 +50,10 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
     the browser sees a CORS error instead of the real 500, masking the
     actual failure in network devtools (found live 02.10.2026).
     Mirrors the same origin list as CORSMiddleware above."""
+    # Log the full exception server-side (safe: never leaves the process).
+    # The client only ever gets a generic message — str(exc) could contain
+    # DB connection strings, file paths, or other internal details.
+    logger.exception("Unhandled exception: %s", exc)
     origin = request.headers.get("origin", "")
     headers: dict[str, str] = {}
     if origin in _CORS_ALLOWED_ORIGINS or re.match(_CORS_ORIGIN_REGEX, origin):
@@ -54,7 +61,7 @@ async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSON
         headers["Access-Control-Allow-Credentials"] = "true"
     return JSONResponse(
         status_code=500,
-        content={"detail": str(exc)},
+        content={"detail": "Internal server error"},
         headers=headers,
     )
 
